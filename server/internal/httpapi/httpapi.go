@@ -5,7 +5,6 @@
 package httpapi
 
 import (
-	"bufio"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -13,13 +12,13 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
-	"net"
 	"net/http"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/openvoxa/openvoxa/server/internal/hub"
+	"github.com/openvoxa/openvoxa/server/internal/perm"
 )
 
 // maxRequestBody caps how much JSON we will read from a client. Auth payloads
@@ -54,6 +53,16 @@ func New(pool *pgxpool.Pool, debugUIEnabled bool) http.Handler {
 
 	mux.HandleFunc("GET /api/v1/me", api.requireAuth(api.me))
 	mux.HandleFunc("GET /api/v1/channels", api.requireAuth(api.listChannels))
+
+	mux.HandleFunc("GET /api/v1/users",
+		api.requireRole(perm.Moderator, api.listUsers))
+	mux.HandleFunc("PATCH /api/v1/users/{id}/role",
+		api.requireRole(perm.Administrator, api.setUserRole))
+
+	mux.HandleFunc("POST /api/v1/channels",
+		api.requireRole(perm.Administrator, api.createChannel))
+	mux.HandleFunc("DELETE /api/v1/channels/{id}",
+		api.requireRole(perm.Administrator, api.deleteChannel))
 
 	mux.HandleFunc("POST /api/v1/ws/ticket", api.requireAuth(api.wsTicket))
 	mux.HandleFunc("GET /api/v1/ws", api.websocket)
@@ -105,12 +114,36 @@ type channelResponse struct {
 	Kind      string `json:"kind"`
 	Encrypted bool   `json:"encrypted"`
 	Retention string `json:"retention"`
+
+	MinRoleView string `json:"min_role_view"`
+	MinRolePost string `json:"min_role_post"`
+
+	// CanPost saves every client from reimplementing the rank comparison.
+	// It is advisory only: the server checks again on the websocket.
+	CanPost bool `json:"can_post"`
 }
 
+// listChannels returns only the channels the caller may view. A channel
+// above their rank is omitted entirely rather than shown and refused.
 func (a *API) listChannels(w http.ResponseWriter, r *http.Request) {
+	session := sessionFrom(r.Context())
+
+	role, err := perm.Parse(session.Role)
+	if err != nil {
+		slog.Error("session carries an unknown role", "role", session.Role)
+		writeError(w, http.StatusInternalServerError, "could not list channels")
+		return
+	}
+
 	rows, err := a.pool.Query(r.Context(),
-		`SELECT id, name, kind, encrypted, EXTRACT(EPOCH FROM retention)::float8
-		   FROM channels ORDER BY name`)
+		`SELECT c.id, c.name, c.kind, c.encrypted,
+		        EXTRACT(EPOCH FROM c.retention)::float8,
+		        c.min_role_view, c.min_role_post
+		   FROM channels c
+		   JOIN roles rv ON rv.name = c.min_role_view
+		  WHERE rv.rank <= (SELECT rank FROM roles WHERE name = $1)
+		  ORDER BY c.name`,
+		role.String())
 	if err != nil {
 		slog.Error("listing channels", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not list channels")
@@ -125,7 +158,8 @@ func (a *API) listChannels(w http.ResponseWriter, r *http.Request) {
 		// as seconds and is formatted here. NULL means no expiry.
 		var retentionSeconds *float64
 
-		if err := rows.Scan(&c.ID, &c.Name, &c.Kind, &c.Encrypted, &retentionSeconds); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.Kind, &c.Encrypted, &retentionSeconds,
+			&c.MinRoleView, &c.MinRolePost); err != nil {
 			slog.Error("scanning channel", "err", err)
 			writeError(w, http.StatusInternalServerError, "could not list channels")
 			return
@@ -139,6 +173,13 @@ func (a *API) listChannels(w http.ResponseWriter, r *http.Request) {
 		} else {
 			c.Retention = fmt.Sprintf("%s", time.Duration(*retentionSeconds)*time.Second)
 		}
+
+		postRole, err := perm.Parse(c.MinRolePost)
+		if err != nil {
+			slog.Error("channel has an unknown min_role_post", "channel_id", c.ID)
+			continue
+		}
+		c.CanPost = perm.AtLeast(role, postRole)
 
 		channels = append(channels, c)
 	}
@@ -220,21 +261,4 @@ type statusRecorder struct {
 func (r *statusRecorder) WriteHeader(code int) {
 	r.status = code
 	r.ResponseWriter.WriteHeader(code)
-}
-
-// Unwrap lets http.ResponseController reach the real ResponseWriter
-// underneath this recorder.
-func (r *statusRecorder) Unwrap() http.ResponseWriter {
-	return r.ResponseWriter
-}
-
-// Hijack forwards to the underlying connection so websocket upgrades work
-// through this middleware. Without it, wrapping the ResponseWriter silently
-// removes the Hijacker capability and every upgrade fails.
-func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	hj, ok := r.ResponseWriter.(http.Hijacker)
-	if !ok {
-		return nil, nil, errors.New("httpapi: ResponseWriter does not support hijacking")
-	}
-	return hj.Hijack()
 }

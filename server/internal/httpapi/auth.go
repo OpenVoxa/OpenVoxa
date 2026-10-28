@@ -16,9 +16,16 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/openvoxa/openvoxa/server/internal/auth"
+	"github.com/openvoxa/openvoxa/server/internal/perm"
 )
 
 var usernamePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{3,32}$`)
+
+// isUniqueViolation reports whether err is Postgres error 23505.
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
 
 // Password length bounds. The lower bound is a floor, not a policy: no
 // complexity rules, no forced symbols. Length beats character classes, and
@@ -42,6 +49,7 @@ type sessionResponse struct {
 	ExpiresAt time.Time `json:"expires_at"`
 	UserID    string    `json:"user_id"`
 	Username  string    `json:"username"`
+	Role      string    `json:"role"`
 }
 
 func (a *API) register(w http.ResponseWriter, r *http.Request) {
@@ -72,16 +80,49 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The first account to register becomes the administrator, because
+	// otherwise nobody can grant that role to anyone.
+	//
+	// The advisory lock makes this safe under concurrent registration: two
+	// simultaneous first registrations would otherwise both see an empty
+	// users table and both become administrator. The lock is transaction
+	// scoped and released on commit or rollback.
+	tx, err := a.pool.Begin(r.Context())
+	if err != nil {
+		slog.Error("starting registration", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not create account")
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	if _, err := tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock(4242)`); err != nil {
+		slog.Error("taking registration lock", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not create account")
+		return
+	}
+
+	var anyUsers bool
+	if err := tx.QueryRow(r.Context(),
+		`SELECT EXISTS (SELECT 1 FROM users)`).Scan(&anyUsers); err != nil {
+		slog.Error("checking for existing users", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not create account")
+		return
+	}
+
+	role := perm.User
+	if !anyUsers {
+		role = perm.Administrator
+	}
+
 	var userID string
-	err = a.pool.QueryRow(r.Context(),
-		`INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id`,
-		req.Username, hash,
+	err = tx.QueryRow(r.Context(),
+		`INSERT INTO users (username, password_hash, role)
+		 VALUES ($1, $2, $3) RETURNING id`,
+		req.Username, hash, role.String(),
 	).Scan(&userID)
 
 	if err != nil {
-		// 23505 is unique_violation: the username is taken.
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		if isUniqueViolation(err) {
 			writeError(w, http.StatusConflict, "username is taken")
 			return
 		}
@@ -90,7 +131,17 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.issueSession(w, r, userID, req.Username, req.DeviceName)
+	if err := tx.Commit(r.Context()); err != nil {
+		slog.Error("committing registration", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not create account")
+		return
+	}
+
+	if role == perm.Administrator {
+		slog.Info("first account created as administrator", "user_id", userID)
+	}
+
+	a.issueSession(w, r, userID, req.Username, role.String(), req.DeviceName)
 }
 
 func (a *API) login(w http.ResponseWriter, r *http.Request) {
@@ -99,12 +150,12 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var userID, username, storedHash string
+	var userID, username, storedHash, role string
 	err := a.pool.QueryRow(r.Context(),
-		`SELECT id, username, password_hash FROM users
+		`SELECT id, username, password_hash, role FROM users
 		 WHERE username = $1 AND deleted_at IS NULL`,
 		strings.TrimSpace(req.Username),
-	).Scan(&userID, &username, &storedHash)
+	).Scan(&userID, &username, &storedHash, &role)
 
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
@@ -130,10 +181,10 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.issueSession(w, r, userID, username, req.DeviceName)
+	a.issueSession(w, r, userID, username, role, req.DeviceName)
 }
 
-func (a *API) issueSession(w http.ResponseWriter, r *http.Request, userID, username, deviceName string) {
+func (a *API) issueSession(w http.ResponseWriter, r *http.Request, userID, username, role, deviceName string) {
 	token, hash, err := auth.NewSessionToken()
 	if err != nil {
 		slog.Error("generating session token", "err", err)
@@ -166,6 +217,7 @@ func (a *API) issueSession(w http.ResponseWriter, r *http.Request, userID, usern
 		ExpiresAt: expiresAt,
 		UserID:    userID,
 		Username:  username,
+		Role:      role,
 	})
 }
 
@@ -186,6 +238,7 @@ func (a *API) logout(w http.ResponseWriter, r *http.Request) {
 type meResponse struct {
 	UserID   string `json:"user_id"`
 	Username string `json:"username"`
+	Role     string `json:"role"`
 }
 
 func (a *API) me(w http.ResponseWriter, r *http.Request) {
@@ -193,6 +246,7 @@ func (a *API) me(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, meResponse{
 		UserID:   session.UserID,
 		Username: session.Username,
+		Role:     session.Role,
 	})
 }
 
