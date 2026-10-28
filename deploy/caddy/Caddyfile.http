@@ -1,0 +1,47 @@
+# Copyright (C) 2026 The OpenVoxa Authors
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# PATH 1: public domain, ports 80 and 443 reachable from the internet.
+#
+# The simplest case. Caddy obtains and renews certificates automatically
+# using the HTTP challenge. Set OPENVOXA_DOMAIN and CADDY_EMAIL in .env and
+# there is nothing else to configure.
+#
+# Requires: DNS A record pointing at your public IP, and ports 80 and 443
+# forwarded to this host.
+
+{
+	email {$CADDY_EMAIL}
+}
+
+{$OPENVOXA_DOMAIN} {
+	# LiveKit's signalling endpoints. The client SDK appends /rtc to the
+	# URL it is given, so routing this prefix lets voice share one
+	# hostname and one certificate with the rest of the app.
+	handle /rtc* {
+		reverse_proxy livekit:7880
+	}
+
+	handle {
+		reverse_proxy server:8080
+	}
+
+	encode gzip
+
+	# Caddy sets X-Forwarded-For itself. The server only reads it when
+	# OPENVOXA_TRUST_PROXY is true, which is set in docker-compose.yml.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	log {
+		# Request paths only. No bodies, consistent with the server's own
+		# logging policy.
+		output stdout
+		format console
+	}
+}
