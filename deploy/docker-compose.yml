@@ -1,18 +1,23 @@
 # Copyright (C) 2026 The OpenVoxa Authors
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Local development only. The credentials in here are deliberately obvious
-# so nobody mistakes them for something safe to deploy.
+# Two ways to run this:
+#
+#   docker compose up -d                      plain HTTP, localhost only
+#   docker compose --profile tls up -d        with Caddy and real TLS
+#
+# Settings come from .env in this directory. Copy .env.example to .env and
+# edit it. Without TLS, browsers refuse microphone and screen-capture
+# access on anything but localhost, so the tls profile is what you want for
+# any real use.
 
 services:
   postgres:
     image: postgres:17-alpine
     environment:
       POSTGRES_USER: openvoxa
-      POSTGRES_PASSWORD: devpassword
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpassword}
       POSTGRES_DB: openvoxa
-    ports:
-      - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -20,42 +25,74 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   # TODO: pin to a specific tag once we settle on a version.
   livekit:
     image: livekit/livekit-server:latest
-    # --node-ip MUST be the address clients can actually reach. LiveKit
-    # advertises it as the destination for RTP, so a wrong value here gives
-    # you a connection that establishes and then carries no audio. This is
-    # the single most common self-hosting mistake.
-    command: --config /etc/livekit.yaml --node-ip 10.0.3.9
+    # LIVEKIT_NODE_IP must be an address clients can actually reach, because
+    # LiveKit advertises it as the destination for media. Media travels
+    # directly over UDP and never passes through Caddy, so TLS does not
+    # change this. A wrong value gives you a connection that establishes
+    # and then carries no audio.
+    command: --config /etc/livekit.yaml --node-ip ${LIVEKIT_NODE_IP}
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"
     ports:
-      - "7880:7880"       # WebSocket signalling
-      - "7881:7881"       # TCP fallback for media
-      - "50000-50100:50000-50100/udp"  # RTC media
+      - "50000-50100:50000-50100/udp"  # RTC media, always direct
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml:ro
+    restart: unless-stopped
 
   server:
     build:
       context: ../server
     environment:
       OPENVOXA_LISTEN_ADDR: ":8080"
-      OPENVOXA_DATABASE_URL: "postgres://openvoxa:devpassword@postgres:5432/openvoxa?sslmode=disable"
+      OPENVOXA_DATABASE_URL: "postgres://openvoxa:${POSTGRES_PASSWORD:-devpassword}@postgres:5432/openvoxa?sslmode=disable"
+      OPENVOXA_DEBUG_UI: "${OPENVOXA_DEBUG_UI:-false}"
 
-      # Serves the throwaway test client at /debug/chat.html.
-      # Remove this line for any deployment that is not your own LAN.
-      OPENVOXA_DEBUG_UI: "true"
+      # Only safe when a proxy you control sits in front. The tls profile
+      # provides exactly that; without it this stays false.
+      OPENVOXA_TRUST_PROXY: "${OPENVOXA_TRUST_PROXY:-false}"
 
-      # Must be reachable from the BROWSER, not from this container.
-      OPENVOXA_LIVEKIT_URL: "ws://10.0.3.9:7880"
-      OPENVOXA_LIVEKIT_API_KEY: "APIVdQrViCp7oaf"
-      OPENVOXA_LIVEKIT_API_SECRET: "qiLA147ZnieDwaf7AAjOLrrn8dmIC3I3eYV61wp8eWOC"
-    ports:
-      - "8080:8080"
+      # What the BROWSER connects to. With TLS this is wss://your.domain
+      # and Caddy routes /rtc to LiveKit.
+      OPENVOXA_LIVEKIT_URL: "${OPENVOXA_LIVEKIT_URL}"
+      OPENVOXA_LIVEKIT_API_KEY: "${LIVEKIT_API_KEY}"
+      OPENVOXA_LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET}"
     depends_on:
       postgres:
         condition: service_healthy
+    restart: unless-stopped
+
+  caddy:
+    profiles: ["tls"]
+    # Stock image works for Caddyfile.http and Caddyfile.internal.
+    # Caddyfile.dns needs the plugin, so build locally instead:
+    # comment out `image:` and uncomment `build:`.
+    image: caddy:2-alpine
+    # build:
+    #   context: ./caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      OPENVOXA_DOMAIN: "${OPENVOXA_DOMAIN}"
+      CADDY_EMAIL: "${CADDY_EMAIL:-}"
+      CLOUDFLARE_API_TOKEN: "${CLOUDFLARE_API_TOKEN:-}"
+    volumes:
+      - ./caddy/${CADDYFILE:-Caddyfile.http}:/etc/caddy/Caddyfile:ro
+      # Certificates live here. Losing this volume means re-issuing, and
+      # Let's Encrypt rate limits repeated requests, so keep it.
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - server
+      - livekit
+    restart: unless-stopped
 
 volumes:
   postgres-data:
+  caddy-data:
+  caddy-config:
