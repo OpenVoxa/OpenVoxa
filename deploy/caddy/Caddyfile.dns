@@ -1,0 +1,55 @@
+# Copyright (C) 2026 The OpenVoxa Authors
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# PATH 2: public domain, but no inbound access on port 80.
+#
+# Use this when the server sits on a private IP, behind CGNAT, or behind a
+# NAT you do not control. Caddy proves domain ownership by creating a TXT
+# record through your DNS provider's API, so nothing needs to reach you
+# from the internet. You still get a publicly trusted certificate.
+#
+# Requires: the caddy image built from this directory's Dockerfile, which
+# includes the DNS provider plugin, plus an API token in .env.
+#
+# This file is written for Cloudflare. For another provider, change the
+# plugin in the Dockerfile and the dns directive below. Caddy supports
+# around a hundred providers and the directive is the same shape for all
+# of them.
+
+{
+	email {$CADDY_EMAIL}
+}
+
+{$OPENVOXA_DOMAIN} {
+	tls {
+		dns cloudflare {$CLOUDFLARE_API_TOKEN}
+
+		# Some resolvers inside Docker struggle to see the TXT record
+		# propagate. Asking public resolvers directly avoids a class of
+		# "challenge timed out" failures that are tedious to diagnose.
+		resolvers 1.1.1.1 8.8.8.8
+	}
+
+	handle /rtc* {
+		reverse_proxy livekit:7880
+	}
+
+	handle {
+		reverse_proxy server:8080
+	}
+
+	encode gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

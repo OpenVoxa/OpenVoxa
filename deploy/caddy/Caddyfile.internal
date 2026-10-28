@@ -1,0 +1,48 @@
+# Copyright (C) 2026 The OpenVoxa Authors
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# PATH 3: LAN only, no domain name.
+#
+# Caddy runs its own certificate authority and issues a certificate for
+# whatever address you set as OPENVOXA_DOMAIN (an IP works). Browsers will
+# not trust it until each client installs Caddy's root certificate.
+#
+# Export the root from the container:
+#
+#   docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt .
+#
+# Then install root.crt as a trusted authority on every machine that will
+# connect. On Windows: double-click, Install Certificate, Local Machine,
+# Trusted Root Certification Authorities.
+#
+# This is more work per client than the other two paths, but it needs no
+# domain, no public IP and no third party. Good for a closed network.
+
+{
+	# No email: nothing is requested from a public CA.
+	local_certs
+}
+
+{$OPENVOXA_DOMAIN} {
+	handle /rtc* {
+		reverse_proxy livekit:7880
+	}
+
+	handle {
+		reverse_proxy server:8080
+	}
+
+	encode gzip
+
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
