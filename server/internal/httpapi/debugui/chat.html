@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<!--
+  Copyright (C) 2026 The OpenVoxa Authors
+  SPDX-License-Identifier: AGPL-3.0-or-later
+
+  Developer test harness, not the product. It exists to prove the websocket
+  path works and to be readable when something breaks. The real client is
+  client-web, and none of this carries over to it.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenVoxa debug client</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: Canvas;
+    --fg: CanvasText;
+    --line: color-mix(in srgb, CanvasText 25%, Canvas);
+    --muted: color-mix(in srgb, CanvasText 55%, Canvas);
+  }
+  body {
+    font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    margin: 0; padding: 1rem;
+    background: var(--bg); color: var(--fg);
+    max-width: 60rem;
+  }
+  h1 { font-size: 1rem; font-weight: 600; margin: 0 0 1rem; }
+  fieldset { border: 1px solid var(--line); margin: 0 0 1rem; padding: .75rem; }
+  legend { color: var(--muted); padding: 0 .35rem; }
+  label { display: block; margin-bottom: .5rem; }
+  input, button, select {
+    font: inherit; padding: .35rem .5rem;
+    background: var(--bg); color: var(--fg);
+    border: 1px solid var(--line);
+  }
+  input { width: 100%; max-width: 24rem; }
+  button { cursor: pointer; }
+  #log {
+    border: 1px solid var(--line); height: 24rem;
+    overflow-y: auto; padding: .5rem; margin-bottom: .5rem;
+  }
+  .msg { margin-bottom: .25rem; word-wrap: break-word; }
+  .who { font-weight: 600; }
+  .at { color: var(--muted); font-size: .85em; }
+  .sys { color: var(--muted); font-style: italic; }
+  .err { color: #c0392b; }
+  @media (prefers-color-scheme: dark) { .err { color: #ff6b5a; } }
+  #composer { display: flex; gap: .5rem; }
+  #composer input { flex: 1; max-width: none; }
+  #status { color: var(--muted); margin-left: .5rem; }
+</style>
+</head>
+<body>
+
+<h1>OpenVoxa debug client <span id="status">disconnected</span></h1>
+
+<fieldset>
+  <legend>sign in</legend>
+  <label>username <input id="username" value="ryan" autocomplete="username"></label>
+  <label>password <input id="password" type="password" autocomplete="current-password"></label>
+  <button id="login">Log in</button>
+  <button id="register">Register</button>
+</fieldset>
+
+<fieldset>
+  <legend>channel</legend>
+  <select id="channel"></select>
+  <button id="connect" disabled>Connect</button>
+  <button id="disconnect" disabled>Disconnect</button>
+</fieldset>
+
+<div id="log" aria-live="polite"></div>
+
+<div id="composer">
+  <input id="body" placeholder="Message" disabled autocomplete="off">
+  <button id="send" disabled>Send</button>
+</div>
+
+<script>
+const api = location.origin;
+let token = null;
+let socket = null;
+
+const $ = (id) => document.getElementById(id);
+const logEl = $("log");
+
+function line(cls, html) {
+  const div = document.createElement("div");
+  div.className = cls;
+  div.innerHTML = html;
+  logEl.appendChild(div);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+// Everything from the server is treated as untrusted text. Message bodies
+// are other people's input and must never be injected as HTML.
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  })[c]);
+}
+
+function renderMessage(m) {
+  const when = new Date(m.created_at).toLocaleTimeString();
+  line("msg",
+    `<span class="at">${esc(when)}</span> ` +
+    `<span class="who">${esc(m.username || "[deleted]")}</span>: ${esc(m.body)}`);
+}
+
+async function call(path, options = {}) {
+  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const res = await fetch(api + path, { ...options, headers });
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : null;
+
+  if (!res.ok) throw new Error(data?.error || res.statusText);
+  return data;
+}
+
+async function authenticate(path) {
+  try {
+    const data = await call(path, {
+      method: "POST",
+      body: JSON.stringify({
+        username: $("username").value,
+        password: $("password").value,
+        device_name: "debug-client"
+      })
+    });
+    token = data.token;
+    line("sys", `signed in as ${esc(data.username)}`);
+    await loadChannels();
+  } catch (err) {
+    line("err", `auth failed: ${esc(err.message)}`);
+  }
+}
+
+async function loadChannels() {
+  const channels = await call("/api/v1/channels");
+  const select = $("channel");
+  select.innerHTML = "";
+
+  for (const c of channels.filter((c) => c.kind === "text")) {
+    const opt = document.createElement("option");
+    opt.value = c.id;
+    opt.textContent = `${c.name} (${c.encrypted ? "encrypted" : "plaintext"}, kept ${c.retention})`;
+    select.appendChild(opt);
+  }
+
+  $("connect").disabled = select.options.length === 0;
+}
+
+async function connect() {
+  const channelID = $("channel").value;
+
+  // Two steps on purpose: browsers cannot set an Authorization header on a
+  // websocket, so we trade the session token for a single-use ticket rather
+  // than putting the token itself in a URL.
+  const { ticket } = await call("/api/v1/ws/ticket", { method: "POST" });
+
+  const url = new URL("/api/v1/ws", api);
+  url.protocol = url.protocol.replace("http", "ws");
+  url.searchParams.set("ticket", ticket);
+  url.searchParams.set("channel", channelID);
+
+  socket = new WebSocket(url);
+
+  socket.onopen = () => {
+    $("status").textContent = "connected";
+    $("connect").disabled = true;
+    $("disconnect").disabled = false;
+    $("body").disabled = false;
+    $("send").disabled = false;
+  };
+
+  socket.onclose = () => {
+    $("status").textContent = "disconnected";
+    $("connect").disabled = false;
+    $("disconnect").disabled = true;
+    $("body").disabled = true;
+    $("send").disabled = true;
+    line("sys", "connection closed");
+  };
+
+  socket.onmessage = (event) => {
+    const frame = JSON.parse(event.data);
+    if (frame.type === "history") {
+      logEl.innerHTML = "";
+      line("sys", `${frame.messages.length} earlier message(s)`);
+      frame.messages.forEach(renderMessage);
+    } else if (frame.type === "message") {
+      renderMessage(frame);
+    } else if (frame.type === "error") {
+      line("err", esc(frame.error));
+    }
+  };
+}
+
+function send() {
+  const input = $("body");
+  if (!input.value.trim() || !socket) return;
+  socket.send(JSON.stringify({ type: "send", body: input.value }));
+  input.value = "";
+}
+
+$("login").onclick = () => authenticate("/api/v1/auth/login");
+$("register").onclick = () => authenticate("/api/v1/auth/register");
+$("connect").onclick = () => connect().catch((e) => line("err", esc(e.message)));
+$("disconnect").onclick = () => socket?.close();
+$("send").onclick = send;
+$("body").onkeydown = (e) => { if (e.key === "Enter") send(); };
+</script>
+</body>
+</html>
