@@ -17,6 +17,14 @@ type Config struct {
 	// DebugUI serves a bare-bones test client at /debug/. Off by default
 	// and should stay off anywhere real.
 	DebugUI bool
+
+	// TrustProxy makes the server read the client address from the
+	// X-Forwarded-For header instead of the TCP connection.
+	//
+	// Only enable this when a reverse proxy you control sits in front of
+	// the server. With it on and no such proxy, anyone can set that header
+	// themselves and walk straight past the rate limiter.
+	TrustProxy bool
 }
 
 // Load reads configuration from the environment. Required values with no
@@ -27,6 +35,7 @@ func Load() (*Config, error) {
 		ListenAddr:  env("OPENVOXA_LISTEN_ADDR", ":8080"),
 		DatabaseURL: os.Getenv("OPENVOXA_DATABASE_URL"),
 		DebugUI:     envBool("OPENVOXA_DEBUG_UI", false),
+		TrustProxy:  envBool("OPENVOXA_TRUST_PROXY", false),
 	}
 
 	if cfg.DatabaseURL == "" {

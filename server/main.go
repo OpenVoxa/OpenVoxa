@@ -51,9 +51,11 @@ func run() error {
 		return err
 	}
 
+	db.StartSessionSweep(ctx, pool)
+
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           httpapi.New(pool, cfg.DebugUI),
+		Handler:           httpapi.New(pool, cfg.DebugUI, cfg.TrustProxy),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

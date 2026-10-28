@@ -150,6 +150,15 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Keyed on the submitted username, consumed on failure only. Applied
+	// whether or not the account exists, so a 429 does not reveal which
+	// usernames are real.
+	userKey := strings.ToLower(strings.TrimSpace(req.Username))
+	if !a.authUser.Allow(userKey) {
+		writeTooManyRequests(w, a.authUser.RetryAfter(userKey))
+		return
+	}
+
 	var userID, username, storedHash, role string
 	err := a.pool.QueryRow(r.Context(),
 		`SELECT id, username, password_hash, role FROM users
@@ -180,6 +189,11 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid username or password")
 		return
 	}
+
+	// Correct password clears the per-account budget, so someone who
+	// mistyped a few times is not left throttled afterwards. This is also
+	// what stops the account limiter becoming a lockout weapon.
+	a.authUser.Reset(userKey)
 
 	a.issueSession(w, r, userID, username, role, req.DeviceName)
 }
