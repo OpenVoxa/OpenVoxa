@@ -15,12 +15,15 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/openvoxa/openvoxa/server/internal/hub"
 	"github.com/openvoxa/openvoxa/server/internal/perm"
+	"github.com/openvoxa/openvoxa/server/internal/ratelimit"
 )
 
 // maxRequestBody caps how much JSON we will read from a client. Auth payloads
@@ -34,23 +37,44 @@ type API struct {
 	pool    *pgxpool.Pool
 	hub     *hub.Hub
 	tickets *ticketStore
+
+	trustProxy bool
+
+	// Two limiters, because each covers a hole the other leaves.
+	//
+	// authIP stops one host hammering the login endpoint. On its own it is
+	// beaten by rotating source addresses.
+	//
+	// authUser stops a distributed attack converging on one account. On its
+	// own it would let an attacker lock a real user out, which is why the
+	// window is short and a correct password clears it immediately.
+	authIP   *ratelimit.Limiter
+	authUser *ratelimit.Limiter
 }
 
 // New returns the server's root handler. debugUIEnabled serves a bare-bones
 // test client at /debug/; it is off unless explicitly turned on.
-func New(pool *pgxpool.Pool, debugUIEnabled bool) http.Handler {
+func New(pool *pgxpool.Pool, debugUIEnabled, trustProxy bool) http.Handler {
 	api := &API{
-		pool:    pool,
-		hub:     hub.New(),
-		tickets: newTicketStore(),
+		pool:       pool,
+		hub:        hub.New(),
+		tickets:    newTicketStore(),
+		trustProxy: trustProxy,
+
+		// 10 attempts up front, then one every 6 seconds. Generous for a
+		// person typing a password, useless for a dictionary attack.
+		authIP: ratelimit.New(1.0/6.0, 10, 15*time.Minute),
+
+		// 5 failures per account, refilling one every 2 minutes.
+		authUser: ratelimit.New(1.0/120.0, 5, 30*time.Minute),
 	}
 
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /health", api.health)
 
-	mux.HandleFunc("POST /api/v1/auth/register", api.register)
-	mux.HandleFunc("POST /api/v1/auth/login", api.login)
+	mux.HandleFunc("POST /api/v1/auth/register", api.limitByIP(api.register))
+	mux.HandleFunc("POST /api/v1/auth/login", api.limitByIP(api.login))
 	mux.HandleFunc("POST /api/v1/auth/logout", api.requireAuth(api.logout))
 
 	mux.HandleFunc("GET /api/v1/me", api.requireAuth(api.me))
@@ -285,4 +309,50 @@ func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 		return nil, nil, errors.New("httpapi: ResponseWriter does not support hijacking")
 	}
 	return hj.Hijack()
+}
+
+// limitByIP rejects callers who have spent their token budget.
+func (a *API) limitByIP(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ip := a.clientIP(r)
+		if !a.authIP.Allow(ip) {
+			writeTooManyRequests(w, a.authIP.RetryAfter(ip))
+			return
+		}
+		next(w, r)
+	}
+}
+
+func writeTooManyRequests(w http.ResponseWriter, retryAfter time.Duration) {
+	seconds := int(retryAfter.Seconds())
+	if seconds < 1 {
+		seconds = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(seconds))
+	writeError(w, http.StatusTooManyRequests, "too many attempts, try again later")
+}
+
+// clientIP returns the address to key rate limiting on.
+//
+// When trustProxy is set we take the RIGHTMOST X-Forwarded-For entry, not
+// the leftmost. A reverse proxy appends the address it saw, so a client who
+// sends a forged header produces "forged, real" and the rightmost value is
+// the one our proxy observed. Taking the leftmost would let anyone pick
+// their own rate-limit key.
+//
+// This assumes exactly one trusted proxy. More hops means skipping that
+// many entries from the right.
+func (a *API) clientIP(r *http.Request) string {
+	if a.trustProxy {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			parts := strings.Split(xff, ",")
+			return strings.TrimSpace(parts[len(parts)-1])
+		}
+	}
+
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
