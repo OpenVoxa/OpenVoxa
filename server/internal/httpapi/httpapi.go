@@ -5,6 +5,7 @@
 package httpapi
 
 import (
+	"bufio"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -261,4 +263,26 @@ type statusRecorder struct {
 func (r *statusRecorder) WriteHeader(code int) {
 	r.status = code
 	r.ResponseWriter.WriteHeader(code)
+}
+
+// Unwrap lets http.ResponseController reach the real ResponseWriter
+// underneath this recorder.
+func (r *statusRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
+}
+
+// Hijack forwards to the underlying connection so websocket upgrades work
+// through this middleware.
+//
+// Wrapping a ResponseWriter silently removes any interface it implemented
+// beyond ResponseWriter itself, including http.Hijacker. Without this
+// method every websocket upgrade fails with "does not implement
+// http.Hijacker". Any future middleware that wraps the writer must forward
+// these two methods as well.
+func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := r.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("httpapi: ResponseWriter does not support hijacking")
+	}
+	return hj.Hijack()
 }
