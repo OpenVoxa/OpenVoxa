@@ -1,0 +1,20 @@
+# Copyright (C) 2026 The OpenVoxa Authors
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Development configuration. The API key and secret below are the well-known
+# LiveKit dev values and are public knowledge. Generate real ones before this
+# is reachable from anywhere but localhost.
+
+port: 7880
+
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50100
+  use_external_ip: false
+
+keys:
+  devkey: secret
+
+logging:
+  level: info

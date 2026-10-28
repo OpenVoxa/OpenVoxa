@@ -1,0 +1,50 @@
+# Copyright (C) 2026 The OpenVoxa Authors
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Local development only. The credentials in here are deliberately obvious
+# so nobody mistakes them for something safe to deploy.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: openvoxa
+      POSTGRES_PASSWORD: devpassword
+      POSTGRES_DB: openvoxa
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openvoxa"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Not wired into the server until stage 5. Brought up now so the whole
+  # stack is one command from the start.
+  # TODO: pin to a specific tag once we settle on a version.
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --config /etc/livekit.yaml --node-ip 127.0.0.1
+    ports:
+      - "7880:7880"       # WebSocket signalling
+      - "7881:7881"       # TCP fallback for media
+      - "50000-50100:50000-50100/udp"  # RTC media
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+
+  server:
+    build:
+      context: ../server
+    environment:
+      OPENVOXA_LISTEN_ADDR: ":8080"
+      OPENVOXA_DATABASE_URL: "postgres://openvoxa:devpassword@postgres:5432/openvoxa?sslmode=disable"
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
