@@ -80,9 +80,9 @@ Pre-alpha. Nothing works yet. Here's the honest state of things:
 | Milestone | Status |
 | --- | --- |
 | Design decisions documented | ✅ Done |
-| Repo structure, license, contribution model | 🏗️ In progress |
-| Server skeleton, auth, one text channel | ⬜ Not started |
-| Permissions | ⬜ Not started |
+| Repo structure, license, contribution model | ✅ Done |
+| Server skeleton, auth, one text channel | ✅ Done |
+| Permissions | ⬜ ✅ Done |
 | Voice via LiveKit | ⬜ Not started |
 | End-to-end encrypted text (MLS) | ⬜ Not started |
 | End-to-end encrypted media | ⬜ Not started |
