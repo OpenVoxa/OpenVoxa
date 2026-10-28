@@ -21,12 +21,14 @@ services:
       timeout: 5s
       retries: 10
 
-  # Not wired into the server until stage 5. Brought up now so the whole
-  # stack is one command from the start.
   # TODO: pin to a specific tag once we settle on a version.
   livekit:
     image: livekit/livekit-server:latest
-    command: --config /etc/livekit.yaml --node-ip 127.0.0.1
+    # --node-ip MUST be the address clients can actually reach. LiveKit
+    # advertises it as the destination for RTP, so a wrong value here gives
+    # you a connection that establishes and then carries no audio. This is
+    # the single most common self-hosting mistake.
+    command: --config /etc/livekit.yaml --node-ip 10.0.3.9
     ports:
       - "7880:7880"       # WebSocket signalling
       - "7881:7881"       # TCP fallback for media
@@ -40,9 +42,15 @@ services:
     environment:
       OPENVOXA_LISTEN_ADDR: ":8080"
       OPENVOXA_DATABASE_URL: "postgres://openvoxa:devpassword@postgres:5432/openvoxa?sslmode=disable"
+
       # Serves the throwaway test client at /debug/chat.html.
       # Remove this line for any deployment that is not your own LAN.
       OPENVOXA_DEBUG_UI: "true"
+
+      # Must be reachable from the BROWSER, not from this container.
+      OPENVOXA_LIVEKIT_URL: "ws://10.0.3.9:7880"
+      OPENVOXA_LIVEKIT_API_KEY: "APIVdQrViCp7oaf"
+      OPENVOXA_LIVEKIT_API_SECRET: "qiLA147ZnieDwaf7AAjOLrrn8dmIC3I3eYV61wp8eWOC"
     ports:
       - "8080:8080"
     depends_on:
