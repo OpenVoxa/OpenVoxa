@@ -1,9 +1,15 @@
 # Copyright (C) 2026 The OpenVoxa Authors
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Development configuration. The API key and secret below are the well-known
-# LiveKit dev values and are public knowledge. Generate real ones before this
-# is reachable from anywhere but localhost.
+# Development configuration.
+#
+# The key below is a placeholder. Generate your own before this is reachable
+# from anywhere, and keep the secret out of git:
+#
+#   docker run --rm livekit/livekit-server generate-keys
+#
+# Format is  <apiKey>: <apiSecret>  and both must match the values in the
+# server's OPENVOXA_LIVEKIT_API_KEY / _API_SECRET.
 
 port: 7880
 
@@ -11,10 +17,13 @@ rtc:
   tcp_port: 7881
   port_range_start: 50000
   port_range_end: 50100
+
+  # The VM reaches clients over the LAN directly, so LiveKit should not try
+  # to discover a public address via STUN.
   use_external_ip: false
 
 keys:
-  devkey: secret
+  APIVdQrViCp7oaf: qiLA147ZnieDwaf7AAjOLrrn8dmIC3I3eYV61wp8eWOC
 
 logging:
   level: info

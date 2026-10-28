@@ -55,7 +55,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           httpapi.New(pool, cfg.DebugUI, cfg.TrustProxy),
+		Handler:           httpapi.New(pool, cfg.DebugUI, cfg.TrustProxy, cfg.LiveKit),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

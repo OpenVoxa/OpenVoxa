@@ -21,6 +21,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/openvoxa/openvoxa/server/internal/config"
 	"github.com/openvoxa/openvoxa/server/internal/hub"
 	"github.com/openvoxa/openvoxa/server/internal/perm"
 	"github.com/openvoxa/openvoxa/server/internal/ratelimit"
@@ -39,6 +40,7 @@ type API struct {
 	tickets *ticketStore
 
 	trustProxy bool
+	livekit    config.LiveKitConfig
 
 	// Two limiters, because each covers a hole the other leaves.
 	//
@@ -54,12 +56,13 @@ type API struct {
 
 // New returns the server's root handler. debugUIEnabled serves a bare-bones
 // test client at /debug/; it is off unless explicitly turned on.
-func New(pool *pgxpool.Pool, debugUIEnabled, trustProxy bool) http.Handler {
+func New(pool *pgxpool.Pool, debugUIEnabled, trustProxy bool, livekit config.LiveKitConfig) http.Handler {
 	api := &API{
 		pool:       pool,
 		hub:        hub.New(),
 		tickets:    newTicketStore(),
 		trustProxy: trustProxy,
+		livekit:    livekit,
 
 		// 10 attempts up front, then one every 6 seconds. Generous for a
 		// person typing a password, useless for a dictionary attack.
@@ -90,8 +93,17 @@ func New(pool *pgxpool.Pool, debugUIEnabled, trustProxy bool) http.Handler {
 	mux.HandleFunc("DELETE /api/v1/channels/{id}",
 		api.requireRole(perm.Administrator, api.deleteChannel))
 
+	mux.HandleFunc("POST /api/v1/channels/{id}/voice-token",
+		api.requireAuth(api.voiceToken))
+	mux.HandleFunc("PATCH /api/v1/channels/{id}/force-ptt",
+		api.requireRole(perm.Moderator, api.setForcePTT))
+
 	mux.HandleFunc("POST /api/v1/ws/ticket", api.requireAuth(api.wsTicket))
 	mux.HandleFunc("GET /api/v1/ws", api.websocket)
+
+	if livekit.APIKey == "" {
+		slog.Warn("voice is disabled: LiveKit is not configured")
+	}
 
 	if debugUIEnabled {
 		slog.Warn("debug UI enabled at /debug/ - do not run this in production")
@@ -143,6 +155,7 @@ type channelResponse struct {
 
 	MinRoleView string `json:"min_role_view"`
 	MinRolePost string `json:"min_role_post"`
+	ForcePTT    bool   `json:"force_ptt"`
 
 	// CanPost saves every client from reimplementing the rank comparison.
 	// It is advisory only: the server checks again on the websocket.
@@ -164,7 +177,7 @@ func (a *API) listChannels(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.pool.Query(r.Context(),
 		`SELECT c.id, c.name, c.kind, c.encrypted,
 		        EXTRACT(EPOCH FROM c.retention)::float8,
-		        c.min_role_view, c.min_role_post
+		        c.min_role_view, c.min_role_post, c.force_ptt
 		   FROM channels c
 		   JOIN roles rv ON rv.name = c.min_role_view
 		  WHERE rv.rank <= (SELECT rank FROM roles WHERE name = $1)
@@ -185,7 +198,7 @@ func (a *API) listChannels(w http.ResponseWriter, r *http.Request) {
 		var retentionSeconds *float64
 
 		if err := rows.Scan(&c.ID, &c.Name, &c.Kind, &c.Encrypted, &retentionSeconds,
-			&c.MinRoleView, &c.MinRolePost); err != nil {
+			&c.MinRoleView, &c.MinRolePost, &c.ForcePTT); err != nil {
 			slog.Error("scanning channel", "err", err)
 			writeError(w, http.StatusInternalServerError, "could not list channels")
 			return

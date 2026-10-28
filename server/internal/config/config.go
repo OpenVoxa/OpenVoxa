@@ -25,6 +25,18 @@ type Config struct {
 	// the server. With it on and no such proxy, anyone can set that header
 	// themselves and walk straight past the rate limiter.
 	TrustProxy bool
+
+	// LiveKit holds the media server settings. Voice is disabled when the
+	// key or secret is empty, so a text-only deployment needs no LiveKit.
+	LiveKit LiveKitConfig
+}
+
+type LiveKitConfig struct {
+	// URL is what CLIENTS connect to, so it must be reachable from their
+	// machines. Not the internal Docker hostname.
+	URL       string
+	APIKey    string
+	APISecret string
 }
 
 // Load reads configuration from the environment. Required values with no
@@ -36,10 +48,30 @@ func Load() (*Config, error) {
 		DatabaseURL: os.Getenv("OPENVOXA_DATABASE_URL"),
 		DebugUI:     envBool("OPENVOXA_DEBUG_UI", false),
 		TrustProxy:  envBool("OPENVOXA_TRUST_PROXY", false),
+
+		LiveKit: LiveKitConfig{
+			URL:       os.Getenv("OPENVOXA_LIVEKIT_URL"),
+			APIKey:    os.Getenv("OPENVOXA_LIVEKIT_API_KEY"),
+			APISecret: os.Getenv("OPENVOXA_LIVEKIT_API_SECRET"),
+		},
 	}
 
 	if cfg.DatabaseURL == "" {
 		return nil, fmt.Errorf("OPENVOXA_DATABASE_URL is required")
+	}
+
+	// Partial LiveKit configuration is a mistake worth failing on. Silently
+	// disabling voice because one variable was typo'd would be worse than
+	// refusing to start.
+	lkSet := 0
+	for _, v := range []string{cfg.LiveKit.URL, cfg.LiveKit.APIKey, cfg.LiveKit.APISecret} {
+		if v != "" {
+			lkSet++
+		}
+	}
+	if lkSet != 0 && lkSet != 3 {
+		return nil, fmt.Errorf(
+			"OPENVOXA_LIVEKIT_URL, _API_KEY and _API_SECRET must all be set or all be empty")
 	}
 
 	return cfg, nil

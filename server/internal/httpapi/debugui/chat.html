@@ -12,6 +12,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OpenVoxa debug client</title>
+<script src="https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.umd.min.js"></script>
 <style>
   :root {
     color-scheme: light dark;
@@ -51,6 +52,10 @@
   #composer input { flex: 1; max-width: none; }
   #status { color: var(--muted); margin-left: .5rem; }
   #whoami { color: var(--muted); margin-left: .5rem; font-weight: 400; }
+  #participants { list-style: none; margin: .5rem 0 0; padding: 0; }
+  #participants li { padding: .15rem 0; }
+  .speaking { font-weight: 600; }
+  .ptt-hint { color: var(--muted); font-size: .85em; }
 </style>
 </head>
 <body>
@@ -70,6 +75,19 @@
   <select id="channel"></select>
   <button id="connect" disabled>Connect</button>
   <button id="disconnect" disabled>Disconnect</button>
+</fieldset>
+
+<fieldset>
+  <legend>voice</legend>
+  <select id="voiceChannel"></select>
+  <button id="joinVoice" disabled>Join</button>
+  <button id="leaveVoice" disabled>Leave</button>
+  <button id="muteToggle" disabled>Mute</button>
+  <label style="margin-top:.5rem">
+    <input type="checkbox" id="pttMode"> push-to-talk
+    <span class="ptt-hint">(hold Space while this page has focus)</span>
+  </label>
+  <ul id="participants"></ul>
 </fieldset>
 
 <div id="log" aria-live="polite"></div>
@@ -143,6 +161,19 @@ async function authenticate(path) {
 
 async function loadChannels() {
   const channels = await call("/api/v1/channels");
+
+  const voiceSelect = $("voiceChannel");
+  voiceSelect.innerHTML = "";
+  for (const c of channels.filter((c) => c.kind === "voice")) {
+    const opt = document.createElement("option");
+    opt.value = c.id;
+    opt.dataset.forcePtt = c.force_ptt ? "1" : "";
+    opt.textContent =
+      `${c.name}${c.can_post ? "" : " (listen only)"}${c.force_ptt ? " [PTT required]" : ""}`;
+    voiceSelect.appendChild(opt);
+  }
+  $("joinVoice").disabled = voiceSelect.options.length === 0;
+
   const select = $("channel");
   select.innerHTML = "";
 
@@ -219,6 +250,117 @@ function send() {
   socket.send(JSON.stringify({ type: "send", body: input.value }));
   input.value = "";
 }
+
+// ---------------------------------------------------------------- voice
+
+let room = null;
+let micTrack = null;
+let pttActive = false;
+
+function renderParticipants() {
+  const ul = $("participants");
+  ul.innerHTML = "";
+  if (!room) return;
+
+  const all = [room.localParticipant, ...room.remoteParticipants.values()];
+  for (const p of all) {
+    const li = document.createElement("li");
+    const muted = ![...p.audioTrackPublications.values()].some(
+      (pub) => pub.track && !pub.isMuted);
+    li.textContent =
+      `${p.name || p.identity}${p === room.localParticipant ? " (you)" : ""}` +
+      `${muted ? " - muted" : ""}`;
+    if (p.isSpeaking) li.className = "speaking";
+    ul.appendChild(li);
+  }
+}
+
+async function joinVoice() {
+  const opt = $("voiceChannel").selectedOptions[0];
+  const data = await call(`/api/v1/channels/${opt.value}/voice-token`, { method: "POST" });
+
+  room = new LivekitClient.Room({ adaptiveStream: true, dynacast: true });
+
+  room
+    .on(LivekitClient.RoomEvent.ParticipantConnected, renderParticipants)
+    .on(LivekitClient.RoomEvent.ParticipantDisconnected, renderParticipants)
+    .on(LivekitClient.RoomEvent.ActiveSpeakersChanged, renderParticipants)
+    .on(LivekitClient.RoomEvent.TrackMuted, renderParticipants)
+    .on(LivekitClient.RoomEvent.TrackUnmuted, renderParticipants)
+    .on(LivekitClient.RoomEvent.Disconnected, () => {
+      line("sys", "left voice");
+      room = null; micTrack = null;
+      renderParticipants();
+      $("joinVoice").disabled = false;
+      $("leaveVoice").disabled = true;
+      $("muteToggle").disabled = true;
+    })
+    .on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
+      // Remote audio needs an element in the DOM to actually play.
+      if (track.kind === "audio") document.body.appendChild(track.attach());
+    })
+    .on(LivekitClient.RoomEvent.TrackUnsubscribed, (track) => {
+      track.detach().forEach((el) => el.remove());
+    });
+
+  await room.connect(data.url, data.token);
+  line("sys", `joined voice: ${esc(opt.textContent)}`);
+
+  if (data.force_ptt) {
+    $("pttMode").checked = true;
+    $("pttMode").disabled = true;
+    line("sys", "this channel requires push-to-talk");
+  } else {
+    $("pttMode").disabled = false;
+  }
+
+  if (data.can_publish) {
+    micTrack = await LivekitClient.createLocalAudioTrack({
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true
+    });
+    await room.localParticipant.publishTrack(micTrack);
+    // In PTT mode the mic starts closed and opens only while held.
+    if ($("pttMode").checked) await micTrack.mute();
+    $("muteToggle").disabled = false;
+  } else {
+    line("sys", "listen-only: you lack permission to speak here");
+  }
+
+  $("joinVoice").disabled = true;
+  $("leaveVoice").disabled = false;
+  renderParticipants();
+}
+
+async function setMuted(muted) {
+  if (!micTrack) return;
+  muted ? await micTrack.mute() : await micTrack.unmute();
+  $("muteToggle").textContent = muted ? "Unmute" : "Mute";
+  renderParticipants();
+}
+
+$("joinVoice").onclick = () => joinVoice().catch((e) => line("err", esc(e.message)));
+$("leaveVoice").onclick = () => room?.disconnect();
+$("muteToggle").onclick = () => setMuted(!micTrack?.isMuted);
+
+$("pttMode").onchange = () => setMuted($("pttMode").checked);
+
+// Push-to-talk. A real client puts this behind a global hotkey in Electron
+// so it works when the window is not focused; a web page cannot do that.
+document.addEventListener("keydown", (e) => {
+  if (e.code !== "Space" || !$("pttMode").checked || pttActive) return;
+  if (e.target.tagName === "INPUT") return;
+  e.preventDefault();
+  pttActive = true;
+  setMuted(false);
+});
+
+document.addEventListener("keyup", (e) => {
+  if (e.code !== "Space" || !pttActive) return;
+  pttActive = false;
+  setMuted(true);
+});
 
 $("login").onclick = () => authenticate("/api/v1/auth/login");
 $("register").onclick = () => authenticate("/api/v1/auth/register");
