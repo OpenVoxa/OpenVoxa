@@ -5,26 +5,42 @@
 package httpapi
 
 import (
+	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/openvoxa/openvoxa/server/internal/hub"
 )
 
 // maxRequestBody caps how much JSON we will read from a client. Auth payloads
 // are tiny; anything larger is a mistake or an attack.
 const maxRequestBody = 64 * 1024
 
+//go:embed debugui
+var debugUI embed.FS
+
 type API struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	hub     *hub.Hub
+	tickets *ticketStore
 }
 
-func New(pool *pgxpool.Pool) http.Handler {
-	api := &API{pool: pool}
+// New returns the server's root handler. debugUIEnabled serves a bare-bones
+// test client at /debug/; it is off unless explicitly turned on.
+func New(pool *pgxpool.Pool, debugUIEnabled bool) http.Handler {
+	api := &API{
+		pool:    pool,
+		hub:     hub.New(),
+		tickets: newTicketStore(),
+	}
 
 	mux := http.NewServeMux()
 
@@ -35,8 +51,28 @@ func New(pool *pgxpool.Pool) http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/logout", api.requireAuth(api.logout))
 
 	mux.HandleFunc("GET /api/v1/me", api.requireAuth(api.me))
+	mux.HandleFunc("GET /api/v1/channels", api.requireAuth(api.listChannels))
+
+	mux.HandleFunc("POST /api/v1/ws/ticket", api.requireAuth(api.wsTicket))
+	mux.HandleFunc("GET /api/v1/ws", api.websocket)
+
+	if debugUIEnabled {
+		slog.Warn("debug UI enabled at /debug/ - do not run this in production")
+		mux.Handle("GET /debug/", http.StripPrefix("/debug/", debugFileServer()))
+	}
 
 	return logRequests(mux)
+}
+
+// debugFileServer serves the embedded debugui directory at the root of the
+// returned handler, so /debug/chat.html maps to debugui/chat.html.
+func debugFileServer() http.Handler {
+	sub, err := fs.Sub(debugUI, "debugui")
+	if err != nil {
+		// Embedded at compile time, so a failure here is a build problem.
+		panic(err)
+	}
+	return http.FileServerFS(sub)
 }
 
 type healthResponse struct {
@@ -59,6 +95,58 @@ func (a *API) health(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+type channelResponse struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Kind      string `json:"kind"`
+	Encrypted bool   `json:"encrypted"`
+	Retention string `json:"retention"`
+}
+
+func (a *API) listChannels(w http.ResponseWriter, r *http.Request) {
+	rows, err := a.pool.Query(r.Context(),
+		`SELECT id, name, kind, encrypted, EXTRACT(EPOCH FROM retention)::float8
+		   FROM channels ORDER BY name`)
+	if err != nil {
+		slog.Error("listing channels", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not list channels")
+		return
+	}
+	defer rows.Close()
+
+	channels := make([]channelResponse, 0)
+	for rows.Next() {
+		var c channelResponse
+		// Postgres INTERVAL has no direct Go equivalent, so it comes back
+		// as seconds and is formatted here. NULL means no expiry.
+		var retentionSeconds *float64
+
+		if err := rows.Scan(&c.ID, &c.Name, &c.Kind, &c.Encrypted, &retentionSeconds); err != nil {
+			slog.Error("scanning channel", "err", err)
+			writeError(w, http.StatusInternalServerError, "could not list channels")
+			return
+		}
+
+		// Retention is surfaced to every client so the policy can be shown
+		// in the UI before anyone posts. "forever" is an explicit value,
+		// not an absence.
+		if retentionSeconds == nil {
+			c.Retention = "forever"
+		} else {
+			c.Retention = fmt.Sprintf("%s", time.Duration(*retentionSeconds)*time.Second)
+		}
+
+		channels = append(channels, c)
+	}
+	if err := rows.Err(); err != nil {
+		slog.Error("iterating channels", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not list channels")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, channels)
 }
 
 type errorResponse struct {
@@ -84,8 +172,6 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
 
 	dec := json.NewDecoder(r.Body)
-	// Reject unknown fields so a typo in a client field name fails loudly
-	// instead of silently doing nothing.
 	dec.DisallowUnknownFields()
 
 	if err := dec.Decode(v); err != nil {
@@ -98,7 +184,6 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 		return false
 	}
 
-	// A second value in the stream means the client sent two JSON documents.
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "request body must contain a single JSON object")
 		return false

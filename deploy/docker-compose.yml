@@ -40,6 +40,9 @@ services:
     environment:
       OPENVOXA_LISTEN_ADDR: ":8080"
       OPENVOXA_DATABASE_URL: "postgres://openvoxa:devpassword@postgres:5432/openvoxa?sslmode=disable"
+      # Serves the throwaway test client at /debug/chat.html.
+      # Remove this line for any deployment that is not your own LAN.
+      OPENVOXA_DEBUG_UI: "true"
     ports:
       - "8080:8080"
     depends_on:
