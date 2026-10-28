@@ -50,11 +50,12 @@
   #composer { display: flex; gap: .5rem; }
   #composer input { flex: 1; max-width: none; }
   #status { color: var(--muted); margin-left: .5rem; }
+  #whoami { color: var(--muted); margin-left: .5rem; font-weight: 400; }
 </style>
 </head>
 <body>
 
-<h1>OpenVoxa debug client <span id="status">disconnected</span></h1>
+<h1>OpenVoxa debug client <span id="status">disconnected</span> <span id="whoami"></span></h1>
 
 <fieldset>
   <legend>sign in</legend>
@@ -132,7 +133,8 @@ async function authenticate(path) {
       })
     });
     token = data.token;
-    line("sys", `signed in as ${esc(data.username)}`);
+    $("whoami").textContent = `${data.username} (${data.role})`;
+    line("sys", `signed in as ${esc(data.username)}, role ${esc(data.role)}`);
     await loadChannels();
   } catch (err) {
     line("err", `auth failed: ${esc(err.message)}`);
@@ -147,7 +149,9 @@ async function loadChannels() {
   for (const c of channels.filter((c) => c.kind === "text")) {
     const opt = document.createElement("option");
     opt.value = c.id;
-    opt.textContent = `${c.name} (${c.encrypted ? "encrypted" : "plaintext"}, kept ${c.retention})`;
+    const access = c.can_post ? "can post" : "read only";
+    opt.textContent =
+      `${c.name} (${c.encrypted ? "encrypted" : "plaintext"}, kept ${c.retention}, ${access})`;
     select.appendChild(opt);
   }
 
@@ -171,6 +175,7 @@ async function connect() {
 
   socket.onopen = () => {
     $("status").textContent = "connected";
+    $("body").placeholder = "Message";
     $("connect").disabled = true;
     $("disconnect").disabled = false;
     $("body").disabled = false;
@@ -192,6 +197,14 @@ async function connect() {
       logEl.innerHTML = "";
       line("sys", `${frame.messages.length} earlier message(s)`);
       frame.messages.forEach(renderMessage);
+
+      // The server decides; this only reflects its answer in the UI.
+      if (!frame.can_post) {
+        line("sys", "you have read-only access to this channel");
+        $("body").disabled = true;
+        $("send").disabled = true;
+        $("body").placeholder = "Read only";
+      }
     } else if (frame.type === "message") {
       renderMessage(frame);
     } else if (frame.type === "error") {

@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/openvoxa/openvoxa/server/internal/auth"
+	"github.com/openvoxa/openvoxa/server/internal/perm"
 )
 
 // Session is the authenticated caller, attached to the request context by
@@ -22,6 +23,7 @@ type Session struct {
 	SessionID string
 	UserID    string
 	Username  string
+	Role      string
 }
 
 // contextKey is unexported so no other package can collide with our key.
@@ -54,13 +56,13 @@ func (a *API) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		var expiresAt time.Time
 
 		err := a.pool.QueryRow(r.Context(),
-			`SELECT s.id, s.user_id, u.username, s.expires_at
+			`SELECT s.id, s.user_id, u.username, u.role, s.expires_at
 			   FROM sessions s
 			   JOIN users u ON u.id = s.user_id
 			  WHERE s.token_hash = $1
 			    AND u.deleted_at IS NULL`,
 			auth.HashSessionToken(token),
-		).Scan(&s.SessionID, &s.UserID, &s.Username, &expiresAt)
+		).Scan(&s.SessionID, &s.UserID, &s.Username, &s.Role, &expiresAt)
 
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
@@ -110,4 +112,31 @@ func bearerToken(r *http.Request) (string, bool) {
 	}
 	token = strings.TrimSpace(token)
 	return token, token != ""
+}
+
+// requireRole wraps requireAuth and additionally demands a minimum role.
+//
+// The role is read fresh from the database on every request rather than
+// baked into the session, so a demotion takes effect immediately instead of
+// waiting 30 days for the token to expire.
+func (a *API) requireRole(min perm.Role, next http.HandlerFunc) http.HandlerFunc {
+	return a.requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		session := sessionFrom(r.Context())
+
+		role, err := perm.Parse(session.Role)
+		if err != nil {
+			slog.Error("session carries an unknown role", "role", session.Role)
+			writeError(w, http.StatusInternalServerError, "could not check permissions")
+			return
+		}
+
+		if !perm.AtLeast(role, min) {
+			// 403 rather than 404: the caller is authenticated and we are
+			// not hiding the route's existence, only refusing the action.
+			writeError(w, http.StatusForbidden, "insufficient permissions")
+			return
+		}
+
+		next(w, r)
+	})
 }

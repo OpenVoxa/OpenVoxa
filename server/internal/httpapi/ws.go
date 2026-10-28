@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/openvoxa/openvoxa/server/internal/hub"
+	"github.com/openvoxa/openvoxa/server/internal/perm"
 )
 
 const (
@@ -145,6 +146,7 @@ type messageFrame struct {
 type historyFrame struct {
 	Type     string         `json:"type"`
 	Messages []messageFrame `json:"messages"`
+	CanPost  bool           `json:"can_post"`
 }
 
 type errorFrame struct {
@@ -162,11 +164,14 @@ func (a *API) websocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Confirm the channel exists and is a text channel before upgrading.
-	var kind string
+	// Confirm the channel exists, is a text channel, and that this caller
+	// may view it. The permission check happens before the upgrade so a
+	// refusal is a plain HTTP error the client can read.
+	var kind, minView, minPost string
 	err := a.pool.QueryRow(r.Context(),
-		`SELECT kind FROM channels WHERE id = $1`, channelID,
-	).Scan(&kind)
+		`SELECT kind, min_role_view, min_role_post FROM channels WHERE id = $1`,
+		channelID,
+	).Scan(&kind, &minView, &minPost)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		writeError(w, http.StatusNotFound, "channel not found")
@@ -179,6 +184,34 @@ func (a *API) websocket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "not a text channel")
 		return
 	}
+
+	role, err := perm.Parse(session.Role)
+	if err != nil {
+		slog.Error("session carries an unknown role", "role", session.Role)
+		writeError(w, http.StatusInternalServerError, "could not open channel")
+		return
+	}
+
+	viewRole, err := perm.Parse(minView)
+	if err != nil {
+		slog.Error("channel has an unknown min_role_view", "channel_id", channelID)
+		writeError(w, http.StatusInternalServerError, "could not open channel")
+		return
+	}
+	if !perm.AtLeast(role, viewRole) {
+		// 404 rather than 403: a channel you cannot see should not be
+		// confirmed to exist.
+		writeError(w, http.StatusNotFound, "channel not found")
+		return
+	}
+
+	postRole, err := perm.Parse(minPost)
+	if err != nil {
+		slog.Error("channel has an unknown min_role_post", "channel_id", channelID)
+		writeError(w, http.StatusInternalServerError, "could not open channel")
+		return
+	}
+	canPost := perm.AtLeast(role, postRole)
 
 	// OriginPatterns is empty, so coder/websocket enforces same-origin. The
 	// desktop client will need an explicit allowance here later; leaving it
@@ -228,7 +261,7 @@ func (a *API) websocket(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	if err := a.sendHistory(ctx, client, channelID); err != nil {
+	if err := a.sendHistory(ctx, client, channelID, canPost); err != nil {
 		slog.Error("loading history", "err", err)
 	}
 
@@ -249,6 +282,16 @@ func (a *API) websocket(w http.ResponseWriter, r *http.Request) {
 		}
 		if frame.Type != "send" {
 			sendFrame(ctx, client, errorFrame{Type: "error", Error: "unknown frame type"})
+			continue
+		}
+
+		// Checked per message, not just at connect. A read-only connection
+		// stays read-only for its whole life.
+		if !canPost {
+			sendFrame(ctx, client, errorFrame{
+				Type:  "error",
+				Error: "you do not have permission to post in this channel",
+			})
 			continue
 		}
 
@@ -306,7 +349,7 @@ func (a *API) persistAndBroadcast(ctx context.Context, s Session, channelID, bod
 	return nil
 }
 
-func (a *API) sendHistory(ctx context.Context, client *hub.Client, channelID string) error {
+func (a *API) sendHistory(ctx context.Context, client *hub.Client, channelID string, canPost bool) error {
 	rows, err := a.pool.Query(ctx,
 		`SELECT m.id, m.author_id, COALESCE(u.username, ''), m.body, m.created_at
 		   FROM messages m
@@ -354,7 +397,7 @@ func (a *API) sendHistory(ctx context.Context, client *hub.Client, channelID str
 		messages[i], messages[j] = messages[j], messages[i]
 	}
 
-	sendFrame(ctx, client, historyFrame{Type: "history", Messages: messages})
+	sendFrame(ctx, client, historyFrame{Type: "history", Messages: messages, CanPost: canPost})
 	return nil
 }
 
