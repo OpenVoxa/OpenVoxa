@@ -21,6 +21,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/openvoxa/openvoxa/server/internal/blob"
 	"github.com/openvoxa/openvoxa/server/internal/config"
 	"github.com/openvoxa/openvoxa/server/internal/hub"
 	"github.com/openvoxa/openvoxa/server/internal/perm"
@@ -62,6 +63,10 @@ type API struct {
 	// are limited per user: 20 up front, then one every 3 seconds.
 	unfurl      *unfurl.Fetcher
 	unfurlLimit *ratelimit.Limiter
+
+	blobs         *blob.Store
+	maxAttachment int64
+	uploadLimit   *ratelimit.Limiter
 }
 
 // New returns the server's root handler. debugUIEnabled serves a bare-bones
@@ -71,7 +76,11 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	a.handler.ServeHTTP(w, r)
 }
 
-func New(pool *pgxpool.Pool, debugUIEnabled, trustProxy bool, livekit config.LiveKitConfig) *API {
+func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
+	debugUIEnabled := cfg.DebugUI
+	trustProxy := cfg.TrustProxy
+	livekit := cfg.LiveKit
+
 	api := &API{
 		pool:       pool,
 		hub:        hub.New(),
@@ -88,6 +97,13 @@ func New(pool *pgxpool.Pool, debugUIEnabled, trustProxy bool, livekit config.Liv
 
 		unfurl:      unfurl.New(),
 		unfurlLimit: ratelimit.New(1.0/3.0, 20, 15*time.Minute),
+
+		blobs:         blobs,
+		maxAttachment: cfg.MaxAttachmentBytes,
+
+		// Uploads cost disk and bandwidth, so they are tighter than
+		// previews: 10 up front, then one every 5 seconds.
+		uploadLimit: ratelimit.New(0.2, 10, 15*time.Minute),
 	}
 
 	mux := http.NewServeMux()
@@ -123,6 +139,11 @@ func New(pool *pgxpool.Pool, debugUIEnabled, trustProxy bool, livekit config.Liv
 		api.requireRole(perm.Administrator, api.setChannelRetention))
 
 	mux.HandleFunc("POST /api/v1/unfurl", api.requireAuth(api.unfurlLink))
+
+	mux.HandleFunc("POST /api/v1/channels/{id}/attachments",
+		api.requireAuth(api.uploadAttachment))
+	mux.HandleFunc("GET /api/v1/attachments/{id}",
+		api.requireAuth(api.downloadAttachment))
 
 	mux.HandleFunc("POST /api/v1/ws/ticket", api.requireAuth(api.wsTicket))
 	mux.HandleFunc("GET /api/v1/ws", api.websocket)

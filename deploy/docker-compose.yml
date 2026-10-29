@@ -61,6 +61,15 @@ services:
       OPENVOXA_LIVEKIT_URL: "${OPENVOXA_LIVEKIT_URL}"
       OPENVOXA_LIVEKIT_API_KEY: "${LIVEKIT_API_KEY}"
       OPENVOXA_LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET}"
+
+      # Per-file upload ceiling. Operators pay for the disk and the
+      # bandwidth, so operators set it.
+      OPENVOXA_MAX_ATTACHMENT_MB: "${OPENVOXA_MAX_ATTACHMENT_MB:-25}"
+    volumes:
+      # Attachment bytes. Losing this volume loses every uploaded file;
+      # the database would still hold the references and downloads would
+      # fail.
+      - blob-data:/var/lib/openvoxa/blobs
     depends_on:
       postgres:
         condition: service_healthy
@@ -96,3 +105,4 @@ volumes:
   postgres-data:
   caddy-data:
   caddy-config:
+  blob-data:

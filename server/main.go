@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/openvoxa/openvoxa/server/internal/blob"
 	"github.com/openvoxa/openvoxa/server/internal/config"
 	"github.com/openvoxa/openvoxa/server/internal/db"
 	"github.com/openvoxa/openvoxa/server/internal/httpapi"
@@ -51,7 +52,14 @@ func run() error {
 		return err
 	}
 
-	api := httpapi.New(pool, cfg.DebugUI, cfg.TrustProxy, cfg.LiveKit)
+	blobs, err := blob.NewStore(cfg.BlobDir)
+	if err != nil {
+		return err
+	}
+	slog.Info("blob store ready", "dir", cfg.BlobDir,
+		"max_attachment_mb", cfg.MaxAttachmentBytes/(1024*1024))
+
+	api := httpapi.New(pool, cfg, blobs)
 
 	db.StartSessionSweep(ctx, pool)
 
@@ -59,6 +67,7 @@ func run() error {
 	// same messages locally instead of displaying rows that no longer
 	// exist.
 	db.StartRetentionSweep(ctx, pool, api.NotifyChannelPurged)
+	db.StartBlobGC(ctx, pool, blobs)
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,

@@ -41,6 +41,8 @@ const (
 	rateLimitWindow = 10 * time.Second
 
 	pingInterval = 30 * time.Second
+
+	maxAttachmentsPerMessage = 10
 )
 
 // ticketStore holds single-use websocket tickets in memory.
@@ -131,6 +133,11 @@ func (a *API) wsTicket(w http.ResponseWriter, r *http.Request) {
 type clientFrame struct {
 	Type string `json:"type"`
 	Body string `json:"body"`
+
+	// IDs returned by the attachment upload endpoint. Claimed when the
+	// message is sent; the server verifies each one belongs to this
+	// uploader, in this channel, and is not already attached elsewhere.
+	Attachments []string `json:"attachments"`
 }
 
 type messageFrame struct {
@@ -142,6 +149,8 @@ type messageFrame struct {
 	Body      string    `json:"body"`
 	Deleted   bool      `json:"deleted"`
 	CreatedAt time.Time `json:"created_at"`
+
+	Attachments []attachmentInfo `json:"attachments,omitempty"`
 }
 
 type historyFrame struct {
@@ -305,33 +314,92 @@ func (a *API) websocket(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		if n := utf8.RuneCountInString(frame.Body); n == 0 || n > maxMessageRunes {
+		// A message carrying files may have no text, but something has
+		// to be there.
+		n := utf8.RuneCountInString(frame.Body)
+		if n > maxMessageRunes {
 			sendFrame(ctx, client, errorFrame{
 				Type:  "error",
-				Error: "message must be between 1 and 4000 characters",
+				Error: "message must be at most 4000 characters",
+			})
+			continue
+		}
+		if n == 0 && len(frame.Attachments) == 0 {
+			sendFrame(ctx, client, errorFrame{Type: "error", Error: "message is empty"})
+			continue
+		}
+		if len(frame.Attachments) > maxAttachmentsPerMessage {
+			sendFrame(ctx, client, errorFrame{
+				Type:  "error",
+				Error: "too many attachments on one message",
 			})
 			continue
 		}
 
-		if err := a.persistAndBroadcast(ctx, session, channelID, frame.Body); err != nil {
+		if err := a.persistAndBroadcast(ctx, session, channelID, frame.Body, frame.Attachments); err != nil {
 			slog.Error("persisting message", "err", err)
 			sendFrame(ctx, client, errorFrame{Type: "error", Error: "could not send message"})
 		}
 	}
 }
 
-func (a *API) persistAndBroadcast(ctx context.Context, s Session, channelID, body string) error {
+func (a *API) persistAndBroadcast(ctx context.Context, s Session, channelID, body string, attachmentIDs []string) error {
 	var out messageFrame
+
+	tx, err := a.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
 	// body is written as BYTEA. Today that is plain UTF-8; in an encrypted
 	// channel the same column will hold MLS ciphertext and the server will
 	// not be able to read it.
-	err := a.pool.QueryRow(ctx,
+	err = tx.QueryRow(ctx,
 		`INSERT INTO messages (channel_id, author_id, body)
 		 VALUES ($1, $2, $3)
 		 RETURNING id, created_at`,
 		channelID, s.UserID, []byte(body),
 	).Scan(&out.ID, &out.CreatedAt)
 	if err != nil {
+		return err
+	}
+
+	if len(attachmentIDs) > 0 {
+		// The WHERE clause is the authorisation check: an attachment can
+		// only be claimed by the account that uploaded it, in the channel
+		// it was uploaded to, and only once. Anything that fails those
+		// conditions simply does not match and is silently not attached,
+		// so a client cannot steal someone else's upload by guessing an
+		// ID.
+		rows, qerr := tx.Query(ctx,
+			`UPDATE attachments
+			    SET message_id = $1
+			  WHERE id = ANY($2::uuid[])
+			    AND channel_id = $3
+			    AND uploader_id = $4
+			    AND message_id IS NULL
+			  RETURNING id, filename, content_type, size`,
+			out.ID, attachmentIDs, channelID, s.UserID)
+		if qerr != nil {
+			return qerr
+		}
+
+		for rows.Next() {
+			var info attachmentInfo
+			if serr := rows.Scan(&info.ID, &info.Filename, &info.ContentType, &info.Size); serr != nil {
+				rows.Close()
+				return serr
+			}
+			out.Attachments = append(out.Attachments, info)
+		}
+		rows.Close()
+		if rerr := rows.Err(); rerr != nil {
+			return rerr
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
 
@@ -352,7 +420,15 @@ func (a *API) persistAndBroadcast(ctx context.Context, s Session, channelID, bod
 
 func (a *API) sendHistory(ctx context.Context, client *hub.Client, channelID string, canPost bool) error {
 	rows, err := a.pool.Query(ctx,
-		`SELECT m.id, m.author_id, COALESCE(u.username, ''), m.body, m.deleted, m.created_at
+		`SELECT m.id, m.author_id, COALESCE(u.username, ''), m.body, m.deleted, m.created_at,
+		        COALESCE(
+		          (SELECT json_agg(json_build_object(
+		                     'id', at.id,
+		                     'filename', at.filename,
+		                     'content_type', at.content_type,
+		                     'size', at.size) ORDER BY at.created_at)
+		             FROM attachments at WHERE at.message_id = m.id),
+		          '[]'::json)
 		   FROM messages m
 		   LEFT JOIN users u ON u.id = m.author_id
 		  WHERE m.channel_id = $1
@@ -371,7 +447,8 @@ func (a *API) sendHistory(ctx context.Context, client *hub.Client, channelID str
 		var authorID *string
 		var body []byte
 
-		if err := rows.Scan(&m.ID, &authorID, &m.Username, &body, &m.Deleted, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &authorID, &m.Username, &body, &m.Deleted,
+			&m.CreatedAt, &m.Attachments); err != nil {
 			return err
 		}
 
