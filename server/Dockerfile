@@ -16,10 +16,22 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -o /out/openvoxa-server .
 
+# The blob directory has to exist in the image, owned by the user the
+# server runs as.
+#
+# Docker copies the ownership and permissions of the image's directory onto
+# a named volume the first time that volume is mounted. Without this stage
+# the volume arrives owned by root, and a process running as nonroot cannot
+# create anything inside it. Distroless has no shell, so mkdir and chown
+# have to happen somewhere that does.
+FROM alpine:3 AS blobdir
+RUN mkdir -p /var/lib/openvoxa/blobs && chown -R 65532:65532 /var/lib/openvoxa
+
 # Distroless: no shell, no package manager, minimal attack surface.
 FROM gcr.io/distroless/static-debian12:nonroot
 
 COPY --from=build /out/openvoxa-server /openvoxa-server
+COPY --from=blobdir --chown=65532:65532 /var/lib/openvoxa /var/lib/openvoxa
 
 EXPOSE 8080
 USER nonroot:nonroot
