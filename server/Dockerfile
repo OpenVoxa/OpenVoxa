@@ -1,7 +1,10 @@
 # Copyright (C) 2026 The OpenVoxa Authors
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-FROM golang:1.23-alpine AS build
+# Must be at least the version in go.mod's `go` directive. Running
+# `go mod tidy` with a newer local toolchain raises that directive, and the
+# build then fails here with a confusing "go.mod requires go >= x" error.
+FROM golang:1.26-alpine AS build
 
 WORKDIR /src
 
