@@ -54,6 +54,15 @@
   .attachments img, .attachments video { max-width: 20rem; max-height: 15rem;
     display: block; border: 1px solid var(--line); margin-top: .3rem; }
   #pending { color: var(--muted); font-size: .85em; margin-bottom: .3rem; }
+
+  #gifPanel { border: 1px solid var(--line); padding: .5rem; margin-bottom: .5rem; }
+  #gifPanel[hidden] { display: none; }
+  #gifGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
+    gap: .4rem; max-height: 18rem; overflow-y: auto; margin-top: .5rem; }
+  #gifGrid img { width: 100%; height: 7rem; object-fit: cover;
+    cursor: pointer; border: 1px solid var(--line); background: #000; }
+  #gifGrid img:hover { border-color: CanvasText; }
+  #gifCredit { color: var(--muted); font-size: .8em; margin-top: .4rem; }
   #composer { display: flex; gap: .5rem; }
   #composer input { flex: 1; max-width: none; }
   #status { color: var(--muted); margin-left: .5rem; }
@@ -190,6 +199,16 @@
 
 <div id="log" aria-live="polite"></div>
 
+<div id="gifPanel" hidden>
+  <div class="row">
+    <input id="gifQuery" placeholder="Search GIFs" autocomplete="off" style="flex:1">
+    <button id="gifSearch">Search</button>
+    <button id="gifClose">Close</button>
+  </div>
+  <div id="gifGrid"></div>
+  <div id="gifCredit"></div>
+</div>
+
 <div id="pending"></div>
 
 <div id="composer">
@@ -308,6 +327,90 @@ function renderAttachments(after, list) {
   after.insertAdjacentElement("afterend", box);
   logEl.scrollTop = logEl.scrollHeight;
 }
+
+// ------------------------------------------------------------------ gifs
+//
+// Every image here is served by our own server, including the thumbnails
+// in the picker. The client never talks to Giphy or Tenor, so browsing
+// GIFs does not tell a third party who is reading this channel.
+//
+// Picking one does not link to the provider either: the server downloads
+// it once and stores it as an ordinary attachment, which means it obeys
+// the channel's retention policy and disappears when the message does.
+
+let gifEnabled = false;
+
+async function loadGifConfig() {
+  try {
+    const cfg = await call("/api/v1/gifs/config");
+    gifEnabled = cfg.enabled;
+    $("gif").hidden = !cfg.enabled;
+    $("gifCredit").textContent = cfg.attribution || "";
+  } catch {
+    gifEnabled = false;
+    $("gif").hidden = true;
+  }
+}
+
+async function searchGifs() {
+  const grid = $("gifGrid");
+  grid.innerHTML = "searching...";
+
+  const q = encodeURIComponent($("gifQuery").value.trim());
+
+  let data;
+  try {
+    data = await call(`/api/v1/gifs/search?q=${q}`);
+  } catch (e) {
+    grid.innerHTML = "";
+    return line("err", esc(e.message));
+  }
+
+  grid.innerHTML = "";
+  $("gifCredit").textContent = data.attribution || "";
+
+  if (!data.results.length) {
+    grid.textContent = "no results";
+    return;
+  }
+
+  for (const r of data.results) {
+    const img = document.createElement("img");
+    img.src = api + r.preview_url;
+    img.alt = r.description || "GIF";
+    img.loading = "lazy";
+    img.title = r.description || "";
+    img.onclick = () => pickGif(r);
+    grid.appendChild(img);
+  }
+}
+
+async function pickGif(r) {
+  $("gifPanel").hidden = true;
+
+  try {
+    const info = await call(`/api/v1/channels/${currentChannel}/gifs`, {
+      method: "POST",
+      body: JSON.stringify({ token: r.token, description: r.description })
+    });
+    pending.push(info);
+    renderPending();
+  } catch (e) {
+    line("err", esc(e.message));
+  }
+}
+
+$("gif").onclick = () => {
+  const panel = $("gifPanel");
+  panel.hidden = !panel.hidden;
+  if (!panel.hidden) {
+    $("gifQuery").focus();
+    if (!$("gifGrid").children.length) searchGifs();
+  }
+};
+$("gifClose").onclick = () => { $("gifPanel").hidden = true; };
+$("gifSearch").onclick = () => searchGifs();
+$("gifQuery").onkeydown = (e) => { if (e.key === "Enter") searchGifs(); };
 
 // ------------------------------------------------------------- markdown
 //
@@ -550,6 +653,7 @@ async function authenticate(path) {
     $("whoami").textContent = `${data.username} (${data.role})`;
     line("sys", `signed in as ${esc(data.username)}, role ${esc(data.role)}`);
     await loadChannels();
+    await loadGifConfig();
   } catch (err) {
     line("err", `auth failed: ${esc(err.message)}`);
   }
@@ -611,6 +715,7 @@ async function connect() {
     $("body").disabled = false;
     $("send").disabled = false;
     $("attach").disabled = false;
+    $("gif").disabled = !gifEnabled;
   };
 
   socket.onclose = () => {
@@ -620,6 +725,8 @@ async function connect() {
     $("body").disabled = true;
     $("send").disabled = true;
     $("attach").disabled = true;
+    $("gif").disabled = true;
+    $("gifPanel").hidden = true;
     pending = [];
     renderPending();
     line("sys", "connection closed");

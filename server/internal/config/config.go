@@ -34,6 +34,12 @@ type Config struct {
 	// and the bandwidth, so they set the ceiling.
 	MaxAttachmentBytes int64
 
+	// GIF search. Empty provider disables the feature entirely, which is
+	// the default: neither provider is privacy-clean, so an operator has
+	// to opt in knowingly.
+	GIFProvider string
+	GIFAPIKey   string
+
 	// LiveKit holds the media server settings. Voice is disabled when the
 	// key or secret is empty, so a text-only deployment needs no LiveKit.
 	LiveKit LiveKitConfig
@@ -58,6 +64,9 @@ func Load() (*Config, error) {
 		BlobDir:     env("OPENVOXA_BLOB_DIR", "/var/lib/openvoxa/blobs"),
 
 		MaxAttachmentBytes: int64(envInt("OPENVOXA_MAX_ATTACHMENT_MB", 25)) * 1024 * 1024,
+
+		GIFProvider: os.Getenv("OPENVOXA_GIF_PROVIDER"),
+		GIFAPIKey:   os.Getenv("OPENVOXA_GIF_API_KEY"),
 		TrustProxy:  envBool("OPENVOXA_TRUST_PROXY", false),
 
 		LiveKit: LiveKitConfig{
@@ -69,6 +78,15 @@ func Load() (*Config, error) {
 
 	if cfg.DatabaseURL == "" {
 		return nil, fmt.Errorf("OPENVOXA_DATABASE_URL is required")
+	}
+
+	switch cfg.GIFProvider {
+	case "", "giphy", "tenor":
+	default:
+		return nil, fmt.Errorf("OPENVOXA_GIF_PROVIDER must be giphy, tenor, or empty")
+	}
+	if cfg.GIFProvider != "" && cfg.GIFAPIKey == "" {
+		return nil, fmt.Errorf("OPENVOXA_GIF_API_KEY is required when a GIF provider is set")
 	}
 
 	// Partial LiveKit configuration is a mistake worth failing on. Silently
