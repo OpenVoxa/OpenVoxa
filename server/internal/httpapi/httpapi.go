@@ -87,6 +87,10 @@ func New(pool *pgxpool.Pool, debugUIEnabled, trustProxy bool, livekit config.Liv
 		api.requireRole(perm.Moderator, api.listUsers))
 	mux.HandleFunc("PATCH /api/v1/users/{id}/role",
 		api.requireRole(perm.Administrator, api.setUserRole))
+	mux.HandleFunc("DELETE /api/v1/users/{id}",
+		api.requireRole(perm.Administrator, api.deleteUser))
+
+	mux.HandleFunc("DELETE /api/v1/me", api.requireAuth(api.deleteOwnAccount))
 
 	mux.HandleFunc("POST /api/v1/channels",
 		api.requireRole(perm.Administrator, api.createChannel))
@@ -97,6 +101,8 @@ func New(pool *pgxpool.Pool, debugUIEnabled, trustProxy bool, livekit config.Liv
 		api.requireAuth(api.voiceToken))
 	mux.HandleFunc("PATCH /api/v1/channels/{id}/force-ptt",
 		api.requireRole(perm.Moderator, api.setForcePTT))
+	mux.HandleFunc("PATCH /api/v1/channels/{id}/retention",
+		api.requireRole(perm.Administrator, api.setChannelRetention))
 
 	mux.HandleFunc("POST /api/v1/ws/ticket", api.requireAuth(api.wsTicket))
 	mux.HandleFunc("GET /api/v1/ws", api.websocket)

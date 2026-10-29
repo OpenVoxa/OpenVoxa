@@ -52,6 +52,7 @@ func run() error {
 	}
 
 	db.StartSessionSweep(ctx, pool)
+	db.StartRetentionSweep(ctx, pool)
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
