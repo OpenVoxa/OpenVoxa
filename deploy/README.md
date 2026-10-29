@@ -7,8 +7,9 @@ Everything here brings up four containers: PostgreSQL, a LiveKit SFU, the OpenVo
 ## Requirements
 
 - Docker and Docker Compose v2
-- A machine that can hold a few GB of images and build cache. 20 GB of disk is not enough if you build Caddy from source.
+- A machine with room for a few GB of images and build cache. 20 GB of disk is not enough if you build Caddy from source.
 - UDP ports 50000-50100 reachable from your clients
+- Disk for attachments, which can be local or network storage
 
 ## Quick start
 
@@ -117,6 +118,76 @@ LiveKit advertises this address as the destination for RTP. Media travels over U
 
 Getting it wrong gives you a connection that establishes successfully and then carries no audio. Signalling works, the participant list populates, and nobody hears anything. It is the most common self-hosted LiveKit failure by a wide margin.
 
+## Attachments and storage
+
+Uploaded files are stored by the SHA-256 of their contents, spread across two levels of hex directories, with identical files stored once. The database holds the references; the bytes live wherever `OPENVOXA_BLOB_DIR` points.
+
+Two settings in `.env`:
+
+```
+OPENVOXA_MAX_ATTACHMENT_MB=25
+```
+
+`OPENVOXA_BLOB_DIR` defaults to `/var/lib/openvoxa/blobs` inside the container and rarely needs changing. What you change is what gets mounted there.
+
+By default that is a Docker named volume, `blob-data`. Attachments inherit their channel's retention policy: when retention removes a message, its attachment rows go with it, and a sweep deletes any blob nothing references any more.
+
+**The server runs as UID 65532**, and the image ships the blob directory with that ownership. Docker copies ownership onto a named volume only the first time it is mounted, so if you ever see `permission denied` on `/var/lib/openvoxa/blobs/tmp`, remove the volume and let it be recreated:
+
+```bash
+docker compose --profile tls down
+docker volume rm deploy_blob-data
+docker compose --profile tls up -d --build
+```
+
+### Using network storage
+
+Attachments are a good fit for a NAS: write once, read many, no locking. **Do not put Postgres on network storage** — that is a well-known way to corrupt a database.
+
+Export a share to the Docker host, restricted to its IP specifically rather than a subnet. NFS trusts whatever UID a client claims, so the IP restriction is doing real work.
+
+Set ownership on the share, from the NAS:
+
+```bash
+chown -R 65532:65532 /path/to/share
+chmod 750 /path/to/share
+```
+
+Mount it on the Docker host and make it persistent in `/etc/fstab`:
+
+```
+nas.example:/export/openvoxa  /mnt/openvoxa-blobs  nfs  defaults,_netdev,soft,timeo=100,noatime  0  0
+```
+
+`_netdev` stops boot hanging before networking is up. `soft,timeo=100` makes the mount fail fast rather than blocking forever when the NAS is unreachable; without it a NAS reboot can wedge the server.
+
+Confirm the container's UID can write through a Docker mount:
+
+```bash
+docker run --rm -u 65532:65532 -v /mnt/openvoxa-blobs:/test alpine \
+  sh -c 'touch /test/probe && echo writable && rm /test/probe'
+```
+
+Then point the server at it in `docker-compose.override.yml`:
+
+```yaml
+services:
+  server:
+    volumes:
+      - /mnt/openvoxa-blobs:/var/lib/openvoxa/blobs
+```
+
+Migrating from an existing named volume:
+
+```bash
+docker run --rm -v deploy_blob-data:/from -v /mnt/openvoxa-blobs:/to -u 65532:65532 alpine \
+  sh -c 'cp -a /from/. /to/'
+```
+
+Verify attachments still load before removing the old volume. That volume is your undo.
+
+If the share becomes unavailable, uploads and downloads fail while chat and voice keep working.
+
 ## Updating
 
 Code changes flow through git. Push from wherever you develop, then on the server:
@@ -176,6 +247,18 @@ If that address is not reachable from your clients, that is the problem. Also ch
 
 Not a secure context. Either TLS is not working, or you are on plain HTTP. There is no way around this in a browser.
 
+### Server restarts in a loop
+
+```bash
+docker compose logs server --tail 20
+```
+
+`permission denied` on the blob directory means a volume created before the image carried the right ownership. See the attachments section above.
+
+### Attachments show a broken image icon
+
+Signed download links are minted per delivery and expire after two hours, and the signing key is regenerated on every server restart. Reload the page to fetch fresh links. If it persists, check the blob directory is mounted and readable by UID 65532.
+
 ### Build fails with "no space left on device"
 
 Building Caddy from source needs several GB of scratch space. Free some:
@@ -213,10 +296,10 @@ Git history is permanent. A key committed once is a key to rotate, not a key to 
 
 ## Resetting
 
-Wipe everything including the database:
+Wipe everything including the database and attachments:
 
 ```bash
 docker compose down -v
 ```
 
-Accounts, messages, and channels are gone. Certificates live in a separate volume and survive, which matters because Let's Encrypt rate-limits repeated issuance.
+Accounts, messages, channels and uploaded files are gone. Certificates live in a separate volume and survive, which matters because Let's Encrypt rate-limits repeated issuance. A bind-mounted blob directory is not touched by `down -v`; remove its contents yourself if you want a clean slate.
