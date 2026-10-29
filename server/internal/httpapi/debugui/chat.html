@@ -215,6 +215,7 @@
   <input id="body" placeholder="Message" disabled autocomplete="off">
   <input type="file" id="file" multiple hidden>
   <button id="attach" disabled>Attach</button>
+  <button id="gif" disabled hidden>GIF</button>
   <button id="send" disabled>Send</button>
 </div>
 
@@ -344,11 +345,11 @@ async function loadGifConfig() {
   try {
     const cfg = await call("/api/v1/gifs/config");
     gifEnabled = cfg.enabled;
-    $("gif").hidden = !cfg.enabled;
-    $("gifCredit").textContent = cfg.attribution || "";
+    if ($("gif")) $("gif").hidden = !cfg.enabled;
+    if ($("gifCredit")) $("gifCredit").textContent = cfg.attribution || "";
   } catch {
     gifEnabled = false;
-    $("gif").hidden = true;
+    if ($("gif")) $("gif").hidden = true;
   }
 }
 
@@ -400,17 +401,27 @@ async function pickGif(r) {
   }
 }
 
-$("gif").onclick = () => {
+// on() rather than direct assignment: a null element here would throw at
+// parse time and silently prevent every handler BELOW it from being
+// attached, including the login button. A missing GIF control should cost
+// the GIF feature, not the whole page.
+function on(id, event, handler) {
+  const el = $(id);
+  if (el) el[event] = handler;
+  else console.warn(`missing element: ${id}`);
+}
+
+on("gif", "onclick", () => {
   const panel = $("gifPanel");
   panel.hidden = !panel.hidden;
   if (!panel.hidden) {
     $("gifQuery").focus();
     if (!$("gifGrid").children.length) searchGifs();
   }
-};
-$("gifClose").onclick = () => { $("gifPanel").hidden = true; };
-$("gifSearch").onclick = () => searchGifs();
-$("gifQuery").onkeydown = (e) => { if (e.key === "Enter") searchGifs(); };
+});
+on("gifClose", "onclick", () => { $("gifPanel").hidden = true; });
+on("gifSearch", "onclick", () => searchGifs());
+on("gifQuery", "onkeydown", (e) => { if (e.key === "Enter") searchGifs(); });
 
 // ------------------------------------------------------------- markdown
 //
@@ -715,7 +726,7 @@ async function connect() {
     $("body").disabled = false;
     $("send").disabled = false;
     $("attach").disabled = false;
-    $("gif").disabled = !gifEnabled;
+    if ($("gif")) $("gif").disabled = !gifEnabled;
   };
 
   socket.onclose = () => {
@@ -725,8 +736,8 @@ async function connect() {
     $("body").disabled = true;
     $("send").disabled = true;
     $("attach").disabled = true;
-    $("gif").disabled = true;
-    $("gifPanel").hidden = true;
+    if ($("gif")) $("gif").disabled = true;
+    if ($("gifPanel")) $("gifPanel").hidden = true;
     pending = [];
     renderPending();
     line("sys", "connection closed");
