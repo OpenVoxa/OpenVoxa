@@ -26,12 +26,21 @@ const sendBuffer = 32
 type Client struct {
 	Send chan []byte
 
+	// Who this connection belongs to, so a ban or an account deletion can
+	// find and close it. An authenticated connection that outlives its
+	// account is a connection that keeps working after the account should
+	// have stopped.
+	UserID string
+
 	// Guards against closing Send twice, which would panic.
 	closeOnce sync.Once
 }
 
-func NewClient() *Client {
-	return &Client{Send: make(chan []byte, sendBuffer)}
+func NewClient(userID string) *Client {
+	return &Client{
+		Send:   make(chan []byte, sendBuffer),
+		UserID: userID,
+	}
 }
 
 func (c *Client) close() {
@@ -126,6 +135,49 @@ func (h *Hub) BroadcastAll(payload []byte) {
 		slog.Warn("dropping stalled websocket client")
 		c.close()
 	}
+}
+
+// DisconnectUser closes every connection belonging to a user and reports
+// how many it closed.
+//
+// Needed because a websocket is authenticated once, at upgrade, and then
+// runs until it is closed. Deleting sessions stops the next login; it does
+// nothing to a socket that is already open. Without this, a banned user
+// keeps posting until they happen to disconnect.
+func (h *Hub) DisconnectUser(userID string) int {
+	h.mu.Lock()
+
+	doomed := make([]*Client, 0)
+	for c := range h.all {
+		if c.UserID == userID {
+			doomed = append(doomed, c)
+		}
+	}
+
+	// Remove from every channel set before closing, so a broadcast racing
+	// this cannot send on a closed channel.
+	for _, c := range doomed {
+		for id, subs := range h.channels {
+			if _, ok := subs[c]; ok {
+				delete(subs, c)
+				if len(subs) == 0 {
+					delete(h.channels, id)
+				}
+			}
+		}
+		delete(h.all, c)
+	}
+
+	h.mu.Unlock()
+
+	for _, c := range doomed {
+		c.close()
+	}
+
+	if len(doomed) > 0 {
+		slog.Info("closed websocket connections", "user_id", userID, "count", len(doomed))
+	}
+	return len(doomed)
 }
 
 // SubscriberCount is used by the health endpoint and tests.
