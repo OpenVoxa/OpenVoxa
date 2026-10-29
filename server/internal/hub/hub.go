@@ -41,10 +41,18 @@ func (c *Client) close() {
 type Hub struct {
 	mu       sync.RWMutex
 	channels map[string]map[*Client]struct{}
+
+	// Every connected client, regardless of which channel they are
+	// watching. Server-wide events (an account deleted, a channel's
+	// settings changed) go here so clients can react without reconnecting.
+	all map[*Client]struct{}
 }
 
 func New() *Hub {
-	return &Hub{channels: make(map[string]map[*Client]struct{})}
+	return &Hub{
+		channels: make(map[string]map[*Client]struct{}),
+		all:      make(map[*Client]struct{}),
+	}
 }
 
 // Subscribe adds c to a channel's subscriber set.
@@ -56,6 +64,7 @@ func (h *Hub) Subscribe(channelID string, c *Client) {
 		h.channels[channelID] = make(map[*Client]struct{})
 	}
 	h.channels[channelID][c] = struct{}{}
+	h.all[c] = struct{}{}
 }
 
 // Unsubscribe removes c and closes its send channel. Safe to call twice.
@@ -69,6 +78,7 @@ func (h *Hub) Unsubscribe(channelID string, c *Client) {
 			delete(h.channels, channelID)
 		}
 	}
+	delete(h.all, c)
 	c.close()
 }
 
@@ -92,6 +102,29 @@ func (h *Hub) Broadcast(channelID string, payload []byte) {
 	for _, c := range stalled {
 		slog.Warn("dropping stalled websocket client", "channel_id", channelID)
 		h.Unsubscribe(channelID, c)
+	}
+}
+
+// BroadcastAll delivers payload to every connected client.
+//
+// Used for events that are not scoped to one channel: an account was
+// deleted, a channel's settings changed, someone's role moved. Same
+// non-blocking send as Broadcast, for the same reason.
+func (h *Hub) BroadcastAll(payload []byte) {
+	h.mu.RLock()
+	stalled := make([]*Client, 0)
+	for c := range h.all {
+		select {
+		case c.Send <- payload:
+		default:
+			stalled = append(stalled, c)
+		}
+	}
+	h.mu.RUnlock()
+
+	for _, c := range stalled {
+		slog.Warn("dropping stalled websocket client")
+		c.close()
 	}
 }
 

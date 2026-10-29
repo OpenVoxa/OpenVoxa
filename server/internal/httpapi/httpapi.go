@@ -42,6 +42,10 @@ type API struct {
 	trustProxy bool
 	livekit    config.LiveKitConfig
 
+	// The composed router. API serves HTTP itself so callers can hold the
+	// same value they use to emit events.
+	handler http.Handler
+
 	// Two limiters, because each covers a hole the other leaves.
 	//
 	// authIP stops one host hammering the login endpoint. On its own it is
@@ -56,7 +60,12 @@ type API struct {
 
 // New returns the server's root handler. debugUIEnabled serves a bare-bones
 // test client at /debug/; it is off unless explicitly turned on.
-func New(pool *pgxpool.Pool, debugUIEnabled, trustProxy bool, livekit config.LiveKitConfig) http.Handler {
+// ServeHTTP lets API be used directly as an http.Handler.
+func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	a.handler.ServeHTTP(w, r)
+}
+
+func New(pool *pgxpool.Pool, debugUIEnabled, trustProxy bool, livekit config.LiveKitConfig) *API {
 	api := &API{
 		pool:       pool,
 		hub:        hub.New(),
@@ -116,7 +125,8 @@ func New(pool *pgxpool.Pool, debugUIEnabled, trustProxy bool, livekit config.Liv
 		mux.Handle("GET /debug/", http.StripPrefix("/debug/", debugFileServer()))
 	}
 
-	return logRequests(mux)
+	api.handler = logRequests(mux)
+	return api
 }
 
 // debugFileServer serves the embedded debugui directory at the root of the

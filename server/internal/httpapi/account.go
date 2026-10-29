@@ -64,6 +64,7 @@ func (a *API) deleteOwnAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("account deleted", "user_id", session.UserID, "by", "self")
+	a.NotifyUserPurged(session.UserID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -125,6 +126,7 @@ func (a *API) deleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("account deleted", "user_id", subjectID, "by", actor.UserID)
+	a.NotifyUserPurged(subjectID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -212,6 +214,10 @@ func (a *API) setChannelRetention(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("channel retention changed",
 		"channel_id", r.PathValue("id"), "retention", req.Retention)
+
+	// Clients show the policy in the channel label, so a change has to
+	// reach them promptly or the displayed promise goes stale.
+	a.NotifyChannelChanged(r.PathValue("id"))
 
 	w.WriteHeader(http.StatusNoContent)
 }

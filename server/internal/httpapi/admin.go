@@ -176,6 +176,8 @@ func (a *API) setUserRole(w http.ResponseWriter, r *http.Request) {
 		"actor_id", actor.UserID, "subject_id", subjectID,
 		"old_role", oldRole, "new_role", newRole.String())
 
+	a.NotifyRoleChanged(subjectID, newRole.String())
+
 	writeJSON(w, http.StatusOK, userSummary{
 		ID: subjectID, Username: username, Role: newRole.String(),
 	})
@@ -249,6 +251,7 @@ func (a *API) createChannel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	c.Retention = "forever"
+	a.NotifyChannelChanged(c.ID)
 	writeJSON(w, http.StatusCreated, c)
 }
 
@@ -267,5 +270,6 @@ func (a *API) deleteChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	a.NotifyChannelDeleted(r.PathValue("id"))
 	w.WriteHeader(http.StatusNoContent)
 }

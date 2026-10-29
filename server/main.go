@@ -51,12 +51,18 @@ func run() error {
 		return err
 	}
 
+	api := httpapi.New(pool, cfg.DebugUI, cfg.TrustProxy, cfg.LiveKit)
+
 	db.StartSessionSweep(ctx, pool)
-	db.StartRetentionSweep(ctx, pool)
+
+	// The sweep reports what it removed so connected clients can drop the
+	// same messages locally instead of displaying rows that no longer
+	// exist.
+	db.StartRetentionSweep(ctx, pool, api.NotifyChannelPurged)
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           httpapi.New(pool, cfg.DebugUI, cfg.TrustProxy, cfg.LiveKit),
+		Handler:           api,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
