@@ -158,8 +158,7 @@ func (a *API) setForcePTT(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Participants already connected keep their current mode until they
-	// rejoin. Pushing this change live needs a server-to-client signal,
-	// which arrives with the rest of the realtime channel events.
+	a.NotifyChannelChanged(r.PathValue("id"))
+
 	writeJSON(w, http.StatusOK, forcePTTRequest{ForcePTT: req.ForcePTT})
 }

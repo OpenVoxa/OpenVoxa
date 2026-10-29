@@ -172,6 +172,8 @@
 const api = location.origin;
 let token = null;
 let socket = null;
+let currentChannel = null;
+let myUserID = null;
 
 const $ = (id) => document.getElementById(id);
 const logEl = $("log");
@@ -182,6 +184,7 @@ function line(cls, html) {
   div.innerHTML = html;
   logEl.appendChild(div);
   logEl.scrollTop = logEl.scrollHeight;
+  return div;
 }
 
 // Everything from the server is treated as untrusted text. Message bodies
@@ -197,15 +200,60 @@ function renderMessage(m) {
 
   // A tombstone keeps its place in the conversation so replies around it
   // still make sense. The content is gone, not hidden.
+  // Tag every rendered message so events can find it again without a
+  // reconnect: by id for a single deletion, by author for an account
+  // purge, by timestamp for a retention cutoff.
+  const tag = (el) => {
+    el.dataset.id = m.id;
+    el.dataset.author = m.author_id || "";
+    el.dataset.ts = m.created_at;
+    return el;
+  };
+
   if (m.deleted) {
-    line("msg sys",
-      `<span class="at">${esc(when)}</span> [message removed]`);
+    tag(line("msg sys", `<span class="at">${esc(when)}</span> [message removed]`));
     return;
   }
 
-  line("msg",
+  tag(line("msg",
     `<span class="at">${esc(when)}</span> ` +
-    `<span class="who">${esc(m.username || "[deleted user]")}</span>: ${esc(m.body)}`);
+    `<span class="who">${esc(m.username || "[deleted user]")}</span>: ${esc(m.body)}`));
+}
+
+// ------------------------------------------------- server event handling
+
+function tombstone(el) {
+  const when = el.querySelector(".at")?.textContent || "";
+  el.className = "msg sys";
+  el.innerHTML = `<span class="at">${esc(when)}</span> [message removed]`;
+}
+
+function onUserPurged(userID) {
+  let n = 0;
+  logEl.querySelectorAll(`[data-author="${CSS.escape(userID)}"]`).forEach((el) => {
+    tombstone(el);
+    n++;
+  });
+  if (n) line("sys", `an account was deleted; ${n} message(s) removed`);
+}
+
+function onChannelPurged(channelID, before) {
+  if (channelID !== currentChannel) return;
+  const cutoff = new Date(before).getTime();
+
+  let n = 0;
+  logEl.querySelectorAll("[data-ts]").forEach((el) => {
+    if (new Date(el.dataset.ts).getTime() < cutoff) {
+      el.remove();
+      n++;
+    }
+  });
+  if (n) line("sys", `${n} message(s) passed this channel's retention limit`);
+}
+
+function onMessageDeleted(messageID) {
+  const el = logEl.querySelector(`[data-id="${CSS.escape(messageID)}"]`);
+  if (el) tombstone(el);
 }
 
 async function call(path, options = {}) {
@@ -231,6 +279,7 @@ async function authenticate(path) {
       })
     });
     token = data.token;
+    myUserID = data.user_id;
     $("deleteAccount").disabled = false;
     $("whoami").textContent = `${data.username} (${data.role})`;
     line("sys", `signed in as ${esc(data.username)}, role ${esc(data.role)}`);
@@ -256,6 +305,7 @@ async function loadChannels() {
   $("joinVoice").disabled = voiceSelect.options.length === 0;
 
   const select = $("channel");
+  const keep = select.value;
   select.innerHTML = "";
 
   for (const c of channels.filter((c) => c.kind === "text")) {
@@ -267,11 +317,13 @@ async function loadChannels() {
     select.appendChild(opt);
   }
 
-  $("connect").disabled = select.options.length === 0;
+  if (keep) select.value = keep;
+  $("connect").disabled = select.options.length === 0 || !!socket;
 }
 
 async function connect() {
   const channelID = $("channel").value;
+  currentChannel = channelID;
 
   // Two steps on purpose: browsers cannot set an Authorization header on a
   // websocket, so we trade the session token for a single-use ticket rather
@@ -321,6 +373,30 @@ async function connect() {
       renderMessage(frame);
     } else if (frame.type === "error") {
       line("err", esc(frame.error));
+    } else if (frame.type === "user_purged") {
+      onUserPurged(frame.user_id);
+    } else if (frame.type === "channel_purged") {
+      onChannelPurged(frame.channel_id, frame.before);
+    } else if (frame.type === "message_deleted") {
+      onMessageDeleted(frame.message_id);
+    } else if (frame.type === "channel_changed") {
+      // Settings moved. What this client may see depends on its role, so
+      // the authoritative answer comes from refetching rather than from
+      // anything carried in the event.
+      loadChannels().catch(() => {});
+    } else if (frame.type === "channel_deleted") {
+      if (frame.channel_id === currentChannel) {
+        line("sys", "this channel was deleted");
+        socket?.close();
+      }
+      loadChannels().catch(() => {});
+    } else if (frame.type === "role_changed") {
+      if (frame.user_id === myUserID) {
+        $("whoami").textContent =
+          `${$("whoami").textContent.split(" (")[0]} (${frame.role})`;
+        line("sys", `your role is now ${esc(frame.role)}`);
+        loadChannels().catch(() => {});
+      }
     }
   };
 }
