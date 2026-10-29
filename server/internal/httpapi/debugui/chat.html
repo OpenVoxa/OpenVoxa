@@ -500,12 +500,26 @@ async function banUser(userID) {
   const reason = prompt("Reason for the ban?") ?? "";
   const duration = prompt('Duration, e.g. "7 days". Leave empty for permanent.') ?? "";
 
+  // Asked separately, and only of administrators, because a ban and a
+  // purge are different decisions. Banning stops someone participating;
+  // purging destroys conversations other people are still reading.
+  let purge = false;
+  if (myRole === "administrator") {
+    purge = confirm(
+      "Also permanently destroy every message this account has written?\n\n" +
+      "This cannot be undone, and unbanning will not bring them back.\n" +
+      "Choose Cancel for a normal ban."
+    );
+  }
+
   try {
-    await call(`/api/v1/users/${userID}/ban`, {
+    const res = await call(`/api/v1/users/${userID}/ban`, {
       method: "POST",
-      body: JSON.stringify({ reason, duration })
+      body: JSON.stringify({ reason, duration, purge_messages: purge })
     });
-    line("sys", "user banned");
+    line("sys", purge
+      ? `user banned; ${res.purged_messages} message(s) destroyed`
+      : "user banned");
   } catch (e) {
     line("err", esc(e.message));
   }
