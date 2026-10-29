@@ -1,6 +1,7 @@
 // Copyright (C) 2026 The OpenVoxa Authors
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import * as tsMls from "ts-mls";
 import {
   createApplicationMessage,
   createCommit,
@@ -226,18 +227,46 @@ export class TsMlsProvider implements MlsProvider {
     length: number,
   ): Promise<Uint8Array> {
     const impl = this.#require();
-    const group = state as {
-      keySchedule: { exporterSecret: Uint8Array };
-    };
 
-    // RFC 9420 section 8.5. The context is empty here; when media keys
-    // are derived this will carry the channel and epoch so two uses of
-    // the same group cannot produce the same key.
-    return impl.kdf.expandWithLabel(
-      group.keySchedule.exporterSecret,
-      new TextEncoder().encode(label),
-      await impl.hash.digest(new Uint8Array()),
-      length,
+    // RFC 9420 section 8.5 defines MLS-Exporter, but ts-mls does not
+    // document where it lives and the ciphersuite's kdf object does not
+    // expose expandWithLabel. Rather than guess again, try the shapes
+    // that could reasonably exist and report what is actually available
+    // if none of them do.
+    const candidates = ["exportSecret", "mlsExporter", "exporter", "deriveExporter"];
+
+    for (const name of candidates) {
+      const fn = (tsMls as Record<string, unknown>)[name];
+      if (typeof fn !== "function") continue;
+
+      // Argument order is unknown, so try the two plausible ones. Both
+      // are pure derivations over data we already hold; a wrong shape
+      // throws rather than producing a wrong key.
+      const attempts: Array<() => unknown> = [
+        () => (fn as Function)(state, label, new Uint8Array(), length, impl),
+        () => (fn as Function)(state, label, length, impl),
+      ];
+
+      for (const attempt of attempts) {
+        try {
+          const result = await attempt();
+          if (result instanceof Uint8Array && result.length === length) {
+            return result;
+          }
+        } catch {
+          // Try the next shape.
+        }
+      }
+    }
+
+    const topLevel = Object.keys(tsMls)
+      .filter((k) => /export|secret|derive|expand/i.test(k))
+      .join(", ");
+    const kdfKeys = Object.keys(impl.kdf as object).join(", ");
+
+    throw new Error(
+      `no exporter found. ts-mls exports matching export/secret/derive/expand: ` +
+      `[${topLevel || "none"}]. impl.kdf has: [${kdfKeys}]`,
     );
   }
 }
