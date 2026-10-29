@@ -53,6 +53,30 @@ type Impl = Awaited<ReturnType<typeof getCiphersuiteImpl>>;
 export let lastCommitWireFormat = "unknown";
 
 /**
+ * Shape of the last createCommit result, for diagnostics.
+ *
+ * ts-mls has thin documentation and the published examples disagree with
+ * each other across versions. Rather than keep inferring field names from
+ * prose, this reports what the library actually returned so the code can
+ * be written against observed reality.
+ *
+ * Remove once the shape is pinned.
+ */
+export let lastCommitShape = "unknown";
+
+function describe(value: unknown): string {
+  if (value === undefined) return "undefined";
+  if (value === null) return "null";
+  if (value instanceof Uint8Array) return `Uint8Array(${value.length})`;
+  if (Array.isArray(value)) return `Array(${value.length})`;
+  if (typeof value === "object") {
+    const keys = Object.keys(value as object);
+    return `object{${keys.slice(0, 8).join(",")}${keys.length > 8 ? ",..." : ""}}`;
+  }
+  return typeof value;
+}
+
+/**
  * Encode a commit for transport.
  *
  * ts-mls can frame a commit as either a PublicMessage or a
@@ -65,23 +89,38 @@ export let lastCommitWireFormat = "unknown";
  * worked is recorded so it can be pinned once observed.
  */
 function encodeCommit(commit: unknown): WireMessage {
-  try {
-    const encoded = encodeMlsMessage({
-      publicMessage: commit as never,
-      wireformat: "mls_public_message",
-      version: "mls10",
-    });
-    lastCommitWireFormat = "mls_public_message";
-    return encoded;
-  } catch {
-    const encoded = encodeMlsMessage({
-      privateMessage: commit as never,
-      wireformat: "mls_private_message",
-      version: "mls10",
-    });
-    lastCommitWireFormat = "mls_private_message";
-    return encoded;
+  // Already a full MLSMessage? Then it only needs serialising.
+  const maybe = commit as { wireformat?: string };
+  if (maybe && typeof maybe.wireformat === "string") {
+    lastCommitWireFormat = `prewrapped:${maybe.wireformat}`;
+    return encodeMlsMessage(commit as never);
   }
+
+  for (const [field, wireformat] of [
+    ["publicMessage", "mls_public_message"],
+    ["privateMessage", "mls_private_message"],
+  ] as const) {
+    try {
+      const encoded = encodeMlsMessage({
+        [field]: commit,
+        wireformat,
+        version: "mls10",
+      } as never);
+
+      // encodeMlsMessage does not always throw on a shape mismatch; it
+      // can simply produce nothing. Treat that as a failure too.
+      if (encoded instanceof Uint8Array && encoded.length > 0) {
+        lastCommitWireFormat = wireformat;
+        return encoded;
+      }
+    } catch {
+      // Try the next framing.
+    }
+  }
+
+  throw new Error(
+    `could not encode commit (${describe(commit)}). shape: ${lastCommitShape}`,
+  );
 }
 
 export class TsMlsProvider implements MlsProvider {
@@ -150,15 +189,27 @@ export class TsMlsProvider implements MlsProvider {
       { extraProposals: proposals },
     );
 
+    // Record what came back before touching any of it, so a wrong
+    // assumption below produces a useful message rather than a bare
+    // "undefined".
+    lastCommitShape = Object.entries(result as Record<string, unknown>)
+      .map(([key, value]) => `${key}: ${describe(value)}`)
+      .join(" | ");
+
     // ts-mls hands back the key material it just used so the caller can
     // destroy it. Skipping this leaves spent keys sitting in memory,
     // which quietly weakens forward secrecy: the whole point is that a
     // device compromised later cannot read what was sent earlier.
-    result.consumed.forEach(zeroOutUint8Array);
+    result.consumed?.forEach(zeroOutUint8Array);
+
+    const rawCommit = (result as Record<string, unknown>)["commit"];
+    if (rawCommit === undefined) {
+      throw new Error(`no commit field on result. shape: ${lastCommitShape}`);
+    }
 
     return {
       state: result.newState,
-      commit: encodeCommit(result.commit),
+      commit: encodeCommit(rawCommit),
       welcome: result.welcome
         ? encodeMlsMessage({
             welcome: result.welcome,

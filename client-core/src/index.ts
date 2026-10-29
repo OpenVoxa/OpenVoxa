@@ -12,7 +12,7 @@
  * client-web is built.
  */
 
-import { TsMlsProvider, lastCommitWireFormat } from "./mls/tsmls.js";
+import { TsMlsProvider, lastCommitWireFormat, lastCommitShape } from "./mls/tsmls.js";
 import type { MlsProvider } from "./mls/provider.js";
 
 export type {
@@ -76,6 +76,8 @@ export async function selfTest(): Promise<SelfTestResult> {
     const commit = await provider.addMembers(aliceGroup, [bobPackage]);
     aliceGroup = commit.state;
 
+    steps.push(`createCommit returned: ${lastCommitShape}`);
+
     if (!commit.welcome) throw new Error("expected a welcome message");
     steps.push(
       `committed an add: commit ${commit.commit.length} bytes as ` +
@@ -108,6 +110,13 @@ export async function selfTest(): Promise<SelfTestResult> {
       elapsedMs: Math.round(performance.now() - started),
     };
   } catch (err) {
+    // Carry the observed shape into the failure, so a wrong assumption
+    // about the library's return type is visible rather than appearing
+    // as an anonymous "undefined".
+    if (lastCommitShape !== "unknown") {
+      steps.push(`createCommit returned: ${lastCommitShape}`);
+    }
+
     return {
       ok: false,
       provider: provider.name,
