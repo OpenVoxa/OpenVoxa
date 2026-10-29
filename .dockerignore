@@ -1,0 +1,8 @@
+.git
+.github
+docs
+deploy/.env
+deploy/docker-compose.override.yml
+client-core/node_modules
+client-core/dist
+**/*.md

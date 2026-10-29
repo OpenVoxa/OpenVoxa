@@ -13,6 +13,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OpenVoxa debug client</title>
 <script src="https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.umd.min.js"></script>
+<script src="core.js"></script>
 <style>
   :root {
     color-scheme: light dark;
@@ -141,6 +142,15 @@
   <button id="register">Register</button>
   <button id="deleteAccount" disabled>Delete account</button>
   <button id="modOpen" disabled hidden>Moderation</button>
+</fieldset>
+
+<fieldset>
+  <legend>crypto</legend>
+  <div class="row">
+    <button id="mlsSelfTest">Run MLS self-test</button>
+    <span id="mlsStatus" class="ptt-hint"></span>
+  </div>
+  <div id="mlsOutput" class="ptt-hint"></div>
 </fieldset>
 
 <fieldset>
@@ -352,6 +362,33 @@ function renderAttachments(after, list) {
 
   after.insertAdjacentElement("afterend", box);
   logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ---------------------------------------------------------------- crypto
+//
+// Nothing here is wired into messaging yet. This proves the client-core
+// bundle loads, that MLS runs in this browser, and that a group can be
+// created, joined and used - before any of it is load-bearing.
+
+async function runMlsSelfTest() {
+  const out = $("mlsOutput");
+  const status = $("mlsStatus");
+
+  if (typeof OpenVoxaCore === "undefined") {
+    status.textContent = "client-core did not load";
+    return;
+  }
+
+  status.textContent = "running...";
+  out.textContent = "";
+
+  const result = await OpenVoxaCore.selfTest();
+
+  status.textContent = result.ok
+    ? `passed in ${result.elapsedMs}ms (${result.provider})`
+    : `FAILED: ${result.error}`;
+
+  out.innerHTML = result.steps.map((s) => `&middot; ${esc(s)}`).join("<br>");
 }
 
 // ------------------------------------------------------------ moderation
@@ -649,6 +686,9 @@ function on(id, event, handler) {
   if (el) el[event] = handler;
   else console.warn(`missing element: ${id}`);
 }
+
+on("mlsSelfTest", "onclick", () =>
+  runMlsSelfTest().catch((e) => { $("mlsStatus").textContent = e.message; }));
 
 on("modOpen", "onclick", () => {
   const panel = $("modPanel");

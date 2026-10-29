@@ -46,7 +46,10 @@ services:
 
   server:
     build:
-      context: ../server
+      # Repository root, because the image bundles client-core alongside
+      # the Go server.
+      context: ..
+      dockerfile: server/Dockerfile
     environment:
       OPENVOXA_LISTEN_ADDR: ":8080"
       OPENVOXA_DATABASE_URL: "postgres://openvoxa:${POSTGRES_PASSWORD:-devpassword}@postgres:5432/openvoxa?sslmode=disable"
