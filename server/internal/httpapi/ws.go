@@ -140,6 +140,7 @@ type messageFrame struct {
 	AuthorID  string    `json:"author_id"`
 	Username  string    `json:"username"`
 	Body      string    `json:"body"`
+	Deleted   bool      `json:"deleted"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -351,7 +352,7 @@ func (a *API) persistAndBroadcast(ctx context.Context, s Session, channelID, bod
 
 func (a *API) sendHistory(ctx context.Context, client *hub.Client, channelID string, canPost bool) error {
 	rows, err := a.pool.Query(ctx,
-		`SELECT m.id, m.author_id, COALESCE(u.username, ''), m.body, m.created_at
+		`SELECT m.id, m.author_id, COALESCE(u.username, ''), m.body, m.deleted, m.created_at
 		   FROM messages m
 		   LEFT JOIN users u ON u.id = m.author_id
 		  WHERE m.channel_id = $1
@@ -370,7 +371,7 @@ func (a *API) sendHistory(ctx context.Context, client *hub.Client, channelID str
 		var authorID *string
 		var body []byte
 
-		if err := rows.Scan(&m.ID, &authorID, &m.Username, &body, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &authorID, &m.Username, &body, &m.Deleted, &m.CreatedAt); err != nil {
 			return err
 		}
 

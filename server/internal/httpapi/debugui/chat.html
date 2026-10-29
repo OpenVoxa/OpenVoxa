@@ -89,6 +89,7 @@
   <label>password <input id="password" type="password" autocomplete="current-password"></label>
   <button id="login">Log in</button>
   <button id="register">Register</button>
+  <button id="deleteAccount" disabled>Delete account</button>
 </fieldset>
 
 <fieldset>
@@ -193,9 +194,18 @@ function esc(s) {
 
 function renderMessage(m) {
   const when = new Date(m.created_at).toLocaleTimeString();
+
+  // A tombstone keeps its place in the conversation so replies around it
+  // still make sense. The content is gone, not hidden.
+  if (m.deleted) {
+    line("msg sys",
+      `<span class="at">${esc(when)}</span> [message removed]`);
+    return;
+  }
+
   line("msg",
     `<span class="at">${esc(when)}</span> ` +
-    `<span class="who">${esc(m.username || "[deleted]")}</span>: ${esc(m.body)}`);
+    `<span class="who">${esc(m.username || "[deleted user]")}</span>: ${esc(m.body)}`);
 }
 
 async function call(path, options = {}) {
@@ -221,6 +231,7 @@ async function authenticate(path) {
       })
     });
     token = data.token;
+    $("deleteAccount").disabled = false;
     $("whoami").textContent = `${data.username} (${data.role})`;
     line("sys", `signed in as ${esc(data.username)}, role ${esc(data.role)}`);
     await loadChannels();
@@ -758,6 +769,36 @@ document.addEventListener("keyup", (e) => {
   setMuted(true);
 });
 
+async function deleteAccount() {
+  const password = $("password").value;
+  if (!password) return line("err", "enter your password to confirm");
+
+  if (!confirm(
+    "Delete your account permanently?\n\n" +
+    "Every message you have written will be destroyed. There is no undo " +
+    "and no recovery."
+  )) return;
+
+  const res = await fetch(api + "/api/v1/me", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ password })
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    return line("err", esc(data?.error || res.statusText));
+  }
+
+  token = null;
+  room?.disconnect();
+  socket?.close();
+  $("whoami").textContent = "";
+  $("deleteAccount").disabled = true;
+  line("sys", "account deleted");
+}
+
+$("deleteAccount").onclick = () => deleteAccount().catch((e) => line("err", esc(e.message)));
 $("login").onclick = () => authenticate("/api/v1/auth/login");
 $("register").onclick = () => authenticate("/api/v1/auth/register");
 $("connect").onclick = () => connect().catch((e) => line("err", esc(e.message)));

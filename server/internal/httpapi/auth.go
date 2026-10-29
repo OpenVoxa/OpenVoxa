@@ -27,6 +27,14 @@ func isUniqueViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
+// isInvalidInput reports whether err is Postgres class 22, which covers
+// malformed values such as an uninterpretable interval string. Those are
+// the client's fault, not the server's.
+func isInvalidInput(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && len(pgErr.Code) >= 2 && pgErr.Code[:2] == "22"
+}
+
 // Password length bounds. The lower bound is a floor, not a policy: no
 // complexity rules, no forced symbols. Length beats character classes, and
 // composition rules mostly push people toward "Password1!".
