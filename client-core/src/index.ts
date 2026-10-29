@@ -12,7 +12,7 @@
  * client-web is built.
  */
 
-import { TsMlsProvider } from "./mls/tsmls.js";
+import { TsMlsProvider, lastCommitWireFormat } from "./mls/tsmls.js";
 import type { MlsProvider } from "./mls/provider.js";
 
 export type {
@@ -71,11 +71,16 @@ export async function selfTest(): Promise<SelfTestResult> {
     steps.push("created a group");
 
     const bobPackage = provider.encodeKeyPackage(bob);
+    steps.push(`encoded a key package (${bobPackage.length} bytes)`);
+
     const commit = await provider.addMembers(aliceGroup, [bobPackage]);
     aliceGroup = commit.state;
 
     if (!commit.welcome) throw new Error("expected a welcome message");
-    steps.push(`committed an add (welcome ${commit.welcome.length} bytes)`);
+    steps.push(
+      `committed an add: commit ${commit.commit.length} bytes as ` +
+      `${lastCommitWireFormat}, welcome ${commit.welcome.length} bytes`,
+    );
 
     let bobGroup = await provider.joinGroup(commit.welcome, bob, commit.ratchetTree);
     steps.push("second member joined from the welcome");

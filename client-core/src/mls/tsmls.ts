@@ -49,6 +49,41 @@ const CIPHERSUITE = "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519";
 
 type Impl = Awaited<ReturnType<typeof getCiphersuiteImpl>>;
 
+/** Which wire format the last commit encoding used, for diagnostics. */
+export let lastCommitWireFormat = "unknown";
+
+/**
+ * Encode a commit for transport.
+ *
+ * ts-mls can frame a commit as either a PublicMessage or a
+ * PrivateMessage, and the encoder has to be told which. Rather than
+ * assume, this tries public framing and falls back to private.
+ *
+ * The try/catch is deliberate and narrow: both calls are pure encoding of
+ * data the library just produced, so a failure here means the shape did
+ * not match, not that anything cryptographic went wrong. The format that
+ * worked is recorded so it can be pinned once observed.
+ */
+function encodeCommit(commit: unknown): WireMessage {
+  try {
+    const encoded = encodeMlsMessage({
+      publicMessage: commit as never,
+      wireformat: "mls_public_message",
+      version: "mls10",
+    });
+    lastCommitWireFormat = "mls_public_message";
+    return encoded;
+  } catch {
+    const encoded = encodeMlsMessage({
+      privateMessage: commit as never,
+      wireformat: "mls_private_message",
+      version: "mls10",
+    });
+    lastCommitWireFormat = "mls_private_message";
+    return encoded;
+  }
+}
+
 export class TsMlsProvider implements MlsProvider {
   readonly name = "ts-mls";
 
@@ -123,11 +158,7 @@ export class TsMlsProvider implements MlsProvider {
 
     return {
       state: result.newState,
-      commit: encodeMlsMessage({
-        publicMessage: result.commit as never,
-        wireformat: "mls_public_message",
-        version: "mls10",
-      }),
+      commit: encodeCommit(result.commit),
       welcome: result.welcome
         ? encodeMlsMessage({
             welcome: result.welcome,
