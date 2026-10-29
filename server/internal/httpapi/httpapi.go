@@ -25,6 +25,7 @@ import (
 	"github.com/openvoxa/openvoxa/server/internal/hub"
 	"github.com/openvoxa/openvoxa/server/internal/perm"
 	"github.com/openvoxa/openvoxa/server/internal/ratelimit"
+	"github.com/openvoxa/openvoxa/server/internal/unfurl"
 )
 
 // maxRequestBody caps how much JSON we will read from a client. Auth payloads
@@ -56,6 +57,11 @@ type API struct {
 	// window is short and a correct password clears it immediately.
 	authIP   *ratelimit.Limiter
 	authUser *ratelimit.Limiter
+
+	// Link previews make the server fetch arbitrary remote pages, so they
+	// are limited per user: 20 up front, then one every 3 seconds.
+	unfurl      *unfurl.Fetcher
+	unfurlLimit *ratelimit.Limiter
 }
 
 // New returns the server's root handler. debugUIEnabled serves a bare-bones
@@ -79,6 +85,9 @@ func New(pool *pgxpool.Pool, debugUIEnabled, trustProxy bool, livekit config.Liv
 
 		// 5 failures per account, refilling one every 2 minutes.
 		authUser: ratelimit.New(1.0/120.0, 5, 30*time.Minute),
+
+		unfurl:      unfurl.New(),
+		unfurlLimit: ratelimit.New(1.0/3.0, 20, 15*time.Minute),
 	}
 
 	mux := http.NewServeMux()
@@ -112,6 +121,8 @@ func New(pool *pgxpool.Pool, debugUIEnabled, trustProxy bool, livekit config.Liv
 		api.requireRole(perm.Moderator, api.setForcePTT))
 	mux.HandleFunc("PATCH /api/v1/channels/{id}/retention",
 		api.requireRole(perm.Administrator, api.setChannelRetention))
+
+	mux.HandleFunc("POST /api/v1/unfurl", api.requireAuth(api.unfurlLink))
 
 	mux.HandleFunc("POST /api/v1/ws/ticket", api.requireAuth(api.wsTicket))
 	mux.HandleFunc("GET /api/v1/ws", api.websocket)
