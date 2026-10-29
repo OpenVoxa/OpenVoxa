@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"golang.org/x/net/html"
@@ -74,27 +75,40 @@ type Fetcher struct {
 func New() *Fetcher {
 	f := &Fetcher{cache: make(map[string]cacheEntry)}
 
-	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	dialer := &net.Dialer{
+		Timeout: 5 * time.Second,
+
+		// Control runs once per connection attempt, AFTER name resolution
+		// and immediately before the socket is used, and its address
+		// argument is the resolved IP. That timing is the whole point:
+		//
+		//   - Checking the hostname instead would be defeated by any
+		//     public name with a private A record. localtest.me resolves
+		//     to 127.0.0.1 and would sail straight through.
+		//   - Resolving ourselves and then dialling the name would leave
+		//     a window where a second lookup returns a different answer,
+		//     the classic DNS rebinding attack.
+		//
+		// Note that DialContext receives the hostname, not an address, so
+		// doing this check there silently refuses every hostname while
+		// appearing to work.
+		Control: func(network, address string, _ syscall.RawConn) error {
+			host, _, err := net.SplitHostPort(address)
+			if err != nil {
+				return err
+			}
+			ip := net.ParseIP(host)
+			if ip == nil || !isPublic(ip) {
+				return ErrBlocked
+			}
+			return nil
+		},
+	}
 
 	f.client = &http.Client{
 		Timeout: fetchTimeout,
 		Transport: &http.Transport{
-			// The check happens here, after DNS resolution and
-			// immediately before the connection is made. Validating the
-			// hostname earlier would be defeated by a DNS record that
-			// resolves to a private address, or by one that answers
-			// differently on a second lookup.
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				host, _, err := net.SplitHostPort(addr)
-				if err != nil {
-					return nil, err
-				}
-				ip := net.ParseIP(host)
-				if ip == nil || !isPublic(ip) {
-					return nil, ErrBlocked
-				}
-				return dialer.DialContext(ctx, network, addr)
-			},
+			DialContext:       dialer.DialContext,
 			DisableKeepAlives: true,
 		},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
