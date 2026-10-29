@@ -1,0 +1,225 @@
+// Copyright (C) 2026 The OpenVoxa Authors
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+import {
+  createApplicationMessage,
+  createCommit,
+  createGroup,
+  decodeMlsMessage,
+  defaultCapabilities,
+  defaultLifetime,
+  emptyPskIndex,
+  encodeMlsMessage,
+  generateKeyPackage,
+  getCiphersuiteFromName,
+  getCiphersuiteImpl,
+  joinGroup,
+  processPrivateMessage,
+  zeroOutUint8Array,
+  type Credential,
+  type Proposal,
+} from "ts-mls";
+
+import type {
+  CommitResult,
+  DecryptResult,
+  GroupState,
+  KeyPair,
+  MlsProvider,
+  WireMessage,
+} from "./provider.js";
+
+/**
+ * Ciphersuite 1: DHKEM-X25519, AES-128-GCM, HKDF-SHA256, Ed25519.
+ *
+ * Chosen for two reasons. It is the mandatory-to-implement suite in
+ * RFC 9420, so any other conforming implementation can interoperate,
+ * which matters if the provider is ever swapped. And it is the only suite
+ * ts-mls supports with no dependencies beyond the base package, which
+ * keeps the dependency surface of a security-critical layer as small as
+ * it can be.
+ *
+ * The post-quantum suites are tempting and deliberately not used yet:
+ * they pull in additional packages and the threat they address is not
+ * the one this project is trying to solve first.
+ */
+const CIPHERSUITE = "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519";
+
+type Impl = Awaited<ReturnType<typeof getCiphersuiteImpl>>;
+
+export class TsMlsProvider implements MlsProvider {
+  readonly name = "ts-mls";
+
+  #impl: Impl | null = null;
+
+  async init(): Promise<void> {
+    if (this.#impl) return;
+    this.#impl = await getCiphersuiteImpl(getCiphersuiteFromName(CIPHERSUITE));
+  }
+
+  #require(): Impl {
+    if (!this.#impl) {
+      throw new Error("mls: init() must be called before use");
+    }
+    return this.#impl;
+  }
+
+  async generateKeyPackage(identity: string): Promise<KeyPair> {
+    const credential: Credential = {
+      credentialType: "basic",
+      identity: new TextEncoder().encode(identity),
+    };
+
+    const pkg = await generateKeyPackage(
+      credential,
+      defaultCapabilities(),
+      defaultLifetime,
+      [],
+      this.#require(),
+    );
+
+    return { publicPackage: pkg.publicPackage, privatePackage: pkg.privatePackage };
+  }
+
+  encodeKeyPackage(keys: KeyPair): WireMessage {
+    return encodeMlsMessage({
+      keyPackage: keys.publicPackage as never,
+      wireformat: "mls_key_package",
+      version: "mls10",
+    });
+  }
+
+  async createGroup(groupId: string, keys: KeyPair): Promise<GroupState> {
+    return createGroup(
+      new TextEncoder().encode(groupId),
+      keys.publicPackage as never,
+      keys.privatePackage as never,
+      [],
+      this.#require(),
+    );
+  }
+
+  async addMembers(state: GroupState, keyPackages: WireMessage[]): Promise<CommitResult> {
+    const proposals: Proposal[] = keyPackages.map((raw) => {
+      const decoded = decodeMlsMessage(raw, 0)?.[0];
+      if (!decoded || decoded.wireformat !== "mls_key_package") {
+        throw new Error("mls: expected a key package");
+      }
+      return { proposalType: "add", add: { keyPackage: decoded.keyPackage } };
+    });
+
+    const result = await createCommit(
+      { state: state as never, cipherSuite: this.#require() },
+      { extraProposals: proposals },
+    );
+
+    // ts-mls hands back the key material it just used so the caller can
+    // destroy it. Skipping this leaves spent keys sitting in memory,
+    // which quietly weakens forward secrecy: the whole point is that a
+    // device compromised later cannot read what was sent earlier.
+    result.consumed.forEach(zeroOutUint8Array);
+
+    return {
+      state: result.newState,
+      commit: encodeMlsMessage({
+        publicMessage: result.commit as never,
+        wireformat: "mls_public_message",
+        version: "mls10",
+      }),
+      welcome: result.welcome
+        ? encodeMlsMessage({
+            welcome: result.welcome,
+            wireformat: "mls_welcome",
+            version: "mls10",
+          })
+        : undefined,
+      ratchetTree: (result.newState as { ratchetTree: unknown }).ratchetTree,
+    };
+  }
+
+  async joinGroup(
+    welcome: WireMessage,
+    keys: KeyPair,
+    ratchetTree: unknown,
+  ): Promise<GroupState> {
+    const decoded = decodeMlsMessage(welcome, 0)?.[0];
+    if (!decoded || decoded.wireformat !== "mls_welcome") {
+      throw new Error("mls: expected a welcome message");
+    }
+
+    return joinGroup(
+      decoded.welcome,
+      keys.publicPackage as never,
+      keys.privatePackage as never,
+      emptyPskIndex,
+      this.#require(),
+      ratchetTree as never,
+    );
+  }
+
+  async encrypt(state: GroupState, plaintext: Uint8Array) {
+    const result = await createApplicationMessage(
+      state as never,
+      plaintext,
+      this.#require(),
+    );
+
+    result.consumed.forEach(zeroOutUint8Array);
+
+    return {
+      state: result.newState as GroupState,
+      message: encodeMlsMessage({
+        privateMessage: result.privateMessage,
+        wireformat: "mls_private_message",
+        version: "mls10",
+      }),
+    };
+  }
+
+  async decrypt(state: GroupState, message: WireMessage): Promise<DecryptResult> {
+    const decoded = decodeMlsMessage(message, 0)?.[0];
+    if (!decoded || decoded.wireformat !== "mls_private_message") {
+      throw new Error("mls: expected a private message");
+    }
+
+    const result = await processPrivateMessage(
+      state as never,
+      decoded.privateMessage,
+      emptyPskIndex,
+      this.#require(),
+    );
+
+    // A handshake message advances the group without carrying content.
+    if (result.kind === "newState") {
+      return { state: result.newState as GroupState };
+    }
+
+    result.consumed.forEach(zeroOutUint8Array);
+
+    return {
+      state: result.newState as GroupState,
+      plaintext: result.message,
+    };
+  }
+
+  async exportSecret(
+    state: GroupState,
+    label: string,
+    length: number,
+  ): Promise<Uint8Array> {
+    const impl = this.#require();
+    const group = state as {
+      keySchedule: { exporterSecret: Uint8Array };
+    };
+
+    // RFC 9420 section 8.5. The context is empty here; when media keys
+    // are derived this will carry the channel and epoch so two uses of
+    // the same group cannot produce the same key.
+    return impl.kdf.expandWithLabel(
+      group.keySchedule.exporterSecret,
+      new TextEncoder().encode(label),
+      await impl.hash.digest(new Uint8Array()),
+      length,
+    );
+  }
+}

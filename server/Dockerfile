@@ -1,6 +1,23 @@
 # Copyright (C) 2026 The OpenVoxa Authors
 # SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Build context is the REPOSITORY ROOT, not server/, because the server
+# embeds a bundle built from client-core. See deploy/docker-compose.yml.
 
+# ---------------------------------------------------------------- client
+# Bundles client-core into a single script the server can embed. Kept as
+# its own stage so a change to Go code does not rebuild the JavaScript,
+# and vice versa.
+FROM node:22-alpine AS client
+
+WORKDIR /client
+COPY client-core/package.json ./
+RUN npm install --no-audit --no-fund
+
+COPY client-core/ ./
+RUN npm run build
+
+# ---------------------------------------------------------------- server
 # Must be at least the version in go.mod's `go` directive. Running
 # `go mod tidy` with a newer local toolchain raises that directive, and the
 # build then fails here with a confusing "go.mod requires go >= x" error.
@@ -8,14 +25,20 @@ FROM golang:1.26-alpine AS build
 
 WORKDIR /src
 
-# Copy manifests first so dependency downloads are cached between builds
-# when only source files change.
-COPY go.mod go.sum ./
+# Manifests first so dependency downloads cache between builds when only
+# source files change.
+COPY server/go.mod server/go.sum ./
 RUN go mod download
 
-COPY . .
+COPY server/ ./
+
+# Must land before `go build`: the embed directive reads the directory at
+# compile time, so a bundle copied in afterwards would not be included.
+COPY --from=client /client/dist/core.js ./internal/httpapi/debugui/core.js
+
 RUN CGO_ENABLED=0 go build -o /out/openvoxa-server .
 
+# --------------------------------------------------------------- blobdir
 # The blob directory has to exist in the image, owned by the user the
 # server runs as.
 #
@@ -27,6 +50,7 @@ RUN CGO_ENABLED=0 go build -o /out/openvoxa-server .
 FROM alpine:3 AS blobdir
 RUN mkdir -p /var/lib/openvoxa/blobs && chown -R 65532:65532 /var/lib/openvoxa
 
+# ----------------------------------------------------------------- final
 # Distroless: no shell, no package manager, minimal attack surface.
 FROM gcr.io/distroless/static-debian12:nonroot
 
