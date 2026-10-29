@@ -71,7 +71,8 @@ over.
 | Moderation | Client-supplied plaintext with server-side signature verification |
 | Voice input | Push-to-talk and voice activation, user-selectable; moderators can force PTT per voice channel |
 | Media stack | LiveKit, self-hosted. MIT-licensed, built-in E2EE, SFU relays ciphertext only. |
-| GIF provider | Admin-selectable between Giphy and Tenor, or disabled entirely |
+| GIF provider | Admin-selectable between Giphy and Tenor, or disabled entirely. Neither is privacy-clean; the tradeoff is documented rather than solved. |
+| Markdown | Hand-rolled minimal renderer rather than a library: bold, italic, strikethrough, inline and fenced code, blockquote, autolinks. Small enough to audit, and avoids trusting a dependency with untrusted input. |
 | TLS | Required in practice. Caddy provided but optional; three deployment paths documented. |
 
 ### How reporting works under encryption
@@ -252,6 +253,41 @@ what a client displays; the server re-reads the role from the database on
 every request regardless. A forged event changes what a client draws and
 nothing else.
 
+**The SSRF check belongs in `Dialer.Control`, not `DialContext`.**
+`DialContext` receives the hostname, so `net.ParseIP` there returns nil for
+every real URL and the filter refuses everything while appearing to work.
+`Control` runs once per connection attempt after name resolution, with the
+resolved address, which is the only point where the check is both correct
+and not racing a second DNS lookup. Checking the hostname instead would be
+defeated by any public name with a private A record; `localtest.me`
+resolves to `127.0.0.1` and is the standard test for this.
+
+**A filter that blocks everything looks like a passing test.** The first
+SSRF test set contained only hostile URLs. All four were refused, so it
+looked correct, and the filter was in fact rejecting every request
+including legitimate ones. Any test set for a blocklist must include a
+known-good case, or a completely broken filter stays invisible.
+
+**Markdown escapes before formatting, never after.** Message bodies are
+untrusted input. Escaping first and applying formatting to the escaped
+text means no user-supplied angle bracket can become a tag. The reverse
+order is a stored XSS vulnerability.
+
+**Link previews are click-to-load for embeds.** An auto-embedded YouTube
+player would contact Google for every message containing a link, whether
+or not anyone watches it. The thumbnail comes from the preview the server
+already fetched, and the iframe (on `youtube-nocookie.com`) is only
+created on click.
+
+**Previews are deleted with their message.** A tombstone or retention
+sweep removes the preview card too. Leaving it would keep the deleted
+content's title and thumbnail on screen, which defeats the deletion.
+
+**`go mod tidy` silently raises the `go` directive.** Running it with a
+newer local toolchain than the Dockerfile's base image rewrites `go.mod`
+and the container build then fails with a confusing version error. Keep
+the Dockerfile's Go version at or above the directive.
+
 ## Build order
 
 1. ✅ Server skeleton, auth, one text channel
@@ -260,7 +296,8 @@ nothing else.
 4. ✅ TLS deployment
 5. ✅ Screen sharing with configurable resolution and frame rate
 6. ✅ Retention enforcement, account deletion, live deletion events
-7. ⬜ Rich text: markdown, link previews, attachments, GIFs
+7. 🔶 Rich text — markdown and link previews done; attachments and GIFs
+   outstanding
 8. ⬜ MLS for text — the largest single piece of work
 9. ⬜ Media encryption keyed off the MLS exporter secret
 10. ⬜ Moderation tooling with signature verification
@@ -278,3 +315,7 @@ nothing else.
 - [ ] Guest accounts can be assigned but there is no anonymous or invite
       flow to create one
 - [ ] Reproducible builds
+- [ ] Attachment storage: where blobs live, and how channel retention
+      applies to them
+- [ ] Unfurl endpoint is a deliberate SSRF surface. Worth naming in
+      SECURITY.md so reviewers look at it first.
