@@ -55,12 +55,20 @@ func (a *API) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		var s Session
 		var expiresAt time.Time
 
+		// The ban check runs on every request rather than only at login.
+		// Banning deletes existing sessions, but a token issued in the
+		// gap between those two statements would otherwise stay valid.
 		err := a.pool.QueryRow(r.Context(),
 			`SELECT s.id, s.user_id, u.username, u.role, s.expires_at
 			   FROM sessions s
 			   JOIN users u ON u.id = s.user_id
 			  WHERE s.token_hash = $1
-			    AND u.deleted_at IS NULL`,
+			    AND u.deleted_at IS NULL
+			    AND NOT EXISTS (
+			          SELECT 1 FROM bans b
+			           WHERE b.user_id = u.id
+			             AND (b.expires_at IS NULL OR b.expires_at > now())
+			    )`,
 			auth.HashSessionToken(token),
 		).Scan(&s.SessionID, &s.UserID, &s.Username, &s.Role, &expiresAt)
 

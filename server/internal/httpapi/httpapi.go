@@ -149,6 +149,23 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 
 	mux.HandleFunc("DELETE /api/v1/me", api.requireAuth(api.deleteOwnAccount))
 
+	// Authors delete their own; the handler checks for moderator rank
+	// before allowing anyone else's.
+	mux.HandleFunc("DELETE /api/v1/messages/{id}", api.requireAuth(api.deleteMessage))
+	mux.HandleFunc("POST /api/v1/messages/{id}/report", api.requireAuth(api.reportMessage))
+
+	mux.HandleFunc("GET /api/v1/reports",
+		api.requireRole(perm.Moderator, api.listReports))
+	mux.HandleFunc("POST /api/v1/reports/{id}/resolve",
+		api.requireRole(perm.Moderator, api.resolveReport))
+
+	mux.HandleFunc("GET /api/v1/bans",
+		api.requireRole(perm.Moderator, api.listBans))
+	mux.HandleFunc("POST /api/v1/users/{id}/ban",
+		api.requireRole(perm.Moderator, api.banUser))
+	mux.HandleFunc("DELETE /api/v1/users/{id}/ban",
+		api.requireRole(perm.Moderator, api.unbanUser))
+
 	mux.HandleFunc("POST /api/v1/channels",
 		api.requireRole(perm.Administrator, api.createChannel))
 	mux.HandleFunc("DELETE /api/v1/channels/{id}",

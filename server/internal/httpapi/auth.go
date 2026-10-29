@@ -188,6 +188,8 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Checked after the password, deliberately. Telling an unauthenticated
+	// caller that an account is banned would confirm the account exists.
 	if err := auth.VerifyPassword(req.Password, storedHash); err != nil {
 		if !errors.Is(err, auth.ErrMismatch) {
 			slog.Error("verifying password", "err", err)
@@ -202,6 +204,31 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	// mistyped a few times is not left throttled afterwards. This is also
 	// what stops the account limiter becoming a lockout weapon.
 	a.authUser.Reset(userKey)
+
+	var banReason string
+	var banExpires *time.Time
+	err = a.pool.QueryRow(r.Context(),
+		`SELECT reason, expires_at FROM bans
+		  WHERE user_id = $1 AND (expires_at IS NULL OR expires_at > now())`,
+		userID,
+	).Scan(&banReason, &banExpires)
+
+	switch {
+	case err == nil:
+		msg := "this account is banned"
+		if banReason != "" {
+			msg += ": " + banReason
+		}
+		if banExpires != nil {
+			msg += " (until " + banExpires.Format(time.RFC1123) + ")"
+		}
+		writeError(w, http.StatusForbidden, msg)
+		return
+	case !errors.Is(err, pgx.ErrNoRows):
+		slog.Error("checking ban", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not log in")
+		return
+	}
 
 	a.issueSession(w, r, userID, username, role, req.DeviceName)
 }
