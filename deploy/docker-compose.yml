@@ -65,6 +65,13 @@ services:
       # Per-file upload ceiling. Operators pay for the disk and the
       # bandwidth, so operators set it.
       OPENVOXA_MAX_ATTACHMENT_MB: "${OPENVOXA_MAX_ATTACHMENT_MB:-25}"
+
+      # GIF search. Leave the provider empty to disable the feature.
+      # Neither Giphy nor Tenor is privacy-clean: the server proxies all
+      # images so clients never contact them, but the provider still sees
+      # what this server searches for.
+      OPENVOXA_GIF_PROVIDER: "${OPENVOXA_GIF_PROVIDER:-}"
+      OPENVOXA_GIF_API_KEY: "${OPENVOXA_GIF_API_KEY:-}"
     volumes:
       # Attachment bytes. Losing this volume loses every uploaded file;
       # the database would still hold the references and downloads would

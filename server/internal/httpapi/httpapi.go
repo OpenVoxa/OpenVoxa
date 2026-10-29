@@ -24,6 +24,7 @@ import (
 
 	"github.com/openvoxa/openvoxa/server/internal/blob"
 	"github.com/openvoxa/openvoxa/server/internal/config"
+	"github.com/openvoxa/openvoxa/server/internal/gif"
 	"github.com/openvoxa/openvoxa/server/internal/hub"
 	"github.com/openvoxa/openvoxa/server/internal/perm"
 	"github.com/openvoxa/openvoxa/server/internal/ratelimit"
@@ -74,6 +75,9 @@ type API struct {
 	// fresh ones. Keeping it out of config means there is no long-lived
 	// secret to leak.
 	attachKey []byte
+
+	gifs     *gif.Client
+	gifLimit *ratelimit.Limiter
 }
 
 // New returns the server's root handler. debugUIEnabled serves a bare-bones
@@ -113,6 +117,12 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 		uploadLimit: ratelimit.New(0.2, 10, 15*time.Minute),
 
 		attachKey: make([]byte, 32),
+
+		gifs: gif.New(cfg.GIFProvider, cfg.GIFAPIKey),
+
+		// Searching is cheap for us and costs the provider, so this is
+		// looser than uploads: 30 up front, one every 2 seconds.
+		gifLimit: ratelimit.New(0.5, 30, 15*time.Minute),
 	}
 
 	if _, err := rand.Read(api.attachKey); err != nil {
@@ -159,11 +169,24 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 	// authorisation, because browsers cannot send headers on <img src>.
 	mux.HandleFunc("GET /api/v1/attachments/{id}", api.downloadAttachment)
 
+	mux.HandleFunc("GET /api/v1/gifs/config", api.requireAuth(api.gifConfig))
+	mux.HandleFunc("GET /api/v1/gifs/search", api.requireAuth(api.searchGifs))
+	mux.HandleFunc("POST /api/v1/channels/{id}/gifs", api.requireAuth(api.attachGif))
+
+	// Signed token carries its own authorisation, as with attachments.
+	mux.HandleFunc("GET /api/v1/gifs/media", api.proxyGifMedia)
+
 	mux.HandleFunc("POST /api/v1/ws/ticket", api.requireAuth(api.wsTicket))
 	mux.HandleFunc("GET /api/v1/ws", api.websocket)
 
 	if livekit.APIKey == "" {
 		slog.Warn("voice is disabled: LiveKit is not configured")
+	}
+
+	if api.gifs.Enabled() {
+		slog.Info("gif search enabled", "provider", api.gifs.Provider())
+	} else {
+		slog.Info("gif search disabled")
 	}
 
 	if debugUIEnabled {
