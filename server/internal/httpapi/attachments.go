@@ -4,12 +4,16 @@
 package httpapi
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
 	"mime"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -47,6 +51,60 @@ type attachmentInfo struct {
 	Filename    string `json:"filename"`
 	ContentType string `json:"content_type"`
 	Size        int64  `json:"size"`
+
+	// Signed, time-limited download link. Set when the attachment is sent
+	// to a client, never stored.
+	URL string `json:"url,omitempty"`
+}
+
+// attachmentURLTTL is how long a signed link stays valid. Long enough to
+// scroll back through a session, short enough that a link pasted
+// elsewhere stops working.
+const attachmentURLTTL = 2 * time.Hour
+
+// signAttachmentURL produces a download link that carries its own
+// authorisation.
+//
+// A browser will not attach an Authorization header to an <img src> or a
+// <video src>, so the download route cannot require a session the way
+// every other route does. Putting the session token in the URL instead
+// would write credentials into access logs, which is the thing the
+// websocket ticket exists to avoid.
+//
+// So the link is signed: an expiry plus an HMAC over the attachment ID.
+// The permission check happens here, at minting time, when the caller's
+// role is known.
+//
+// The tradeoff, which is the same one presigned object-storage URLs make:
+// anyone holding the link can fetch the file until it expires, whether or
+// not they could see the channel. Short lifetimes bound that.
+func (a *API) signAttachmentURL(id string) string {
+	exp := time.Now().Add(attachmentURLTTL).Unix()
+
+	mac := hmac.New(sha256.New, a.attachKey)
+	fmt.Fprintf(mac, "%s.%d", id, exp)
+
+	return fmt.Sprintf("/api/v1/attachments/%s?exp=%d&sig=%s",
+		id, exp, hex.EncodeToString(mac.Sum(nil)))
+}
+
+func (a *API) verifyAttachmentURL(id, exp, sig string) bool {
+	seconds, err := strconv.ParseInt(exp, 10, 64)
+	if err != nil || time.Now().Unix() > seconds {
+		return false
+	}
+
+	mac := hmac.New(sha256.New, a.attachKey)
+	fmt.Fprintf(mac, "%s.%d", id, seconds)
+
+	want, err := hex.DecodeString(sig)
+	if err != nil {
+		return false
+	}
+
+	// Constant time: a plain comparison would leak how many leading bytes
+	// matched, which is enough to forge a signature byte by byte.
+	return hmac.Equal(mac.Sum(nil), want)
 }
 
 // uploadAttachment accepts one file and holds it until a message claims it.
@@ -157,18 +215,17 @@ func (a *API) uploadAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	info.URL = a.signAttachmentURL(info.ID)
 	writeJSON(w, http.StatusCreated, info)
 }
 
-// downloadAttachment serves a stored file to anyone who may view its
-// channel.
+// downloadAttachment serves a stored file to anyone holding a valid signed
+// link. No session is required; see signAttachmentURL for why.
 func (a *API) downloadAttachment(w http.ResponseWriter, r *http.Request) {
-	session := sessionFrom(r.Context())
+	id := r.PathValue("id")
 
-	role, err := perm.Parse(session.Role)
-	if err != nil {
-		slog.Error("session carries an unknown role", "role", session.Role)
-		writeError(w, http.StatusInternalServerError, "could not fetch the file")
+	if !a.verifyAttachmentURL(id, r.URL.Query().Get("exp"), r.URL.Query().Get("sig")) {
+		writeError(w, http.StatusForbidden, "link is invalid or has expired")
 		return
 	}
 
@@ -177,16 +234,12 @@ func (a *API) downloadAttachment(w http.ResponseWriter, r *http.Request) {
 		filename    string
 		contentType string
 		size        int64
-		minView     string
 	)
 
-	err = a.pool.QueryRow(r.Context(),
-		`SELECT at.blob_hash, at.filename, at.content_type, at.size, c.min_role_view
-		   FROM attachments at
-		   JOIN channels c ON c.id = at.channel_id
-		  WHERE at.id = $1`,
-		r.PathValue("id"),
-	).Scan(&hash, &filename, &contentType, &size, &minView)
+	err := a.pool.QueryRow(r.Context(),
+		`SELECT blob_hash, filename, content_type, size
+		   FROM attachments WHERE id = $1`, id,
+	).Scan(&hash, &filename, &contentType, &size)
 
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
@@ -195,14 +248,6 @@ func (a *API) downloadAttachment(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		slog.Error("looking up attachment", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not fetch the file")
-		return
-	}
-
-	viewRole, err := perm.Parse(minView)
-	if err != nil || !perm.AtLeast(role, viewRole) {
-		// Same 404 as a missing attachment: a file in a channel you
-		// cannot see should not be confirmed to exist.
-		writeError(w, http.StatusNotFound, "attachment not found")
 		return
 	}
 

@@ -273,7 +273,9 @@ function renderAttachments(after, list) {
   box.className = "attachments";
 
   for (const at of list) {
-    const url = `${api}/api/v1/attachments/${at.id}`;
+    // Signed by the server and already time-limited, so it works in an
+    // <img src> where an Authorization header cannot be sent.
+    const url = api + at.url;
 
     const link = document.createElement("a");
     link.href = url;
