@@ -26,6 +26,14 @@ type Config struct {
 	// themselves and walk straight past the rate limiter.
 	TrustProxy bool
 
+	// BlobDir is where attachment bytes live. Should be a mounted volume;
+	// losing it means losing every uploaded file.
+	BlobDir string
+
+	// MaxAttachmentBytes caps a single upload. Operators pay for the disk
+	// and the bandwidth, so they set the ceiling.
+	MaxAttachmentBytes int64
+
 	// LiveKit holds the media server settings. Voice is disabled when the
 	// key or secret is empty, so a text-only deployment needs no LiveKit.
 	LiveKit LiveKitConfig
@@ -47,6 +55,9 @@ func Load() (*Config, error) {
 		ListenAddr:  env("OPENVOXA_LISTEN_ADDR", ":8080"),
 		DatabaseURL: os.Getenv("OPENVOXA_DATABASE_URL"),
 		DebugUI:     envBool("OPENVOXA_DEBUG_UI", false),
+		BlobDir:     env("OPENVOXA_BLOB_DIR", "/var/lib/openvoxa/blobs"),
+
+		MaxAttachmentBytes: int64(envInt("OPENVOXA_MAX_ATTACHMENT_MB", 25)) * 1024 * 1024,
 		TrustProxy:  envBool("OPENVOXA_TRUST_PROXY", false),
 
 		LiveKit: LiveKitConfig{
@@ -86,6 +97,20 @@ func env(key, fallback string) string {
 
 // envBool treats an unparseable value as the fallback rather than an error.
 // A typo in a debug flag should not stop the server booting.
+// envInt treats an unparseable or non-positive value as the fallback. A
+// typo should not silently disable uploads or allow unbounded ones.
+func envInt(key string, fallback int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(v)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
 func envBool(key string, fallback bool) bool {
 	v := os.Getenv(key)
 	if v == "" {

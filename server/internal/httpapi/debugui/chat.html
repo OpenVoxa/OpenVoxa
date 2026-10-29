@@ -48,6 +48,12 @@
   .sys { color: var(--muted); font-style: italic; }
   .err { color: #c0392b; }
   @media (prefers-color-scheme: dark) { .err { color: #ff6b5a; } }
+  .attachments { margin: .2rem 0 .4rem 1.5rem; }
+  .attachments a { display: inline-block; padding: .2rem .5rem;
+    border: 1px solid var(--line); margin-right: .3rem; color: inherit; }
+  .attachments img, .attachments video { max-width: 20rem; max-height: 15rem;
+    display: block; border: 1px solid var(--line); margin-top: .3rem; }
+  #pending { color: var(--muted); font-size: .85em; margin-bottom: .3rem; }
   #composer { display: flex; gap: .5rem; }
   #composer input { flex: 1; max-width: none; }
   #status { color: var(--muted); margin-left: .5rem; }
@@ -184,8 +190,12 @@
 
 <div id="log" aria-live="polite"></div>
 
+<div id="pending"></div>
+
 <div id="composer">
   <input id="body" placeholder="Message" disabled autocomplete="off">
+  <input type="file" id="file" multiple hidden>
+  <button id="attach" disabled>Attach</button>
   <button id="send" disabled>Send</button>
 </div>
 
@@ -214,6 +224,87 @@ function esc(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
   })[c]);
+}
+
+// ----------------------------------------------------------- attachments
+
+let pending = [];
+
+function renderPending() {
+  $("pending").textContent = pending.length
+    ? "attached: " + pending.map((a) => `${a.filename} (${fmtSize(a.size)})`).join(", ")
+    : "";
+}
+
+function fmtSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+async function upload(files) {
+  for (const file of files) {
+    const form = new FormData();
+    form.append("file", file);
+
+    // Deliberately not using call(): FormData must set its own
+    // Content-Type, including the multipart boundary.
+    const res = await fetch(`${api}/api/v1/channels/${currentChannel}/attachments`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: form
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      line("err", esc(data?.error || `upload failed: ${file.name}`));
+      continue;
+    }
+
+    pending.push(await res.json());
+    renderPending();
+  }
+}
+
+function renderAttachments(after, list) {
+  if (!list || !list.length) return;
+
+  const box = document.createElement("div");
+  box.className = "attachments";
+
+  for (const at of list) {
+    const url = `${api}/api/v1/attachments/${at.id}`;
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.textContent = `${at.filename} (${fmtSize(at.size)})`;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    box.appendChild(link);
+
+    // Only preview types the server is willing to serve inline. Anything
+    // else stays a download link, which is what stops an uploaded HTML
+    // file from executing against our own origin.
+    if (/^image\//.test(at.content_type) && at.content_type !== "image/svg+xml") {
+      const img = document.createElement("img");
+      img.src = url;
+      img.alt = at.filename;
+      box.appendChild(img);
+    } else if (/^video\//.test(at.content_type)) {
+      const vid = document.createElement("video");
+      vid.src = url;
+      vid.controls = true;
+      box.appendChild(vid);
+    } else if (/^audio\//.test(at.content_type)) {
+      const aud = document.createElement("audio");
+      aud.src = url;
+      aud.controls = true;
+      box.appendChild(aud);
+    }
+  }
+
+  after.insertAdjacentElement("afterend", box);
+  logEl.scrollTop = logEl.scrollHeight;
 }
 
 // ------------------------------------------------------------- markdown
@@ -371,6 +462,8 @@ function renderMessage(m) {
     `<span class="at">${esc(when)}</span> ` +
     `<span class="who">${esc(m.username || "[deleted user]")}</span>: ${markdown(m.body)}`));
 
+  renderAttachments(el, m.attachments);
+
   // One preview per message, for the first link only. Several cards under
   // a single message is noise rather than information.
   const first = m.body.match(/https?:\/\/[^\s]+/);
@@ -384,7 +477,11 @@ function tombstone(el) {
   // A preview sits immediately after its message, so it has to go too.
   // Leaving it would keep the deleted content's title and thumbnail on
   // screen, which defeats the point of deleting it.
-  if (el.nextElementSibling?.classList.contains("preview")) {
+  // Attachments and previews both sit immediately after their message, so
+  // both have to go. Leaving them would keep the deleted content on
+  // screen, which defeats the deletion.
+  while (el.nextElementSibling?.classList.contains("preview") ||
+         el.nextElementSibling?.classList.contains("attachments")) {
     el.nextElementSibling.remove();
   }
   el.className = "msg sys";
@@ -407,7 +504,8 @@ function onChannelPurged(channelID, before) {
   let n = 0;
   logEl.querySelectorAll("[data-ts]").forEach((el) => {
     if (new Date(el.dataset.ts).getTime() < cutoff) {
-      if (el.nextElementSibling?.classList.contains("preview")) {
+      while (el.nextElementSibling?.classList.contains("preview") ||
+             el.nextElementSibling?.classList.contains("attachments")) {
         el.nextElementSibling.remove();
       }
       el.remove();
@@ -510,6 +608,7 @@ async function connect() {
     $("disconnect").disabled = false;
     $("body").disabled = false;
     $("send").disabled = false;
+    $("attach").disabled = false;
   };
 
   socket.onclose = () => {
@@ -518,6 +617,9 @@ async function connect() {
     $("disconnect").disabled = true;
     $("body").disabled = true;
     $("send").disabled = true;
+    $("attach").disabled = true;
+    pending = [];
+    renderPending();
     line("sys", "connection closed");
   };
 
@@ -569,9 +671,18 @@ async function connect() {
 
 function send() {
   const input = $("body");
-  if (!input.value.trim() || !socket) return;
-  socket.send(JSON.stringify({ type: "send", body: input.value }));
+  if (!socket) return;
+  if (!input.value.trim() && !pending.length) return;
+
+  socket.send(JSON.stringify({
+    type: "send",
+    body: input.value,
+    attachments: pending.map((a) => a.id)
+  }));
+
   input.value = "";
+  pending = [];
+  renderPending();
 }
 
 // ---------------------------------------------------------------- voice
@@ -1046,6 +1157,20 @@ $("register").onclick = () => authenticate("/api/v1/auth/register");
 $("connect").onclick = () => connect().catch((e) => line("err", esc(e.message)));
 $("disconnect").onclick = () => socket?.close();
 $("send").onclick = send;
+$("attach").onclick = () => $("file").click();
+$("file").onchange = (e) => {
+  upload(e.target.files).catch((err) => line("err", esc(err.message)));
+  e.target.value = "";
+};
+
+// Paste an image straight from the clipboard.
+$("body").onpaste = (e) => {
+  const files = [...e.clipboardData.files];
+  if (files.length) {
+    e.preventDefault();
+    upload(files).catch((err) => line("err", esc(err.message)));
+  }
+};
 $("body").onkeydown = (e) => { if (e.key === "Enter") send(); };
 </script>
 </body>
