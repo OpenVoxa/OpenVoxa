@@ -71,7 +71,8 @@ over.
 | Moderation | Client-supplied plaintext with server-side signature verification |
 | Voice input | Push-to-talk and voice activation, user-selectable; moderators can force PTT per voice channel |
 | Media stack | LiveKit, self-hosted. MIT-licensed, built-in E2EE, SFU relays ciphertext only. |
-| GIF provider | Admin-selectable between Giphy and Tenor, or disabled entirely. Neither is privacy-clean; the tradeoff is documented rather than solved. |
+| GIF provider | Admin-selectable between Giphy and Tenor, or disabled entirely (the default). Every image is proxied by the server and a chosen GIF is stored locally as an attachment, so clients never contact the provider. |
+| Moderation | Message removal by author or moderator; reports verified server-side; bans that revoke sessions and live connections. Purging a banned user's history is administrator-only and separate from the ban itself. |
 | Markdown | Hand-rolled minimal renderer rather than a library: bold, italic, strikethrough, inline and fenced code, blockquote, autolinks. Small enough to audit, and avoids trusting a dependency with untrusted input. |
 | TLS | Required in practice. Caddy provided but optional; three deployment paths documented. |
 
@@ -332,6 +333,67 @@ database over NFS is a well-documented way to corrupt things. The blob
 directory is a single path in config precisely so it can be a bind mount
 to whatever an operator wants.
 
+**Clients never contact the GIF provider.** Thumbnails in the picker are
+proxied through this server, and picking a GIF makes the server download
+it once and store it as an ordinary attachment. Linking to the provider's
+CDN instead would mean every viewer, for as long as the message exists,
+quietly tells Giphy they are reading this channel. As an attachment it is
+also deduplicated, governed by channel retention, and destroyed with its
+message.
+
+The server still sends search queries to the provider, so they learn what
+this instance searches for but not who searched. Same shape as link
+previews, which is why the feature is off by default and an operator opts
+in knowingly. The media proxy only fetches from a hardcoded list of
+provider CDN hosts, and only URLs this server signed: a provider response
+is still remote input.
+
+**Reports carry the reporter's copy and are verified against ours.** A
+reporter's client sends what it believes the message said. In a plaintext
+channel the server compares that against its own stored copy; in an
+encrypted channel it will verify the author's MLS signature over the
+claimed bytes instead. A mismatch is rejected and recorded, because filing
+a provably false report is itself actionable. `verified` is nullable so a
+moderator can tell "checked and failed" apart from "could not be checked",
+and the UI offers destructive actions only on verified reports.
+
+**Banning is not deleting.** Deletion is the user's own right; using it as
+a punishment would destroy both the evidence that justified the ban and
+content other people are still reading. A banned account stays, locked.
+Purging their history is a separate, administrator-only decision on top of
+the ban, and it is irreversible: unbanning restores the account, never its
+messages.
+
+There is a tension worth knowing before it bites: purging destroys the
+evidence for the ban. If the ban is later disputed, the moderation log
+records that a purge happened and how many messages it covered, but not
+what they said. Resolving the reports first preserves the reported content
+in the `reports` table.
+
+**Revoking access must reach live connections explicitly.** A websocket is
+authenticated once, at upgrade, and then runs until it is closed. Deleting
+sessions stops the next request and does nothing to a socket already open,
+so a banned user kept posting until they happened to disconnect. The hub
+tracks which user owns each connection and closes them on ban or account
+deletion. Any future change that revokes access, including role demotion,
+needs the same treatment.
+
+**Index predicates cannot reference `now()`.** Postgres requires them to
+be IMMUTABLE, because an index whose membership changed with the clock
+would silently stop matching its own definition. "One active ban per user"
+is therefore a unique index over permanent bans only, with overlapping
+temporary bans caught in the handler under a row lock. Any time-dependent
+uniqueness constraint needs the same split.
+
+**One parse-time throw disables every handler below it.** The debug client
+is a single script with no module boundaries. A reference to an element
+that did not exist threw while handlers were being attached, and
+everything after that line — including the login button — was silently
+never wired up. The symptom was a button that did nothing, with no network
+request and no error anywhere obvious. GIF and moderation controls are now
+attached through a helper that warns rather than throws. This disappears
+with `client-web`, where components fail independently.
+
 **`go mod tidy` silently raises the `go` directive.** Running it with a
 newer local toolchain than the Dockerfile's base image rewrites `go.mod`
 and the container build then fails with a confusing version error. Keep
@@ -345,11 +407,10 @@ the Dockerfile's Go version at or above the directive.
 4. ✅ TLS deployment
 5. ✅ Screen sharing with configurable resolution and frame rate
 6. ✅ Retention enforcement, account deletion, live deletion events
-7. 🔶 Rich text — markdown, link previews and attachments done; GIF
-   picker outstanding
-8. ⬜ MLS for text — the largest single piece of work
-9. ⬜ Media encryption keyed off the MLS exporter secret
-10. ⬜ Moderation tooling with signature verification
+7. ✅ Rich text — markdown, link previews, attachments, GIF picker
+8. ✅ Moderation tooling — message removal, verified reports, bans
+9. ⬜ MLS for text — the largest single piece of work
+10. ⬜ Media encryption keyed off the MLS exporter secret
 11. ⬜ The real client: `client-core`, `client-web`, `client-desktop`
 
 ## Open items
@@ -364,6 +425,13 @@ the Dockerfile's Go version at or above the directive.
 - [ ] Guest accounts can be assigned but there is no anonymous or invite
       flow to create one
 - [ ] Reproducible builds
+- [ ] Role demotion does not reach a live websocket. A demoted moderator
+      keeps whatever their open connection already permits until they
+      reconnect. Same fix as bans: close or re-evaluate the connection.
+- [ ] Nothing reads `moderation_log` yet. The data accumulates; a review
+      interface does not exist.
+- [ ] Reports in encrypted channels will need MLS signature verification
+      before `verified` can be anything but NULL there.
 - [ ] Attachment bytes are not yet encrypted. Content addressing
       deduplicates across users, which reveals that someone else uploaded
       an identical file. Once channels are encrypted, clients will encrypt

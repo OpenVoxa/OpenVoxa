@@ -45,7 +45,8 @@ If this project ever has a monetization strategy, something has gone wrong. Plea
 - **Voice channels** via a self-hosted LiveKit SFU, tested on desktop and iOS Safari
 - **Four roles** — Administrator, Moderator, User, Guest — enforced per channel, separately for viewing and for posting
 - **Rate limiting** on authentication, per IP and per account
-- **Rich text**: markdown, link previews with SSRF-hardened unfurling, and file attachments with inline image, audio and video playback
+- **Rich text**: markdown, link previews with SSRF-hardened unfurling, file attachments with inline image, audio and video playback, and GIF search that never puts your users in front of a third party
+- **Moderation**: message removal, reports verified against the server's own copy, and bans that cut off live connections rather than waiting for a token to expire
 - **Retention and deletion** that actually work: channels display their policy and a sweep enforces it, account deletion destroys content, and both propagate live to connected clients
 - **TLS** with three documented deployment paths
 
@@ -55,8 +56,6 @@ Permissions are enforced where it counts. A user without post rights in a voice 
 
 - **End-to-end encryption** for text (MLS, RFC 9420) and for voice and screen media. The database schema is already shaped for it: message bodies are opaque `BYTEA`, so turning encryption on needs no migration.
 - **Screen sharing** with configurable resolution and frame rate
-- **GIF picker** with an admin-selectable provider (Giphy or Tenor, or disabled)
-- **Moderation tooling**: message removal, bans, and the signature-verified reporting flow
 - **A real client.** What ships today is a deliberately ugly debug page. The desktop and web clients come after the protocol stops moving.
 
 ## What it's explicitly not doing
@@ -105,8 +104,8 @@ We did not write our own cryptography, which is the single best decision in the 
 | Screen sharing | ✅ Done |
 | Retention, deletion, live events | ✅ Done |
 | Rich text: markdown, previews, attachments | ✅ Done |
-| GIF picker | ⬜ Not started |
-| Moderation tooling | ⬜ Not started |
+| GIF picker | ✅ Done |
+| Moderation: removal, reports, bans | ✅ Done |
 | End-to-end encrypted text (MLS) | ⬜ Not started |
 | End-to-end encrypted media | ⬜ Not started |
 | A user interface a human would enjoy | ⬜ Not started |
@@ -124,6 +123,7 @@ The encryption rows are the ones that matter. Everything above them is foundatio
 | Web | React |
 | Media | [LiveKit](https://livekit.io), self-hosted |
 | Attachments | Content-addressed blobs on disk; local or network storage |
+| GIF search | Giphy or Tenor, proxied server-side; off by default |
 | Reverse proxy | [Caddy](https://caddyserver.com), optional |
 | Group encryption | MLS (RFC 9420) |
 
@@ -153,7 +153,7 @@ The second path covers private IPs and CGNAT: Caddy proves domain ownership thro
 
 Already running nginx, Traefik, or a tunnel? Skip the `tls` profile entirely, point your own proxy at the server, and set `OPENVOXA_TRUST_PROXY=true`.
 
-Attachments are stored by content hash on whatever you mount at the blob directory, so a NAS works as well as local disk. Size limits are yours to set.
+Attachments are stored by content hash on whatever you mount at the blob directory, so a NAS works as well as local disk. Size limits are yours to set. GIF search is off until you add a provider key, and even then every image is proxied through your server.
 
 Full details in [`deploy/README.md`](deploy/README.md).
 
