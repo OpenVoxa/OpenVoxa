@@ -59,7 +59,12 @@
   #screens { display: grid; gap: .5rem; margin-top: .5rem; }
   #screens figure { margin: 0; border: 1px solid var(--line); }
   #screens video { width: 100%; display: block; background: #000; }
-  #screens figcaption { padding: .25rem .5rem; color: var(--muted); font-size: .85em; }
+  #screens figcaption { padding: .25rem .5rem; color: var(--muted); font-size: .85em;
+    display: flex; justify-content: space-between; gap: .5rem; align-items: center; }
+  #screens .stats { font-variant-numeric: tabular-nums; }
+  #screens button { font-size: .85em; padding: .1rem .4rem; }
+  #screens video { cursor: zoom-in; }
+  #screens figure:fullscreen video { height: 100vh; object-fit: contain; cursor: zoom-out; }
   .row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin-bottom: .5rem; }
   .row label { margin: 0; }
   .num { width: 6rem; }
@@ -115,6 +120,15 @@
       <option value="maintain-resolution">Prioritise detail</option>
       <option value="maintain-framerate">Prioritise motion</option>
     </select>
+
+    <select id="codec" title="H.264 is hardware-decoded almost everywhere, including Safari">
+      <option value="h264" selected>H.264</option>
+      <option value="vp8">VP8</option>
+      <option value="vp9">VP9</option>
+      <option value="av1">AV1</option>
+    </select>
+
+    <label><input type="checkbox" id="simulcast"> simulcast</label>
 
     <label><input type="checkbox" id="shareAudio" checked> share audio</label>
   </div>
@@ -371,9 +385,15 @@ async function startShare() {
       // picture.
       videoEncoding: { maxBitrate: s.kbps * 1000, maxFramerate: s.fps },
 
-      // Screen content compresses well and viewers are few, so one high
-      // quality layer beats simulcast's three mediocre ones.
-      simulcast: false,
+      // Off sends one high quality layer, which is best when every viewer
+      // can handle it. On sends several, letting a weaker device drop to a
+      // lower one instead of stuttering. Turn it on for mixed audiences.
+      simulcast: $("simulcast").checked,
+
+      // H.264 is hardware-decoded on effectively every device, including
+      // iOS. VP8 is software-decoded in Safari, which is why an iPad
+      // stutters on high frame rates with the other codecs.
+      videoCodec: $("codec").value,
 
       // Detail keeps text readable and drops frames; motion keeps the
       // frame rate and softens the picture. Right answer depends on
@@ -409,8 +429,6 @@ async function stopShare() {
 
 function addScreen(track, participant) {
   const fig = document.createElement("figure");
-  const cap = document.createElement("figcaption");
-  cap.textContent = `${participant.name || participant.identity} - screen`;
 
   const el = track.attach();
   el.autoplay = true;
@@ -419,9 +437,85 @@ function addScreen(track, participant) {
   // does not affect what remote participants hear.
   el.muted = true;
 
+  const cap = document.createElement("figcaption");
+
+  const who = document.createElement("span");
+  who.textContent = `${participant.name || participant.identity} - screen`;
+
+  const stats = document.createElement("span");
+  stats.className = "stats";
+  stats.textContent = "measuring...";
+
+  const full = document.createElement("button");
+  full.textContent = "Fullscreen";
+  full.onclick = () => toggleFullscreen(fig);
+  el.onclick = () => toggleFullscreen(fig);
+
+  cap.append(who, stats, full);
   fig.append(el, cap);
   $("screens").appendChild(fig);
   screenEls.set(track.sid, fig);
+
+  startStats(el, stats, track);
+}
+
+function toggleFullscreen(fig) {
+  if (document.fullscreenElement === fig) {
+    document.exitFullscreen();
+  } else {
+    fig.requestFullscreen?.().catch(() => {
+      // iOS Safari does not allow fullscreen on arbitrary elements, only
+      // on the video itself.
+      fig.querySelector("video")?.webkitEnterFullscreen?.();
+    });
+  }
+}
+
+// Samples what the browser is actually decoding, once a second.
+//
+// This is the readout that answers "is it the network or my device".
+// Dropped frames climbing means the decoder cannot keep up locally.
+// A received frame rate well below what was sent, with no drops, means
+// the frames never arrived.
+function startStats(el, out, track) {
+  let lastFrames = 0;
+  let lastBytes = 0;
+  let lastAt = performance.now();
+
+  const timer = setInterval(async () => {
+    if (!el.isConnected) return clearInterval(timer);
+
+    const q = el.getVideoPlaybackQuality?.();
+    const now = performance.now();
+    const seconds = (now - lastAt) / 1000;
+
+    let fps = 0;
+    let dropped = 0;
+    if (q) {
+      fps = Math.round((q.totalVideoFrames - lastFrames) / seconds);
+      lastFrames = q.totalVideoFrames;
+      dropped = q.droppedVideoFrames;
+    }
+
+    let kbps = null;
+    try {
+      const report = await track.getRTCStatsReport?.();
+      report?.forEach((s) => {
+        if (s.type === "inbound-rtp" && s.kind === "video") {
+          if (lastBytes) kbps = Math.round((s.bytesReceived - lastBytes) * 8 / seconds / 1000);
+          lastBytes = s.bytesReceived;
+        }
+      });
+    } catch { /* stats unavailable on some browsers */ }
+
+    lastAt = now;
+
+    out.textContent =
+      `${el.videoWidth}x${el.videoHeight} ` +
+      `${fps}fps` +
+      (kbps !== null ? ` ${kbps}kbps` : "") +
+      (dropped ? ` ${dropped} dropped` : "");
+  }, 1000);
 }
 
 function removeScreen(track) {
