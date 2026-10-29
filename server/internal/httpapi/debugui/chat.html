@@ -404,15 +404,34 @@ async function startShare() {
     }
 
     await room.localParticipant.publishTrack(track, {
-      // Bitrate is the setting that actually decides quality. Resolution
-      // without the bitrate to carry it just produces a blurry large
-      // picture.
+      // Screen-share tracks read screenShareEncoding, NOT videoEncoding.
+      // Setting only the latter silently leaves LiveKit's default in
+      // place, which is 1080p at 15fps and about 1.5 Mbps - and produces
+      // a stream that ignores every setting you thought you changed.
+      screenShareEncoding: { maxBitrate: s.kbps * 1000, maxFramerate: s.fps },
+
+      // Set as well, so the same code path still behaves if a track ever
+      // arrives without the screen-share source tag.
       videoEncoding: { maxBitrate: s.kbps * 1000, maxFramerate: s.fps },
 
       // Off sends one high quality layer, which is best when every viewer
       // can handle it. On sends several, letting a weaker device drop to a
       // lower one instead of stuttering. Turn it on for mixed audiences.
       simulcast: $("simulcast").checked,
+
+      // Screen share also has its own simulcast layer list. Two layers is
+      // enough: full quality, and a half-resolution fallback for anything
+      // that cannot keep up.
+      screenShareSimulcastLayers: [
+        {
+          width: Math.round(s.width / 2),
+          height: Math.round(s.height / 2),
+          encoding: {
+            maxBitrate: Math.round(s.kbps * 1000 * 0.3),
+            maxFramerate: Math.min(s.fps, 30)
+          }
+        }
+      ],
 
       // H.264 is hardware-decoded on effectively every device, including
       // iOS. VP8 is software-decoded in Safari, which is why an iPad
@@ -466,23 +485,35 @@ function startLocalStats(track) {
 
     let sentFps = null;
     let kbps = null;
+    let layers = 0;
     try {
       const report = await track.getRTCStatsReport?.();
+
+      // Simulcast produces one outbound-rtp per layer. Totals have to be
+      // summed across all of them before differencing, or the numbers come
+      // out as nonsense - including negative bitrates.
+      let bytes = 0;
+      let frames = 0;
       report?.forEach((r) => {
         if (r.type === "outbound-rtp" && r.kind === "video") {
-          if (lastBytes) kbps = Math.round((r.bytesSent - lastBytes) * 8 / seconds / 1000);
-          lastBytes = r.bytesSent;
-          if (lastFrames) sentFps = Math.round((r.framesSent - lastFrames) / seconds);
-          lastFrames = r.framesSent;
+          bytes += r.bytesSent || 0;
+          frames = Math.max(frames, r.framesSent || 0);
+          layers++;
         }
       });
+
+      if (lastBytes) kbps = Math.round((bytes - lastBytes) * 8 / seconds / 1000);
+      if (lastFrames) sentFps = Math.round((frames - lastFrames) / seconds);
+      lastBytes = bytes;
+      lastFrames = frames;
     } catch { /* stats unavailable */ }
 
     lastAt = now;
 
     $("shareStatus").textContent =
       `capture ${got.width}x${got.height}@${Math.round(got.frameRate || 0)} | ` +
-      `sending ${sentFps ?? "?"}fps ${kbps ?? "?"}kbps`;
+      `sending ${sentFps ?? "?"}fps ${kbps ?? "?"}kbps` +
+      (layers > 1 ? ` (${layers} layers)` : "");
   }, 1000);
 }
 
