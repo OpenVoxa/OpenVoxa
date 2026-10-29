@@ -488,6 +488,11 @@ func (a *API) banUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Deleting sessions stops the next request; it does nothing to a
+	// websocket that is already open. Close those too, or a banned user
+	// carries on posting until they disconnect.
+	a.hub.DisconnectUser(subjectID)
+
 	slog.Info("user banned", "actor_id", actor.UserID,
 		"subject_id", subjectID, "permanent", expires == nil)
 

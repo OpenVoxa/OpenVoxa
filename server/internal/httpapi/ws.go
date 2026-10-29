@@ -238,7 +238,7 @@ func (a *API) websocket(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	client := hub.NewClient()
+	client := hub.NewClient(session.UserID)
 	a.hub.Subscribe(channelID, client)
 	defer a.hub.Unsubscribe(channelID, client)
 
@@ -254,6 +254,12 @@ func (a *API) websocket(w http.ResponseWriter, r *http.Request) {
 				return
 			case payload, open := <-client.Send:
 				if !open {
+					// The hub closed this connection, which happens when
+					// the account is banned or deleted. Cancelling
+					// unblocks the read loop below so the handler returns
+					// and the socket is actually closed, rather than
+					// sitting there still accepting messages.
+					cancel()
 					return
 				}
 				if err := conn.Write(ctx, websocket.MessageText, payload); err != nil {
