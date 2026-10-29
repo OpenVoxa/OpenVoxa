@@ -56,6 +56,14 @@
   #participants li { padding: .15rem 0; }
   .speaking { font-weight: 600; }
   .ptt-hint { color: var(--muted); font-size: .85em; }
+  #screens { display: grid; gap: .5rem; margin-top: .5rem; }
+  #screens figure { margin: 0; border: 1px solid var(--line); }
+  #screens video { width: 100%; display: block; background: #000; }
+  #screens figcaption { padding: .25rem .5rem; color: var(--muted); font-size: .85em; }
+  .row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin-bottom: .5rem; }
+  .row label { margin: 0; }
+  .num { width: 6rem; }
+  #customBox[hidden] { display: none; }
 </style>
 </head>
 <body>
@@ -88,6 +96,43 @@
     <span class="ptt-hint">(hold Space while this page has focus)</span>
   </label>
   <ul id="participants"></ul>
+</fieldset>
+
+<fieldset>
+  <legend>screen share</legend>
+
+  <div class="row">
+    <select id="preset">
+      <option value="1280x720x30x2500">720p 30fps</option>
+      <option value="1920x1080x30x4000" selected>1080p 30fps</option>
+      <option value="1920x1080x60x8000">1080p 60fps</option>
+      <option value="2560x1440x60x14000">1440p 60fps</option>
+      <option value="3840x2160x30x20000">4K 30fps</option>
+      <option value="custom">Custom</option>
+    </select>
+
+    <select id="priority" title="What to sacrifice when bandwidth runs short">
+      <option value="maintain-resolution">Prioritise detail</option>
+      <option value="maintain-framerate">Prioritise motion</option>
+    </select>
+
+    <label><input type="checkbox" id="shareAudio" checked> share audio</label>
+  </div>
+
+  <div class="row" id="customBox" hidden>
+    <label>w <input class="num" type="number" id="cw" value="1920" min="160" max="7680"></label>
+    <label>h <input class="num" type="number" id="ch" value="1080" min="120" max="4320"></label>
+    <label>fps <input class="num" type="number" id="cf" value="60" min="1" max="240"></label>
+    <label>kbps <input class="num" type="number" id="cb" value="8000" min="100" max="100000"></label>
+  </div>
+
+  <div class="row">
+    <button id="startShare" disabled>Share screen</button>
+    <button id="stopShare" disabled>Stop sharing</button>
+    <span id="shareStatus" class="ptt-hint"></span>
+  </div>
+
+  <div id="screens"></div>
 </fieldset>
 
 <div id="log" aria-live="polite"></div>
@@ -275,6 +320,125 @@ function renderParticipants() {
   }
 }
 
+// ------------------------------------------------------- screen sharing
+
+let screenTracks = [];
+
+// Remote video elements, keyed by track SID so they can be removed cleanly.
+const screenEls = new Map();
+
+function shareSettings() {
+  if ($("preset").value === "custom") {
+    return {
+      width: +$("cw").value,
+      height: +$("ch").value,
+      fps: +$("cf").value,
+      kbps: +$("cb").value
+    };
+  }
+  const [width, height, fps, kbps] = $("preset").value.split("x").map(Number);
+  return { width, height, fps, kbps };
+}
+
+$("preset").onchange = () => {
+  const custom = $("preset").value === "custom";
+  $("customBox").hidden = !custom;
+
+  // Seed the custom fields from whatever preset was last selected, so
+  // "custom" starts from something sensible rather than blank.
+  if (custom) return;
+  const s = shareSettings();
+  $("cw").value = s.width; $("ch").value = s.height;
+  $("cf").value = s.fps;   $("cb").value = s.kbps;
+};
+
+async function startShare() {
+  if (!room) return;
+  const s = shareSettings();
+
+  // createLocalScreenTracks triggers the browser's own picker. We cannot
+  // skip it or preselect a window: the user choosing what to share is a
+  // browser security guarantee, not something the page controls.
+  screenTracks = await LivekitClient.createLocalScreenTracks({
+    audio: $("shareAudio").checked,
+    resolution: { width: s.width, height: s.height, frameRate: s.fps }
+  });
+
+  for (const track of screenTracks) {
+    await room.localParticipant.publishTrack(track, {
+      // Bitrate is the setting that actually decides quality. Resolution
+      // without the bitrate to carry it just produces a blurry large
+      // picture.
+      videoEncoding: { maxBitrate: s.kbps * 1000, maxFramerate: s.fps },
+
+      // Screen content compresses well and viewers are few, so one high
+      // quality layer beats simulcast's three mediocre ones.
+      simulcast: false,
+
+      // Detail keeps text readable and drops frames; motion keeps the
+      // frame rate and softens the picture. Right answer depends on
+      // whether you are sharing a document or a game.
+      degradationPreference: $("priority").value
+    });
+
+    // Fires when the user hits the browser's own "Stop sharing" bar, which
+    // bypasses our button entirely.
+    track.mediaStreamTrack.addEventListener("ended", () => stopShare());
+  }
+
+  $("startShare").disabled = true;
+  $("stopShare").disabled = false;
+  $("shareStatus").textContent =
+    `sharing ${s.width}x${s.height} @ ${s.fps}fps, ${s.kbps} kbps`;
+  line("sys", `started screen share at ${s.width}x${s.height} ${s.fps}fps`);
+}
+
+async function stopShare() {
+  for (const track of screenTracks) {
+    try {
+      await room?.localParticipant.unpublishTrack(track, true);
+    } catch { /* already gone */ }
+    track.stop();
+  }
+  screenTracks = [];
+
+  $("startShare").disabled = !room;
+  $("stopShare").disabled = true;
+  $("shareStatus").textContent = "";
+}
+
+function addScreen(track, participant) {
+  const fig = document.createElement("figure");
+  const cap = document.createElement("figcaption");
+  cap.textContent = `${participant.name || participant.identity} - screen`;
+
+  const el = track.attach();
+  el.autoplay = true;
+  el.playsInline = true;
+  // Our own share would echo back as a feedback loop; muting the element
+  // does not affect what remote participants hear.
+  el.muted = true;
+
+  fig.append(el, cap);
+  $("screens").appendChild(fig);
+  screenEls.set(track.sid, fig);
+}
+
+function removeScreen(track) {
+  track.detach().forEach((el) => el.remove());
+  screenEls.get(track.sid)?.remove();
+  screenEls.delete(track.sid);
+}
+
+$("startShare").onclick = () => startShare().catch((e) => {
+  // Cancelling the picker throws NotAllowedError. Not an error worth
+  // shouting about.
+  if (e.name !== "NotAllowedError") line("err", esc(e.message));
+});
+$("stopShare").onclick = () => stopShare();
+
+// ------------------------------------------------------------------ voice
+
 async function joinVoice() {
   const opt = $("voiceChannel").selectedOptions[0];
   const data = await call(`/api/v1/channels/${opt.value}/voice-token`, { method: "POST" });
@@ -289,18 +453,30 @@ async function joinVoice() {
     .on(LivekitClient.RoomEvent.TrackUnmuted, renderParticipants)
     .on(LivekitClient.RoomEvent.Disconnected, () => {
       line("sys", "left voice");
+      stopShare();
       room = null; micTrack = null;
+      screenEls.forEach((fig) => fig.remove());
+      screenEls.clear();
       renderParticipants();
       $("joinVoice").disabled = false;
       $("leaveVoice").disabled = true;
       $("muteToggle").disabled = true;
+      $("startShare").disabled = true;
     })
-    .on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
-      // Remote audio needs an element in the DOM to actually play.
-      if (track.kind === "audio") document.body.appendChild(track.attach());
+    .on(LivekitClient.RoomEvent.TrackSubscribed, (track, pub, participant) => {
+      if (track.kind === "audio") {
+        // Remote audio needs an element in the DOM to actually play.
+        document.body.appendChild(track.attach());
+      } else if (track.source === LivekitClient.Track.Source.ScreenShare) {
+        addScreen(track, participant);
+      }
     })
     .on(LivekitClient.RoomEvent.TrackUnsubscribed, (track) => {
-      track.detach().forEach((el) => el.remove());
+      if (track.source === LivekitClient.Track.Source.ScreenShare) {
+        removeScreen(track);
+      } else {
+        track.detach().forEach((el) => el.remove());
+      }
     });
 
   await room.connect(data.url, data.token);
@@ -313,6 +489,10 @@ async function joinVoice() {
   } else {
     $("pttMode").disabled = false;
   }
+
+  // Screen sharing rides on the same publish permission as the microphone.
+  // Someone who may not speak may not stream either.
+  $("startShare").disabled = !data.can_publish;
 
   if (data.can_publish) {
     micTrack = await LivekitClient.createLocalAudioTrack({
