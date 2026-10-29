@@ -49,7 +49,7 @@ func (a *API) unfurlLink(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, unfurl.ErrNotHTML):
 			writeError(w, http.StatusUnsupportedMediaType, "link is not a web page")
 		default:
-			slog.Debug("unfurl failed", "err", err)
+			slog.Warn("unfurl failed", "url", req.URL, "err", err)
 			writeError(w, http.StatusBadGateway, "could not fetch that link")
 		}
 		return
