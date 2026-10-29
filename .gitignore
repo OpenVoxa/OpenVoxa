@@ -26,3 +26,5 @@ build/
 .idea/
 *.swp
 .DS_Store
+deploy/docker-compose.override.yml
+deploy/docker-compose.override.yml

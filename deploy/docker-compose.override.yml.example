@@ -1,0 +1,10 @@
+# Copy to docker-compose.override.yml to use it. The copy is gitignored.
+#
+# Only needed for CADDYFILE=Caddyfile.dns, which requires Caddy compiled
+# with a DNS provider plugin. The stock image works for the other two
+# paths, so most deployments do not need this file.
+services:
+  caddy:
+    build:
+      context: ./caddy
+    image: !reset null
