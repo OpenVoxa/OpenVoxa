@@ -6,6 +6,7 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -345,6 +346,19 @@ type banRequest struct {
 	Reason string `json:"reason"`
 	// Postgres interval syntax. Empty means permanent.
 	Duration string `json:"duration"`
+
+	// Also destroy everything the account wrote. Administrator only, and
+	// off by default.
+	//
+	// A ban and a purge are different decisions. Banning says stop
+	// participating; purging destroys conversations other people are
+	// still reading, and removes the evidence that justified the ban in
+	// the first place. Most bans should not need it. Spam floods and
+	// abuse campaigns do, which is why it exists at all.
+	//
+	// It cannot be undone. Unbanning restores the account, never its
+	// messages.
+	PurgeMessages bool `json:"purge_messages"`
 }
 
 // banUser locks an account and ends its sessions.
@@ -475,8 +489,51 @@ func (a *API) banUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	purged := int64(0)
+	if req.PurgeMessages {
+		// Deliberately stricter than the ban itself: a moderator can stop
+		// someone posting, an administrator decides whether their history
+		// disappears.
+		if !perm.AtLeast(actorRole, perm.Administrator) {
+			writeError(w, http.StatusForbidden,
+				"only an administrator can purge a user's messages")
+			return
+		}
+
+		// Same treatment as account deletion: tombstone the rows so
+		// surrounding conversations keep their shape, and drop
+		// attachments so the blob collector reclaims the bytes.
+		tag, err := tx.Exec(r.Context(),
+			`UPDATE messages SET body = ''::bytea, deleted = true
+			  WHERE author_id = $1 AND deleted = false`, subjectID)
+		if err != nil {
+			slog.Error("purging messages", "err", err)
+			writeError(w, http.StatusInternalServerError, "could not purge messages")
+			return
+		}
+		purged = tag.RowsAffected()
+
+		if _, err := tx.Exec(r.Context(),
+			`DELETE FROM attachments
+			  WHERE message_id IN (SELECT id FROM messages WHERE author_id = $1)
+			     OR (uploader_id = $1 AND message_id IS NULL)`,
+			subjectID,
+		); err != nil {
+			slog.Error("purging attachments", "err", err)
+			writeError(w, http.StatusInternalServerError, "could not purge messages")
+			return
+		}
+	}
+
+	action := "ban"
+	detail := req.Reason
+	if req.PurgeMessages {
+		action = "ban_and_purge"
+		detail = fmt.Sprintf("%s (purged %d messages)", req.Reason, purged)
+	}
+
 	if err := logModeration(r.Context(), tx, actor.UserID,
-		"ban", subjectID, req.Reason); err != nil {
+		action, subjectID, detail); err != nil {
 		slog.Error("recording moderation action", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not ban the user")
 		return
@@ -493,10 +550,17 @@ func (a *API) banUser(w http.ResponseWriter, r *http.Request) {
 	// carries on posting until they disconnect.
 	a.hub.DisconnectUser(subjectID)
 
-	slog.Info("user banned", "actor_id", actor.UserID,
-		"subject_id", subjectID, "permanent", expires == nil)
+	if req.PurgeMessages {
+		// Reuse the account-deletion event: connected clients already
+		// know how to turn one user's messages into tombstones on sight.
+		a.NotifyUserPurged(subjectID)
+	}
 
-	w.WriteHeader(http.StatusNoContent)
+	slog.Info("user banned", "actor_id", actor.UserID,
+		"subject_id", subjectID, "permanent", expires == nil,
+		"purged_messages", purged)
+
+	writeJSON(w, http.StatusOK, map[string]any{"purged_messages": purged})
 }
 
 func (a *API) unbanUser(w http.ResponseWriter, r *http.Request) {
