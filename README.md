@@ -45,6 +45,8 @@ If this project ever has a monetization strategy, something has gone wrong. Plea
 - **Voice channels** via a self-hosted LiveKit SFU, tested on desktop and iOS Safari
 - **Four roles** — Administrator, Moderator, User, Guest — enforced per channel, separately for viewing and for posting
 - **Rate limiting** on authentication, per IP and per account
+- **Rich text**: markdown, link previews with SSRF-hardened unfurling, and file attachments with inline image, audio and video playback
+- **Retention and deletion** that actually work: channels display their policy and a sweep enforces it, account deletion destroys content, and both propagate live to connected clients
 - **TLS** with three documented deployment paths
 
 Permissions are enforced where it counts. A user without post rights in a voice channel receives a token that physically cannot publish audio, refused by the media server rather than hidden by the UI.
@@ -53,9 +55,8 @@ Permissions are enforced where it counts. A user without post rights in a voice 
 
 - **End-to-end encryption** for text (MLS, RFC 9420) and for voice and screen media. The database schema is already shaped for it: message bodies are opaque `BYTEA`, so turning encryption on needs no migration.
 - **Screen sharing** with configurable resolution and frame rate
-- **Rich text**: link previews, embedded video, file attachments, GIFs with an admin-selectable provider
-- **Retention enforcement.** Channels carry a retention policy and display it; nothing purges yet. Every channel currently reads "forever", which is accurate, but the enforcement has to exist before any other value would be honest.
-- **Account deletion** by crypto-shredding
+- **GIF picker** with an admin-selectable provider (Giphy or Tenor, or disabled)
+- **Moderation tooling**: message removal, bans, and the signature-verified reporting flow
 - **A real client.** What ships today is a deliberately ugly debug page. The desktop and web clients come after the protocol stops moving.
 
 ## What it's explicitly not doing
@@ -101,11 +102,13 @@ We did not write our own cryptography, which is the single best decision in the 
 | Rate limiting and session hygiene | ✅ Done |
 | Voice via LiveKit | ✅ Done |
 | TLS deployment | ✅ Done |
-| Screen sharing | ⬜ Not started |
+| Screen sharing | ✅ Done |
+| Retention, deletion, live events | ✅ Done |
+| Rich text: markdown, previews, attachments | ✅ Done |
+| GIF picker | ⬜ Not started |
+| Moderation tooling | ⬜ Not started |
 | End-to-end encrypted text (MLS) | ⬜ Not started |
 | End-to-end encrypted media | ⬜ Not started |
-| Retention, deletion, moderation tooling | ⬜ Not started |
-| Rich text, embeds, attachments | ⬜ Not started |
 | A user interface a human would enjoy | ⬜ Not started |
 
 The encryption rows are the ones that matter. Everything above them is foundation.
@@ -120,6 +123,7 @@ The encryption rows are the ones that matter. Everything above them is foundatio
 | Desktop | Electron |
 | Web | React |
 | Media | [LiveKit](https://livekit.io), self-hosted |
+| Attachments | Content-addressed blobs on disk; local or network storage |
 | Reverse proxy | [Caddy](https://caddyserver.com), optional |
 | Group encryption | MLS (RFC 9420) |
 
@@ -148,6 +152,8 @@ docker compose --profile tls up -d
 The second path covers private IPs and CGNAT: Caddy proves domain ownership through a DNS TXT record, so nothing needs to reach you from the internet, and you still get a publicly trusted certificate.
 
 Already running nginx, Traefik, or a tunnel? Skip the `tls` profile entirely, point your own proxy at the server, and set `OPENVOXA_TRUST_PROXY=true`.
+
+Attachments are stored by content hash on whatever you mount at the blob directory, so a NAS works as well as local disk. Size limits are yours to set.
 
 Full details in [`deploy/README.md`](deploy/README.md).
 

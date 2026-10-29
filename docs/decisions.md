@@ -67,7 +67,7 @@ over.
 | Area | Decision |
 | --- | --- |
 | Guest access | Off by default, admin-toggleable per instance |
-| File attachments | Required. Size limit set by the admin. Attachments follow the channel retention policy. |
+| File attachments | Content-addressed blobs on local disk, deduplicated by SHA-256. Per-file size limit set by the admin. Attachments inherit their channel's retention through the message that carries them. |
 | Moderation | Client-supplied plaintext with server-side signature verification |
 | Voice input | Push-to-talk and voice activation, user-selectable; moderators can force PTT per voice channel |
 | Media stack | LiveKit, self-hosted. MIT-licensed, built-in E2EE, SFU relays ciphertext only. |
@@ -283,6 +283,55 @@ created on click.
 sweep removes the preview card too. Leaving it would keep the deleted
 content's title and thumbnail on screen, which defeats the deletion.
 
+**Attachments are claimed, not asserted.** Upload happens before the
+message is sent, so an oversized file fails before anyone has composed
+anything. When a message claims attachment IDs, the `UPDATE` matches only
+rows where uploader, channel and unclaimed status all line up. Guessing
+someone else's attachment ID matches nothing, so the authorisation check
+and the claim are the same statement.
+
+**Attachment downloads use signed URLs, not sessions.** A browser will not
+send an `Authorization` header on an `<img src>` or `<video src>`, so the
+download route cannot require a session. Putting the session token in the
+URL would write credentials into access logs, which is exactly what the
+websocket ticket exists to avoid. Instead the server mints an HMAC-signed,
+time-limited link when it delivers the message, and the permission check
+happens at minting time when the caller's role is known.
+
+The tradeoff is the one presigned object-storage URLs make: anyone holding
+the link can fetch the file until it expires, regardless of channel
+access. A two-hour lifetime bounds it. The signing key is random per
+process, so a restart invalidates outstanding links and clients get fresh
+ones on their next history load.
+
+**SVG is not in the inline-serving allowlist.** It is an image to users
+and a scriptable document to browsers. Served inline it is stored
+cross-site scripting against our own origin. Content type is taken from
+the file extension rather than the client's claim, and anything
+unrecognised becomes `application/octet-stream` with `nosniff` and an
+attachment disposition.
+
+**Docker applies image directory ownership only on a volume's first
+mount.** A named volume for the blob store arrives owned by root, and the
+server runs as `nonroot` (UID 65532), so directory creation fails and the
+container crash-loops. Distroless has no shell, so the Dockerfile uses a
+throwaway Alpine stage to create the directory with the right ownership
+and copies it into the final image. Changing this after a volume exists
+requires removing the volume.
+
+**Oversized uploads must be rejected before the multipart parser runs.**
+`MaxBytesReader` kills the parser before it yields a file, so the error
+that surfaces is "malformed form" when the truth is "file too large".
+Checking `Content-Length` first gives the right message and avoids
+buffering the upload at all; the body cap stays as a backstop because a
+chunked request declares no length.
+
+**Blobs are safe on network storage; Postgres is not.** Attachment bytes
+are write-once, read-many, with no locking, which NFS handles fine. A
+database over NFS is a well-documented way to corrupt things. The blob
+directory is a single path in config precisely so it can be a bind mount
+to whatever an operator wants.
+
 **`go mod tidy` silently raises the `go` directive.** Running it with a
 newer local toolchain than the Dockerfile's base image rewrites `go.mod`
 and the container build then fails with a confusing version error. Keep
@@ -296,8 +345,8 @@ the Dockerfile's Go version at or above the directive.
 4. ✅ TLS deployment
 5. ✅ Screen sharing with configurable resolution and frame rate
 6. ✅ Retention enforcement, account deletion, live deletion events
-7. 🔶 Rich text — markdown and link previews done; attachments and GIFs
-   outstanding
+7. 🔶 Rich text — markdown, link previews and attachments done; GIF
+   picker outstanding
 8. ⬜ MLS for text — the largest single piece of work
 9. ⬜ Media encryption keyed off the MLS exporter secret
 10. ⬜ Moderation tooling with signature verification
@@ -315,7 +364,10 @@ the Dockerfile's Go version at or above the directive.
 - [ ] Guest accounts can be assigned but there is no anonymous or invite
       flow to create one
 - [ ] Reproducible builds
-- [ ] Attachment storage: where blobs live, and how channel retention
-      applies to them
+- [ ] Attachment bytes are not yet encrypted. Content addressing
+      deduplicates across users, which reveals that someone else uploaded
+      an identical file. Once channels are encrypted, clients will encrypt
+      before upload, which breaks deduplication and is the correct
+      tradeoff.
 - [ ] Unfurl endpoint is a deliberate SSRF surface. Worth naming in
       SECURITY.md so reviewers look at it first.
