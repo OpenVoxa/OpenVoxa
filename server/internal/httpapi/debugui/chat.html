@@ -80,6 +80,20 @@
   .msg blockquote { border-left: 3px solid var(--line); margin: .25rem 0;
     padding-left: .5rem; color: var(--muted); }
   .msg a { color: inherit; }
+  .msg .acts { visibility: hidden; margin-left: .4rem; }
+  .msg:hover .acts { visibility: visible; }
+  .msg .acts button { font-size: .75em; padding: 0 .3rem; }
+
+  #modPanel { border: 1px solid var(--line); padding: .5rem; margin-bottom: .5rem; }
+  #modPanel[hidden] { display: none; }
+  #modList { max-height: 18rem; overflow-y: auto; margin-top: .5rem; }
+  .report { border-bottom: 1px solid var(--line); padding: .4rem 0; }
+  .report .meta { color: var(--muted); font-size: .85em; }
+  .report .quoted { border-left: 3px solid var(--line); padding-left: .5rem;
+    margin: .25rem 0; white-space: pre-wrap; }
+  .ok { color: #1a7f37; }
+  .bad { color: #c0392b; }
+  @media (prefers-color-scheme: dark) { .ok { color: #4ac26b; } .bad { color: #ff6b5a; } }
 
   .preview { border: 1px solid var(--line); border-left-width: 3px;
     margin: .25rem 0 .5rem 1.5rem; padding: .4rem .6rem; max-width: 34rem; }
@@ -126,6 +140,7 @@
   <button id="login">Log in</button>
   <button id="register">Register</button>
   <button id="deleteAccount" disabled>Delete account</button>
+  <button id="modOpen" disabled hidden>Moderation</button>
 </fieldset>
 
 <fieldset>
@@ -198,6 +213,16 @@
 </fieldset>
 
 <div id="log" aria-live="polite"></div>
+
+<div id="modPanel" hidden>
+  <div class="row">
+    <strong style="flex:1">Moderation</strong>
+    <button id="modReports">Reports</button>
+    <button id="modBans">Bans</button>
+    <button id="modClose">Close</button>
+  </div>
+  <div id="modList"></div>
+</div>
 
 <div id="gifPanel" hidden>
   <div class="row">
@@ -329,6 +354,206 @@ function renderAttachments(after, list) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
+// ------------------------------------------------------------ moderation
+
+let myRole = null;
+
+function isModerator() {
+  return myRole === "moderator" || myRole === "administrator";
+}
+
+// Per-message controls. The client decides what to show; the server
+// decides what is allowed. A user who forges a delete request on someone
+// else's message gets a 403.
+function messageActions(el, m) {
+  if (m.deleted) return;
+
+  const mine = m.author_id && m.author_id === myUserID;
+  if (!mine && !isModerator()) {
+    if (!m.author_id) return;
+  }
+
+  const acts = document.createElement("span");
+  acts.className = "acts";
+
+  if (mine || isModerator()) {
+    const del = document.createElement("button");
+    del.textContent = "delete";
+    del.title = mine ? "Delete your message" : "Remove as moderator";
+    del.onclick = () => removeMessage(m.id);
+    acts.appendChild(del);
+  }
+
+  if (!mine && m.author_id) {
+    const rep = document.createElement("button");
+    rep.textContent = "report";
+    rep.onclick = () => reportMessage(m);
+    acts.appendChild(rep);
+  }
+
+  el.appendChild(acts);
+}
+
+async function removeMessage(id) {
+  try {
+    await call(`/api/v1/messages/${id}`, { method: "DELETE" });
+  } catch (e) {
+    line("err", esc(e.message));
+  }
+}
+
+async function reportMessage(m) {
+  const reason = prompt("Why are you reporting this message?");
+  if (reason === null) return;
+
+  try {
+    // The body goes along so the server can check the message has not
+    // been altered. It compares against its own copy, so an edited
+    // report is rejected rather than acted on.
+    await call(`/api/v1/messages/${m.id}/report`, {
+      method: "POST",
+      body: JSON.stringify({ reason, body: m.body })
+    });
+    line("sys", "report filed");
+  } catch (e) {
+    line("err", esc(e.message));
+  }
+}
+
+async function showReports() {
+  const list = $("modList");
+  list.innerHTML = "loading...";
+
+  let reports;
+  try {
+    reports = await call("/api/v1/reports");
+  } catch (e) {
+    list.innerHTML = "";
+    return line("err", esc(e.message));
+  }
+
+  list.innerHTML = "";
+  if (!reports.length) {
+    list.textContent = "no open reports";
+    return;
+  }
+
+  for (const rp of reports) {
+    const box = document.createElement("div");
+    box.className = "report";
+
+    // Verification status is the first thing a moderator should see, and
+    // the system refuses to act on anything unverified.
+    const verdict = rp.verified === true
+      ? '<span class="ok">signature verified</span>'
+      : rp.verified === false
+        ? '<span class="bad">DOES NOT MATCH STORED MESSAGE</span>'
+        : '<span class="bad">could not be verified</span>';
+
+    box.innerHTML =
+      `<div class="meta">${esc(rp.reporter)} reported ${esc(rp.accused)} ` +
+      `&middot; ${esc(new Date(rp.created_at).toLocaleString())} &middot; ${verdict}</div>` +
+      `<div class="quoted">${esc(rp.claimed_body)}</div>` +
+      `<div class="meta">reason: ${esc(rp.reason || "(none given)")}</div>`;
+
+    const row = document.createElement("div");
+    row.className = "row";
+
+    if (rp.verified === true) {
+      if (rp.message_id) {
+        const del = document.createElement("button");
+        del.textContent = "Delete message";
+        del.onclick = () => removeMessage(rp.message_id).then(() => resolve(rp.id, "action"));
+        row.appendChild(del);
+      }
+      if (rp.accused_id) {
+        const ban = document.createElement("button");
+        ban.textContent = "Ban author";
+        ban.onclick = () => banUser(rp.accused_id).then(() => resolve(rp.id, "action"));
+        row.appendChild(ban);
+      }
+    }
+
+    const dismiss = document.createElement("button");
+    dismiss.textContent = "Dismiss";
+    dismiss.onclick = () => resolve(rp.id, "dismiss");
+    row.appendChild(dismiss);
+
+    box.appendChild(row);
+    list.appendChild(box);
+  }
+}
+
+async function resolve(id, resolution) {
+  try {
+    await call(`/api/v1/reports/${id}/resolve`, {
+      method: "POST",
+      body: JSON.stringify({ resolution })
+    });
+    showReports();
+  } catch (e) {
+    line("err", esc(e.message));
+  }
+}
+
+async function banUser(userID) {
+  const reason = prompt("Reason for the ban?") ?? "";
+  const duration = prompt('Duration, e.g. "7 days". Leave empty for permanent.') ?? "";
+
+  try {
+    await call(`/api/v1/users/${userID}/ban`, {
+      method: "POST",
+      body: JSON.stringify({ reason, duration })
+    });
+    line("sys", "user banned");
+  } catch (e) {
+    line("err", esc(e.message));
+  }
+}
+
+async function showBans() {
+  const list = $("modList");
+  list.innerHTML = "loading...";
+
+  let bans;
+  try {
+    bans = await call("/api/v1/bans");
+  } catch (e) {
+    list.innerHTML = "";
+    return line("err", esc(e.message));
+  }
+
+  list.innerHTML = "";
+  if (!bans.length) {
+    list.textContent = "no active bans";
+    return;
+  }
+
+  for (const b of bans) {
+    const box = document.createElement("div");
+    box.className = "report";
+    box.innerHTML =
+      `<div><strong>${esc(b.username)}</strong> ` +
+      `<span class="meta">banned by ${esc(b.actor)} &middot; ` +
+      `${b.expires_at ? "until " + esc(new Date(b.expires_at).toLocaleString()) : "permanent"}` +
+      `</span></div>` +
+      `<div class="meta">reason: ${esc(b.reason || "(none given)")}</div>`;
+
+    const un = document.createElement("button");
+    un.textContent = "Unban";
+    un.onclick = async () => {
+      try {
+        await call(`/api/v1/users/${b.user_id}/ban`, { method: "DELETE" });
+        showBans();
+      } catch (e) {
+        line("err", esc(e.message));
+      }
+    };
+    box.appendChild(un);
+    list.appendChild(box);
+  }
+}
+
 // ------------------------------------------------------------------ gifs
 //
 // Every image here is served by our own server, including the thumbnails
@@ -410,6 +635,15 @@ function on(id, event, handler) {
   if (el) el[event] = handler;
   else console.warn(`missing element: ${id}`);
 }
+
+on("modOpen", "onclick", () => {
+  const panel = $("modPanel");
+  panel.hidden = !panel.hidden;
+  if (!panel.hidden) showReports();
+});
+on("modClose", "onclick", () => { $("modPanel").hidden = true; });
+on("modReports", "onclick", () => showReports());
+on("modBans", "onclick", () => showBans());
 
 on("gif", "onclick", () => {
   const panel = $("gifPanel");
@@ -578,6 +812,7 @@ function renderMessage(m) {
     `<span class="at">${esc(when)}</span> ` +
     `<span class="who">${esc(m.username || "[deleted user]")}</span>: ${markdown(m.body)}`));
 
+  messageActions(el, m);
   renderAttachments(el, m.attachments);
 
   // One preview per message, for the first link only. Several cards under
@@ -661,6 +896,11 @@ async function authenticate(path) {
     token = data.token;
     myUserID = data.user_id;
     $("deleteAccount").disabled = false;
+    myRole = data.role;
+    if ($("modOpen")) {
+      $("modOpen").hidden = !isModerator();
+      $("modOpen").disabled = !isModerator();
+    }
     $("whoami").textContent = `${data.username} (${data.role})`;
     line("sys", `signed in as ${esc(data.username)}, role ${esc(data.role)}`);
     await loadChannels();
@@ -780,6 +1020,11 @@ async function connect() {
       loadChannels().catch(() => {});
     } else if (frame.type === "role_changed") {
       if (frame.user_id === myUserID) {
+        myRole = frame.role;
+        if ($("modOpen")) {
+          $("modOpen").hidden = !isModerator();
+          $("modOpen").disabled = !isModerator();
+        }
         $("whoami").textContent =
           `${$("whoami").textContent.split(" (")[0]} (${frame.role})`;
         line("sys", `your role is now ${esc(frame.role)}`);
