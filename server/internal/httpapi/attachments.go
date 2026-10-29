@@ -151,12 +151,29 @@ func (a *API) uploadAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cap the request body independently of the multipart parser, so a
-	// client cannot stream gigabytes before the limit is noticed.
-	r.Body = http.MaxBytesReader(w, r.Body, a.maxAttachment+1024*1024)
+	// Reject on the declared length before reading anything. A client
+	// sending a 200 MB file learns immediately instead of uploading it
+	// all first, and the server never buffers it.
+	if r.ContentLength > a.maxAttachment+maxFormOverhead {
+		writeError(w, http.StatusRequestEntityTooLarge, a.sizeLimitMessage())
+		return
+	}
+
+	// Cap the body too, since Content-Length is a claim rather than a
+	// guarantee: a chunked request declares nothing.
+	r.Body = http.MaxBytesReader(w, r.Body, a.maxAttachment+maxFormOverhead)
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
+		// A body that hits the cap kills the multipart parser before it
+		// yields a file, so the parse error is what surfaces. Reporting
+		// that verbatim would tell a user their form was malformed when
+		// the real problem is that their file is too big.
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) || strings.Contains(err.Error(), "request body too large") {
+			writeError(w, http.StatusRequestEntityTooLarge, a.sizeLimitMessage())
+			return
+		}
 		writeError(w, http.StatusBadRequest, "expected a multipart form with a 'file' field")
 		return
 	}
@@ -165,8 +182,7 @@ func (a *API) uploadAttachment(w http.ResponseWriter, r *http.Request) {
 	hash, size, err := a.blobs.Put(file, a.maxAttachment)
 	if err != nil {
 		if errors.Is(err, blob.ErrTooLarge) {
-			writeError(w, http.StatusRequestEntityTooLarge,
-				fmt.Sprintf("file exceeds the %d MiB limit", a.maxAttachment/(1024*1024)))
+			writeError(w, http.StatusRequestEntityTooLarge, a.sizeLimitMessage())
 			return
 		}
 		slog.Error("storing attachment", "err", err)
@@ -277,6 +293,14 @@ func (a *API) downloadAttachment(w http.ResponseWriter, r *http.Request) {
 
 	// ServeContent handles range requests, which media playback needs.
 	http.ServeContent(w, r, filename, time.Time{}, f)
+}
+
+// maxFormOverhead is the slack allowed above the file size for multipart
+// boundaries, headers and any other fields.
+const maxFormOverhead = 1024 * 1024
+
+func (a *API) sizeLimitMessage() string {
+	return fmt.Sprintf("file is too large; the limit is %d MB", a.maxAttachment/(1024*1024))
 }
 
 // safeFilename keeps a label the uploader will recognise while removing
