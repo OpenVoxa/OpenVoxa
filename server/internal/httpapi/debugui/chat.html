@@ -389,7 +389,20 @@ async function startShare() {
     resolution: { width: s.width, height: s.height, frameRate: s.fps }
   });
 
+  // The single most important line for frame rate.
+  //
+  // Browsers tag display-capture tracks with contentHint "detail" by
+  // default, which tells the encoder to hold resolution and sacrifice
+  // frame rate. That is right for a spreadsheet and badly wrong for a
+  // game: it pins you around 15fps whatever bitrate you ask for.
+  // "motion" flips the tradeoff.
+  const hint = $("priority").value === "maintain-framerate" ? "motion" : "detail";
+
   for (const track of screenTracks) {
+    if (track.kind === "video") {
+      track.mediaStreamTrack.contentHint = hint;
+    }
+
     await room.localParticipant.publishTrack(track, {
       // Bitrate is the setting that actually decides quality. Resolution
       // without the bitrate to carry it just produces a blurry large
@@ -419,12 +432,62 @@ async function startShare() {
 
   $("startShare").disabled = true;
   $("stopShare").disabled = false;
-  $("shareStatus").textContent =
-    `sharing ${s.width}x${s.height} @ ${s.fps}fps, ${s.kbps} kbps`;
-  line("sys", `started screen share at ${s.width}x${s.height} ${s.fps}fps`);
+
+  const video = screenTracks.find((t) => t.kind === "video");
+  if (video) {
+    // What the browser actually granted, which is often not what we asked
+    // for. If capture frame rate is already low here, nothing downstream
+    // can recover it.
+    const got = video.mediaStreamTrack.getSettings();
+    line("sys",
+      `capture: ${got.width}x${got.height} @ ${Math.round(got.frameRate || 0)}fps, hint "${hint}"`);
+    startLocalStats(video);
+  }
+}
+
+// Publisher-side stats. Distinguishes "the browser is only capturing
+// 15 frames a second" from "the encoder is dropping them" from "the
+// network cannot carry them" - three problems that look identical from
+// the receiving end.
+let localStatsTimer = null;
+
+function startLocalStats(track) {
+  let lastBytes = 0;
+  let lastFrames = 0;
+  let lastAt = performance.now();
+
+  clearInterval(localStatsTimer);
+  localStatsTimer = setInterval(async () => {
+    if (!screenTracks.includes(track)) return clearInterval(localStatsTimer);
+
+    const got = track.mediaStreamTrack.getSettings();
+    const now = performance.now();
+    const seconds = (now - lastAt) / 1000;
+
+    let sentFps = null;
+    let kbps = null;
+    try {
+      const report = await track.getRTCStatsReport?.();
+      report?.forEach((r) => {
+        if (r.type === "outbound-rtp" && r.kind === "video") {
+          if (lastBytes) kbps = Math.round((r.bytesSent - lastBytes) * 8 / seconds / 1000);
+          lastBytes = r.bytesSent;
+          if (lastFrames) sentFps = Math.round((r.framesSent - lastFrames) / seconds);
+          lastFrames = r.framesSent;
+        }
+      });
+    } catch { /* stats unavailable */ }
+
+    lastAt = now;
+
+    $("shareStatus").textContent =
+      `capture ${got.width}x${got.height}@${Math.round(got.frameRate || 0)} | ` +
+      `sending ${sentFps ?? "?"}fps ${kbps ?? "?"}kbps`;
+  }, 1000);
 }
 
 async function stopShare() {
+  clearInterval(localStatsTimer);
   for (const track of screenTracks) {
     try {
       await room?.localParticipant.unpublishTrack(track, true);
