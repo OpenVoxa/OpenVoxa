@@ -32,16 +32,18 @@ import type {
 /**
  * Ciphersuite 1: DHKEM-X25519, AES-128-GCM, HKDF-SHA256, Ed25519.
  *
- * Chosen for two reasons. It is the mandatory-to-implement suite in
- * RFC 9420, so any other conforming implementation can interoperate,
- * which matters if the provider is ever swapped. And it is the only suite
- * ts-mls supports with no dependencies beyond the base package, which
- * keeps the dependency surface of a security-critical layer as small as
- * it can be.
+ * It is the mandatory-to-implement suite in RFC 9420, so any other
+ * conforming implementation can interoperate. That matters here
+ * specifically: the provider interface exists so ts-mls can be replaced
+ * with OpenMLS later, and a suite both must support keeps that door open.
  *
- * The post-quantum suites are tempting and deliberately not used yet:
- * they pull in additional packages and the threat they address is not
- * the one this project is trying to solve first.
+ * It also has the smallest dependency footprint ts-mls offers:
+ * @noble/curves and @noble/hashes, both independently audited, and no
+ * HPKE extensions. Every other suite adds packages on top.
+ *
+ * The post-quantum suites are deliberately not used yet. They pull in
+ * more code and the threat they address is not the one this project is
+ * trying to solve first.
  */
 const CIPHERSUITE = "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519";
 
