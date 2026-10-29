@@ -391,6 +391,7 @@ func (a *API) persistAndBroadcast(ctx context.Context, s Session, channelID, bod
 				rows.Close()
 				return serr
 			}
+			info.URL = a.signAttachmentURL(info.ID)
 			out.Attachments = append(out.Attachments, info)
 		}
 		rows.Close()
@@ -461,6 +462,12 @@ func (a *API) sendHistory(ctx context.Context, client *hub.Client, channelID str
 			// Author was shredded. The message keeps its place in the
 			// thread with no attribution.
 			m.Username = "[deleted]"
+		}
+
+		// Links are minted per delivery, so a client that reconnects
+		// after a long gap gets fresh ones rather than expired ones.
+		for i := range m.Attachments {
+			m.Attachments[i].URL = a.signAttachmentURL(m.Attachments[i].ID)
 		}
 
 		messages = append(messages, m)

@@ -6,6 +6,7 @@ package httpapi
 
 import (
 	"bufio"
+	"crypto/rand"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -67,6 +68,12 @@ type API struct {
 	blobs         *blob.Store
 	maxAttachment int64
 	uploadLimit   *ratelimit.Limiter
+
+	// Signs attachment download links. Generated per process: a restart
+	// invalidates outstanding links, and clients refetch history to get
+	// fresh ones. Keeping it out of config means there is no long-lived
+	// secret to leak.
+	attachKey []byte
 }
 
 // New returns the server's root handler. debugUIEnabled serves a bare-bones
@@ -104,6 +111,12 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 		// Uploads cost disk and bandwidth, so they are tighter than
 		// previews: 10 up front, then one every 5 seconds.
 		uploadLimit: ratelimit.New(0.2, 10, 15*time.Minute),
+
+		attachKey: make([]byte, 32),
+	}
+
+	if _, err := rand.Read(api.attachKey); err != nil {
+		panic("httpapi: could not generate attachment signing key: " + err.Error())
 	}
 
 	mux := http.NewServeMux()
@@ -142,8 +155,9 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 
 	mux.HandleFunc("POST /api/v1/channels/{id}/attachments",
 		api.requireAuth(api.uploadAttachment))
-	mux.HandleFunc("GET /api/v1/attachments/{id}",
-		api.requireAuth(api.downloadAttachment))
+	// Not behind requireAuth: the signed URL carries its own
+	// authorisation, because browsers cannot send headers on <img src>.
+	mux.HandleFunc("GET /api/v1/attachments/{id}", api.downloadAttachment)
 
 	mux.HandleFunc("POST /api/v1/ws/ticket", api.requireAuth(api.wsTicket))
 	mux.HandleFunc("GET /api/v1/ws", api.websocket)
