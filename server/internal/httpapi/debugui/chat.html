@@ -57,11 +57,19 @@
   .speaking { font-weight: 600; }
   .ptt-hint { color: var(--muted); font-size: .85em; }
   #screens { display: grid; gap: .5rem; margin-top: .5rem; }
-  #screens figure { margin: 0; border: 1px solid var(--line); }
+  #screens figure { margin: 0; border: 1px solid var(--line); position: relative; }
   #screens video { width: 100%; display: block; background: #000; }
   #screens figcaption { padding: .25rem .5rem; color: var(--muted); font-size: .85em;
     display: flex; justify-content: space-between; gap: .5rem; align-items: center; }
-  #screens .stats { font-variant-numeric: tabular-nums; }
+  /* Overlaid rather than in the caption so it stays visible in
+     fullscreen, which is exactly when you want to read it. */
+  #screens .stats {
+    position: absolute; top: .4rem; left: .4rem; z-index: 1;
+    font-variant-numeric: tabular-nums; font-size: .8rem;
+    background: rgba(0,0,0,.65); color: #fff;
+    padding: .15rem .4rem; border-radius: 3px;
+    pointer-events: none;
+  }
   #screens button { font-size: .85em; padding: .1rem .4rem; }
   #screens video { cursor: zoom-in; }
   #screens figure:fullscreen video { height: 100vh; object-fit: contain; cursor: zoom-out; }
@@ -129,6 +137,9 @@
     </select>
 
     <label><input type="checkbox" id="simulcast"> simulcast</label>
+    <label title="Ignore the on-screen size of the video and always take the highest layer. Applies on next join.">
+      <input type="checkbox" id="pinQuality"> pin max quality
+    </label>
 
     <label><input type="checkbox" id="shareAudio" checked> share audio</label>
   </div>
@@ -437,22 +448,22 @@ function addScreen(track, participant) {
   // does not affect what remote participants hear.
   el.muted = true;
 
+  const stats = document.createElement("div");
+  stats.className = "stats";
+  stats.textContent = "measuring...";
+
   const cap = document.createElement("figcaption");
 
   const who = document.createElement("span");
   who.textContent = `${participant.name || participant.identity} - screen`;
-
-  const stats = document.createElement("span");
-  stats.className = "stats";
-  stats.textContent = "measuring...";
 
   const full = document.createElement("button");
   full.textContent = "Fullscreen";
   full.onclick = () => toggleFullscreen(fig);
   el.onclick = () => toggleFullscreen(fig);
 
-  cap.append(who, stats, full);
-  fig.append(el, cap);
+  cap.append(who, full);
+  fig.append(el, stats, cap);
   $("screens").appendChild(fig);
   screenEls.set(track.sid, fig);
 
@@ -537,7 +548,13 @@ async function joinVoice() {
   const opt = $("voiceChannel").selectedOptions[0];
   const data = await call(`/api/v1/channels/${opt.value}/voice-token`, { method: "POST" });
 
-  room = new LivekitClient.Room({ adaptiveStream: true, dynacast: true });
+  // adaptiveStream picks a simulcast layer from how large the video
+  // element is on screen, so shrinking the window downgrades the stream.
+  // Sensible for saving bandwidth, wrong when you want a fixed quality.
+  // It is a Room-level setting, so the checkbox only takes effect here,
+  // at join time.
+  const pinned = $("pinQuality").checked;
+  room = new LivekitClient.Room({ adaptiveStream: !pinned, dynacast: true });
 
   room
     .on(LivekitClient.RoomEvent.ParticipantConnected, renderParticipants)
@@ -562,6 +579,13 @@ async function joinVoice() {
         // Remote audio needs an element in the DOM to actually play.
         document.body.appendChild(track.attach());
       } else if (track.source === LivekitClient.Track.Source.ScreenShare) {
+        // With adaptiveStream off, nothing chooses a layer for us, so ask
+        // for the highest explicitly. Ignored while adaptiveStream is on.
+        if (pinned) {
+          try {
+            pub.setVideoQuality(LivekitClient.VideoQuality.HIGH);
+          } catch { /* not a simulcast track */ }
+        }
         addScreen(track, participant);
       }
     })
@@ -575,6 +599,10 @@ async function joinVoice() {
 
   await room.connect(data.url, data.token);
   line("sys", `joined voice: ${esc(opt.textContent)}`);
+
+  if ($("pinQuality").checked) {
+    line("sys", "quality pinned: stream stays at full resolution regardless of window size");
+  }
 
   if (data.force_ptt) {
     $("pttMode").checked = true;
