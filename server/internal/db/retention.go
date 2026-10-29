@@ -12,7 +12,20 @@ import (
 )
 
 const (
-	retentionInterval = 15 * time.Minute
+	// Sweep interval bounds. The actual interval is derived from the
+	// shortest retention policy on the server, so a channel that keeps two
+	// minutes is swept far more often than one that keeps thirty days.
+	//
+	// A fixed interval makes the displayed policy a lie by a variable
+	// amount: "kept 2 minutes" with a 15 minute sweep can hold a message
+	// for 17. Deriving it instead bounds the overshoot as a fraction of
+	// the policy rather than as a fixed number of minutes.
+	retentionMinInterval = 30 * time.Second
+	retentionMaxInterval = 15 * time.Minute
+
+	// Sweep at a quarter of the shortest policy, so a message outlives its
+	// stated retention by at most 25 percent.
+	retentionDivisor = 4
 
 	// Rows removed per statement. Deleting a year of messages in one
 	// transaction would hold locks long enough to stall live traffic, so
@@ -34,20 +47,53 @@ type PurgeNotifier func(channelID string, before time.Time)
 
 func StartRetentionSweep(ctx context.Context, pool *pgxpool.Pool, notify PurgeNotifier) {
 	go func() {
-		ticker := time.NewTicker(retentionInterval)
-		defer ticker.Stop()
-
-		sweepRetention(ctx, pool, notify)
-
+		// A timer rather than a ticker, because the interval is
+		// recalculated after every pass: an administrator setting a short
+		// policy should speed the sweep up without a restart.
 		for {
+			sweepRetention(ctx, pool, notify)
+
+			interval := nextInterval(ctx, pool)
+
 			select {
 			case <-ctx.Done():
 				return
-			case <-ticker.C:
-				sweepRetention(ctx, pool, notify)
+			case <-time.After(interval):
 			}
 		}
 	}()
+}
+
+// nextInterval derives the sweep cadence from the shortest retention
+// policy currently configured. With no policies set anywhere it returns
+// the maximum, so an all-"forever" server costs one cheap query every
+// fifteen minutes.
+func nextInterval(ctx context.Context, pool *pgxpool.Pool) time.Duration {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	var seconds *float64
+	err := pool.QueryRow(ctx,
+		`SELECT EXTRACT(EPOCH FROM MIN(retention))::float8
+		   FROM channels WHERE retention IS NOT NULL`,
+	).Scan(&seconds)
+
+	if err != nil || seconds == nil {
+		if err != nil {
+			slog.Warn("could not read retention policies", "err", err)
+		}
+		return retentionMaxInterval
+	}
+
+	interval := time.Duration(*seconds/retentionDivisor) * time.Second
+
+	if interval < retentionMinInterval {
+		return retentionMinInterval
+	}
+	if interval > retentionMaxInterval {
+		return retentionMaxInterval
+	}
+	return interval
 }
 
 func sweepRetention(ctx context.Context, pool *pgxpool.Pool, notify PurgeNotifier) {
