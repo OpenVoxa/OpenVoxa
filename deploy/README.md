@@ -140,6 +140,23 @@ docker volume rm deploy_blob-data
 docker compose --profile tls up -d --build
 ```
 
+## GIF search
+
+Off by default. To enable it, set both of these in `.env`:
+
+```
+OPENVOXA_GIF_PROVIDER=giphy
+OPENVOXA_GIF_API_KEY=your-key
+```
+
+`giphy` and `tenor` are the supported values; an empty provider disables the feature and hides the button. Setting a provider without a key fails at startup rather than silently disabling it.
+
+Keys come from [developers.giphy.com](https://developers.giphy.com) (instant, free tier) or [Google's Tenor API](https://developers.google.com/tenor/guides/quickstart) (needs a Cloud project, higher limits). Both providers require an attribution line, which the client displays.
+
+**Clients never contact the provider.** Thumbnails are proxied through your server, and a chosen GIF is downloaded once and stored as an ordinary attachment, so it obeys the channel's retention policy and lives on your own disk. Your server does send search queries to the provider, so they see what this instance searches for but not who searched. If that is not acceptable for your deployment, leave the feature off.
+
+GIFs count against `OPENVOXA_MAX_ATTACHMENT_MB` and against your storage. A couple of megabytes each is normal.
+
 ### Using network storage
 
 Attachments are a good fit for a NAS: write once, read many, no locking. **Do not put Postgres on network storage** — that is a well-known way to corrupt a database.
@@ -254,6 +271,14 @@ docker compose logs server --tail 20
 ```
 
 `permission denied` on the blob directory means a volume created before the image carried the right ownership. See the attachments section above.
+
+### GIF button does not appear
+
+```bash
+docker compose logs server | grep "gif search"
+```
+
+`gif search disabled` means the provider or key is unset. The client only shows the button when the server reports the feature enabled, so check `.env` and recreate the container — environment changes need `--force-recreate`, not a restart.
 
 ### Attachments show a broken image icon
 
