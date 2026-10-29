@@ -56,6 +56,27 @@
   #participants li { padding: .15rem 0; }
   .speaking { font-weight: 600; }
   .ptt-hint { color: var(--muted); font-size: .85em; }
+
+  .msg code { background: color-mix(in srgb, CanvasText 12%, Canvas);
+    padding: .05rem .25rem; border-radius: 3px; }
+  .msg pre { background: color-mix(in srgb, CanvasText 12%, Canvas);
+    padding: .4rem .6rem; overflow-x: auto; margin: .25rem 0; }
+  .msg pre code { background: none; padding: 0; }
+  .msg blockquote { border-left: 3px solid var(--line); margin: .25rem 0;
+    padding-left: .5rem; color: var(--muted); }
+  .msg a { color: inherit; }
+
+  .preview { border: 1px solid var(--line); border-left-width: 3px;
+    margin: .25rem 0 .5rem 1.5rem; padding: .4rem .6rem; max-width: 34rem; }
+  .preview .site { color: var(--muted); font-size: .8em; }
+  .preview .title { font-weight: 600; }
+  .preview .desc { color: var(--muted); font-size: .9em; }
+  .preview img { max-width: 100%; margin-top: .4rem; display: block; }
+  .preview .embed { position: relative; cursor: pointer; margin-top: .4rem; }
+  .preview .embed .play { position: absolute; inset: 0; display: grid;
+    place-items: center; font-size: 2rem; color: #fff;
+    background: rgba(0,0,0,.35); }
+  .preview iframe { width: 100%; aspect-ratio: 16/9; border: 0; margin-top: .4rem; }
   #screens { display: grid; gap: .5rem; margin-top: .5rem; }
   #screens figure { margin: 0; border: 1px solid var(--line); position: relative; }
   #screens video { width: 100%; display: block; background: #000; }
@@ -195,6 +216,137 @@ function esc(s) {
   })[c]);
 }
 
+// ------------------------------------------------------------- markdown
+//
+// Hand-rolled rather than pulling in a library. Message bodies are
+// untrusted input, so everything is HTML-escaped FIRST and formatting is
+// applied to the escaped text afterwards. That ordering is what makes
+// this safe: there is no path by which a user's angle bracket becomes a
+// tag.
+//
+// Deliberately small. Bold, italic, strikethrough, inline code, fenced
+// code, blockquote and autolinks cover what people actually use in chat.
+
+function markdown(raw) {
+  const codeBlocks = [];
+
+  // Fenced code first, stashed behind placeholders so formatting rules
+  // below cannot reach inside it.
+  let text = raw.replace(/```([\s\S]*?)```/g, (_, code) => {
+    codeBlocks.push(code.replace(/^\n/, ""));
+    return `\u0000${codeBlocks.length - 1}\u0000`;
+  });
+
+  text = esc(text);
+
+  const inline = [];
+  text = text.replace(/`([^`]+)`/g, (_, code) => {
+    inline.push(code);
+    return `\u0001${inline.length - 1}\u0001`;
+  });
+
+  text = text
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|\W)\*([^*]+)\*/g, "$1<em>$2</em>")
+    .replace(/(^|\W)_([^_]+)_/g, "$1<em>$2</em>")
+    .replace(/~~([^~]+)~~/g, "<del>$1</del>");
+
+  // Autolink. The text is already escaped, so &amp; inside a query string
+  // is matched and emitted as-is rather than being double-encoded.
+  text = text.replace(/(https?:\/\/[^\s<]+)/g, (url) =>
+    `<a href="${url}" target="_blank" rel="noopener noreferrer nofollow">${url}</a>`);
+
+  text = text.replace(/^&gt; ?(.*)$/gm, "<blockquote>$1</blockquote>");
+  text = text.replace(/\n/g, "<br>");
+
+  text = text.replace(/\u0001(\d+)\u0001/g, (_, i) => `<code>${esc(inline[+i])}</code>`);
+  text = text.replace(/\u0000(\d+)\u0000/g, (_, i) => `<pre><code>${esc(codeBlocks[+i])}</code></pre>`);
+
+  return text;
+}
+
+// -------------------------------------------------------- link previews
+
+const previewCache = new Map();
+
+function youtubeID(url) {
+  const m = url.match(
+    /(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([\w-]{11})/);
+  return m ? m[1] : null;
+}
+
+async function addPreview(after, url) {
+  if (previewCache.has(url)) {
+    if (previewCache.get(url)) renderPreview(after, previewCache.get(url), url);
+    return;
+  }
+
+  let data = null;
+  try {
+    data = await call("/api/v1/unfurl", {
+      method: "POST",
+      body: JSON.stringify({ url })
+    });
+  } catch { /* unreachable, blocked, or not a web page */ }
+
+  previewCache.set(url, data);
+  if (data) renderPreview(after, data, url);
+}
+
+function renderPreview(after, p, url) {
+  const box = document.createElement("div");
+  box.className = "preview";
+
+  const parts = [];
+  if (p.site) parts.push(`<div class="site">${esc(p.site)}</div>`);
+  if (p.title) {
+    parts.push(`<div class="title"><a href="${esc(p.url || url)}" ` +
+      `target="_blank" rel="noopener noreferrer nofollow">${esc(p.title)}</a></div>`);
+  }
+  if (p.description) parts.push(`<div class="desc">${esc(p.description)}</div>`);
+  box.innerHTML = parts.join("");
+
+  const vid = youtubeID(url);
+  if (vid) {
+    // Click to load. Embedding the player immediately would contact
+    // YouTube for every message containing a link, whether or not anyone
+    // watches it. The thumbnail comes from the preview the server already
+    // fetched, so nothing is requested until the user asks for it.
+    const wrap = document.createElement("div");
+    wrap.className = "embed";
+    if (p.image) {
+      const thumb = document.createElement("img");
+      thumb.src = p.image;
+      thumb.alt = "";
+      wrap.appendChild(thumb);
+    }
+    const play = document.createElement("div");
+    play.className = "play";
+    play.textContent = "\u25B6";
+    wrap.appendChild(play);
+
+    wrap.onclick = () => {
+      const frame = document.createElement("iframe");
+      frame.src = `https://www.youtube-nocookie.com/embed/${vid}?autoplay=1`;
+      frame.allow = "accelerometer; encrypted-media; picture-in-picture";
+      frame.allowFullscreen = true;
+      frame.referrerPolicy = "no-referrer";
+      wrap.replaceWith(frame);
+    };
+
+    box.appendChild(wrap);
+  } else if (p.image) {
+    const img = document.createElement("img");
+    img.src = p.image;
+    img.alt = "";
+    img.referrerPolicy = "no-referrer";
+    box.appendChild(img);
+  }
+
+  after.insertAdjacentElement("afterend", box);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
 function renderMessage(m) {
   const when = new Date(m.created_at).toLocaleTimeString();
 
@@ -215,15 +367,26 @@ function renderMessage(m) {
     return;
   }
 
-  tag(line("msg",
+  const el = tag(line("msg",
     `<span class="at">${esc(when)}</span> ` +
-    `<span class="who">${esc(m.username || "[deleted user]")}</span>: ${esc(m.body)}`));
+    `<span class="who">${esc(m.username || "[deleted user]")}</span>: ${markdown(m.body)}`));
+
+  // One preview per message, for the first link only. Several cards under
+  // a single message is noise rather than information.
+  const first = m.body.match(/https?:\/\/[^\s]+/);
+  if (first) addPreview(el, first[0]);
 }
 
 // ------------------------------------------------- server event handling
 
 function tombstone(el) {
   const when = el.querySelector(".at")?.textContent || "";
+  // A preview sits immediately after its message, so it has to go too.
+  // Leaving it would keep the deleted content's title and thumbnail on
+  // screen, which defeats the point of deleting it.
+  if (el.nextElementSibling?.classList.contains("preview")) {
+    el.nextElementSibling.remove();
+  }
   el.className = "msg sys";
   el.innerHTML = `<span class="at">${esc(when)}</span> [message removed]`;
 }
@@ -244,6 +407,9 @@ function onChannelPurged(channelID, before) {
   let n = 0;
   logEl.querySelectorAll("[data-ts]").forEach((el) => {
     if (new Date(el.dataset.ts).getTime() < cutoff) {
+      if (el.nextElementSibling?.classList.contains("preview")) {
+        el.nextElementSibling.remove();
+      }
       el.remove();
       n++;
     }
