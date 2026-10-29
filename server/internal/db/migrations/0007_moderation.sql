@@ -16,12 +16,18 @@ CREATE TABLE bans (
     expires_at TIMESTAMPTZ
 );
 
--- One active ban per user. A second ban on an already-banned account is a
--- mistake rather than an escalation, and this makes it fail loudly.
-CREATE UNIQUE INDEX bans_active_idx ON bans (user_id)
-    WHERE expires_at IS NULL OR expires_at > now();
+-- One permanent ban per user.
+--
+-- The predicate cannot reference now(): Postgres requires index
+-- predicates to be IMMUTABLE, because an index whose membership changed
+-- with the clock would silently stop matching its own definition. So the
+-- constraint covers permanent bans only, and overlapping temporary bans
+-- are prevented by an explicit check in the ban handler.
+CREATE UNIQUE INDEX bans_permanent_idx ON bans (user_id)
+    WHERE expires_at IS NULL;
 
-CREATE INDEX bans_user_idx ON bans (user_id);
+-- Lookups always filter on expiry, so the index carries it.
+CREATE INDEX bans_user_expiry_idx ON bans (user_id, expires_at);
 
 -- Reports.
 --

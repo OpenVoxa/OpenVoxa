@@ -416,6 +416,24 @@ func (a *API) banUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The unique index only covers permanent bans, since an index
+	// predicate cannot reference now(). Temporary overlaps are caught
+	// here, inside the same transaction that holds a lock on the user row.
+	var active bool
+	if err := tx.QueryRow(r.Context(),
+		`SELECT EXISTS (
+		     SELECT 1 FROM bans
+		      WHERE user_id = $1 AND (expires_at IS NULL OR expires_at > now())
+		 )`, subjectID).Scan(&active); err != nil {
+		slog.Error("checking existing ban", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not ban the user")
+		return
+	}
+	if active {
+		writeError(w, http.StatusConflict, "that account is already banned")
+		return
+	}
+
 	var expires *time.Time
 	if req.Duration != "" {
 		var t time.Time
