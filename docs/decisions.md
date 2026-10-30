@@ -554,15 +554,6 @@ The details themselves:
 - `joinGroup` takes the tree as an in-memory object, so transporting it
   is entirely the caller's problem.
 
-**One parse-time throw disables every handler below it.** The debug
-client is a single script with no module boundaries. A reference to an
-element that did not exist threw while handlers were being attached, and
-everything after that line - including the login button - was silently
-never wired up. The symptom was a button that did nothing, with no
-network request and no obvious error. Controls added since are attached
-through a helper that warns rather than throws. This disappears with
-`client-web`, where components fail independently.
-
 **The Docker build context is the repository root.** The server image
 bundles client-core alongside the Go binary, so the Node stage and the Go
 stage both need to be in context. The bundle must be copied in BEFORE
@@ -594,9 +585,14 @@ the Dockerfile's Go version at or above the directive.
    - ✅ Server-side group state, epoch-ordered commits, handshake log,
      welcome delivery
    - ✅ Tree and state serialisation proven end to end in the browser
-   - ⬜ Client group logic: create or join, apply commits, persist,
+   - ✅ Client group logic: create or join, apply commits, persist,
      rebase on conflict
-   - ⬜ Encrypted application messages
+   - ✅ Encrypted application messages (verified single-user: ciphertext
+     at rest, plaintext channels unchanged)
+   - ⬜ Two-party test: welcome path and forward-secrecy boundary on a
+     real second device
+   - ⬜ Encrypted attachments (blobs in encrypted channels are currently
+     plaintext on disk)
 10. ⬜ Media encryption keyed off the MLS exporter secret
 11. ⬜ The real client: `client-web`, `client-desktop`
 

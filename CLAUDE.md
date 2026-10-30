@@ -108,18 +108,24 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
 
 _Last updated: 2026-10-30, at commit `ea617d3`._
 
-- Build-order step 9 (MLS for text) is in progress. Recent commits added
-  client-side group lifecycle (`groups.ts`), encrypt/decrypt in encrypted
-  channels, an invite button, and local retention of your own sent
-  plaintext (MLS senders can't decrypt their own messages).
-- `docs/decisions.md` Build order still shows "Client group logic" and
-  "Encrypted application messages" as ⬜ — needs updating once Ryan
-  confirms they work end to end on Docker.
-- `decisions.md` has the "One parse-time throw…" note duplicated
-  (~L512 and ~L557); remove one.
-- Next up (per Build order / Open items): confirm E2E text works across
-  two users/devices; rebase-on-conflict for commits; removing revoked
-  devices from groups; recovery keys (blocks encrypting IndexedDB state);
-  then step 10, media encryption from the MLS exporter secret.
-- Known open items live in decisions.md "Open items" — check there
-  before proposing new work.
+- Build-order step 9 (MLS for text) is functionally working on Docker:
+  messages in an encrypted channel are ciphertext in Postgres (only the
+  MLS framing header — group ID, epoch — is in the clear); plaintext
+  channels show plaintext. Verified single-user only.
+- Done: device identity + key packages; group create/join/catch-up;
+  epoch-ordered commits with rebase; encrypted text end to end; own sent
+  plaintext kept locally (MLS senders can't decrypt their own messages).
+- **Known gap: attachments in encrypted channels are stored as plaintext
+  blobs.** Fix is client-side encrypt-before-upload / decrypt-after-
+  download; breaks content-addressed dedup (accepted tradeoff). Encryption
+  must not be called "done" until this is fixed.
+- Remaining, in order:
+  1. Two-party test: second account, "Add everyone", confirm it reads new
+     messages but not old ones (exercises welcome path + forward-secrecy
+     boundary on a real second device).
+  2. Encrypted attachments.
+  3. Media keys from the MLS exporter secret (build-order step 10).
+  4. Multi-party testing.
+  5. Local storage encryption (blocked on recovery keys).
+- Other open items (revoked-device removal, recovery keys, etc.) live in
+  decisions.md "Open items" — check there before proposing new work.
