@@ -14,6 +14,8 @@
 
 import { TsMlsProvider } from "./mls/tsmls.js";
 import type { MlsProvider } from "./mls/provider.js";
+import { Identity, type ApiCall, type IdentityStatus } from "./identity.js";
+import { storage } from "./storage.js";
 
 export type {
   CommitResult,
@@ -25,12 +27,44 @@ export type {
 } from "./mls/provider.js";
 
 export { TsMlsProvider } from "./mls/tsmls.js";
+export { Identity } from "./identity.js";
+export { storage } from "./storage.js";
+export type { ApiCall, IdentityStatus } from "./identity.js";
+export type { StoredDevice, StoredKeyPair } from "./storage.js";
 
 export const VERSION = "0.1.0";
 
 /** The provider this build uses. Swapping implementations happens here. */
 export function createMlsProvider(): MlsProvider {
   return new TsMlsProvider();
+}
+
+/**
+ * Bring this browser's cryptographic identity up to date.
+ *
+ * Creates and registers a device if there is not one for this account,
+ * then tops up the published key package pool. Safe to call on every
+ * sign-in; it does nothing when everything is already in order.
+ *
+ * `call` performs an authenticated request and returns parsed JSON. The
+ * caller owns authentication, so client-core never holds a session token.
+ */
+export async function setUpIdentity(
+  call: ApiCall,
+  userId: string,
+  label: string,
+): Promise<IdentityStatus> {
+  const mls = createMlsProvider();
+  await mls.init();
+
+  const identity = new Identity(mls, call);
+  await identity.ensureDevice(userId, label);
+  return identity.replenish();
+}
+
+/** Destroy all local key material. Called on sign-out. */
+export async function forgetIdentity(): Promise<void> {
+  await storage.wipe();
 }
 
 export interface SelfTestResult {

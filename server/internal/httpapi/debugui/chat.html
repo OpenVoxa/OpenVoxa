@@ -148,8 +148,11 @@
   <legend>crypto</legend>
   <div class="row">
     <button id="mlsSelfTest">Run MLS self-test</button>
+    <button id="idRefresh" disabled>Refresh key packages</button>
+    <button id="idForget" disabled>Forget this device</button>
     <span id="mlsStatus" class="ptt-hint"></span>
   </div>
+  <div id="idStatus" class="ptt-hint"></div>
   <div id="mlsOutput" class="ptt-hint"></div>
 </fieldset>
 
@@ -369,6 +372,51 @@ function renderAttachments(after, list) {
 // Nothing here is wired into messaging yet. This proves the client-core
 // bundle loads, that MLS runs in this browser, and that a group can be
 // created, joined and used - before any of it is load-bearing.
+
+// ------------------------------------------------------- device identity
+//
+// Runs once after sign-in. Creates this browser's cryptographic identity
+// if it does not have one, then publishes key packages so other people
+// can add this device to groups while it is offline.
+//
+// Private key material never leaves the browser. The server stores only
+// the public halves and hands them out one at a time.
+
+async function setUpIdentity() {
+  if (typeof OpenVoxaCore === "undefined") return;
+
+  try {
+    const status = await OpenVoxaCore.setUpIdentity(
+      call,
+      myUserID,
+      `${navigator.platform || "browser"} (debug client)`,
+    );
+
+    $("idStatus").textContent =
+      `device ${status.deviceId.slice(0, 8)} - ` +
+      `${status.available} key package(s) available` +
+      `${status.hasLastResort ? ", last-resort ready" : ""}` +
+      `${status.published ? `, published ${status.published}` : ""}`;
+
+    $("idRefresh").disabled = false;
+    $("idForget").disabled = false;
+  } catch (e) {
+    $("idStatus").textContent = `identity setup failed: ${e.message}`;
+  }
+}
+
+async function forgetDevice() {
+  if (!confirm(
+    "Forget this device?\n\n" +
+    "All local key material is destroyed. Messages in encrypted channels " +
+    "that only this device could read become unreadable, permanently."
+  )) return;
+
+  await OpenVoxaCore.forgetIdentity();
+  $("idStatus").textContent = "device forgotten; sign in again to create a new one";
+  $("idRefresh").disabled = true;
+  $("idForget").disabled = true;
+}
 
 async function runMlsSelfTest() {
   const out = $("mlsOutput");
@@ -687,6 +735,15 @@ function on(id, event, handler) {
   else console.warn(`missing element: ${id}`);
 }
 
+on("idRefresh", "onclick", () =>
+  OpenVoxaCore.setUpIdentity(call, myUserID, "refresh")
+    .then((s) => { $("idStatus").textContent =
+      `refreshed: ${s.available} available, published ${s.published}`; })
+    .catch((e) => { $("idStatus").textContent = e.message; }));
+
+on("idForget", "onclick", () =>
+  forgetDevice().catch((e) => { $("idStatus").textContent = e.message; }));
+
 on("mlsSelfTest", "onclick", () =>
   runMlsSelfTest().catch((e) => { $("mlsStatus").textContent = e.message; }));
 
@@ -959,6 +1016,7 @@ async function authenticate(path) {
     line("sys", `signed in as ${esc(data.username)}, role ${esc(data.role)}`);
     await loadChannels();
     await loadGifConfig();
+    await setUpIdentity();
   } catch (err) {
     line("err", `auth failed: ${esc(err.message)}`);
   }
