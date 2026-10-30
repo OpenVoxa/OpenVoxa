@@ -22,11 +22,12 @@
  */
 
 const DB_NAME = "openvoxa";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 const STORE_DEVICE = "device";
 const STORE_KEYPAIRS = "keypairs";
 const STORE_GROUPS = "groups";
+const STORE_SENT = "sent";
 
 export interface StoredDevice {
   readonly id: string;
@@ -63,6 +64,9 @@ function open(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(STORE_GROUPS)) {
         db.createObjectStore(STORE_GROUPS);
+      }
+      if (!db.objectStoreNames.contains(STORE_SENT)) {
+        db.createObjectStore(STORE_SENT);
       }
     };
 
@@ -125,6 +129,31 @@ export const storage = {
     await run(STORE_KEYPAIRS, "readwrite", (s) => s.delete(id));
   },
 
+  /**
+   * Remember what this device sent, keyed by message id.
+   *
+   * MLS senders cannot decrypt their own application messages: the key
+   * schedule does not retain a sender's own ratchet for reading. So a
+   * client that round-tripped its own messages through the server would
+   * find its own history unreadable after a reload, while everyone
+   * else's was fine.
+   *
+   * Every MLS client solves this the same way, by keeping its own
+   * plaintext. That is a real cost of the design and worth stating: this
+   * copy is as readable as any other local data, so "the server cannot
+   * read your messages" remains true while "nothing on your device can"
+   * does not.
+   */
+  async putSent(messageId: string, text: string): Promise<void> {
+    await run(STORE_SENT, "readwrite", (s) => s.put(text, messageId));
+  },
+
+  async getSent(messageId: string): Promise<string | undefined> {
+    return run<string | undefined>(STORE_SENT, "readonly", (s) =>
+      s.get(messageId) as IDBRequest<string | undefined>,
+    );
+  },
+
   async getGroup(channelId: string): Promise<unknown> {
     return run<unknown>(STORE_GROUPS, "readonly", (s) => s.get(channelId));
   },
@@ -143,7 +172,7 @@ export const storage = {
   async wipe(): Promise<void> {
     const db = await open();
     await Promise.all(
-      [STORE_DEVICE, STORE_KEYPAIRS, STORE_GROUPS].map(
+      [STORE_DEVICE, STORE_KEYPAIRS, STORE_GROUPS, STORE_SENT].map(
         (name) =>
           new Promise<void>((resolve, reject) => {
             const tx = db.transaction(name, "readwrite");
