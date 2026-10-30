@@ -101,6 +101,33 @@ export function decodeState(bytes: Uint8Array): unknown {
   return out;
 }
 
+/**
+ * What the state round trip loses, and what ts-mls offers to restore it.
+ *
+ * Encoding is clearly lossy: the decoded state is missing at least
+ * paddingConfig, which createApplicationMessage needs. Some of the state
+ * is runtime configuration rather than protocol data, so it is probably
+ * meant to be reattached after decoding rather than carried in the bytes.
+ *
+ * Temporary.
+ */
+export function inspectStateRoundTrip(original: unknown): string {
+  const bytes = encodeState(original);
+  const decoded = decodeState(bytes) as Record<string, unknown>;
+  const before = original as Record<string, unknown>;
+
+  const missing = Object.keys(before).filter((k) => !(k in decoded));
+  const added = Object.keys(decoded).filter((k) => !(k in before));
+
+  const helpers = Object.keys(tsMls)
+    .filter((k) => /padding|config|default|extension/i.test(k))
+    .join(", ");
+
+  return `${bytes.length} bytes; lost [${missing.join(", ") || "nothing"}]; ` +
+    `gained [${added.join(", ") || "nothing"}]; ` +
+    `ts-mls offers [${helpers || "none"}]`;
+}
+
 export class TsMlsProvider implements MlsProvider {
   readonly name = "ts-mls";
 
