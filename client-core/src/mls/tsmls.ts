@@ -228,45 +228,55 @@ export class TsMlsProvider implements MlsProvider {
   ): Promise<Uint8Array> {
     const impl = this.#require();
 
-    // RFC 9420 section 8.5 defines MLS-Exporter, but ts-mls does not
-    // document where it lives and the ciphersuite's kdf object does not
-    // expose expandWithLabel. Rather than guess again, try the shapes
-    // that could reasonably exist and report what is actually available
-    // if none of them do.
-    const candidates = ["exportSecret", "mlsExporter", "exporter", "deriveExporter"];
+    const fn = (tsMls as Record<string, unknown>)["mlsExporter"] as
+      | ((...args: unknown[]) => unknown)
+      | undefined;
 
-    for (const name of candidates) {
-      const fn = (tsMls as Record<string, unknown>)[name];
-      if (typeof fn !== "function") continue;
+    if (typeof fn !== "function") {
+      throw new Error("ts-mls does not export mlsExporter");
+    }
 
-      // Argument order is unknown, so try the two plausible ones. Both
-      // are pure derivations over data we already hold; a wrong shape
-      // throws rather than producing a wrong key.
-      const attempts: Array<() => unknown> = [
-        () => (fn as Function)(state, label, new Uint8Array(), length, impl),
-        () => (fn as Function)(state, label, length, impl),
-      ];
+    const group = state as {
+      keySchedule?: Record<string, unknown>;
+      groupContext?: unknown;
+    };
+    const schedule = group.keySchedule ?? {};
+    const exporterSecret = schedule["exporterSecret"];
 
-      for (const attempt of attempts) {
-        try {
-          const result = await attempt();
-          if (result instanceof Uint8Array && result.length === length) {
-            return result;
-          }
-        } catch {
-          // Try the next shape.
+    const enc = new TextEncoder();
+    const labelBytes = enc.encode(label);
+    const emptyContext = new Uint8Array();
+
+    // RFC 9420 section 8.5 derives from the key schedule's exporter
+    // secret, not from the group state, so that is the most likely first
+    // argument. Label may be a string or bytes depending on how the
+    // library frames it.
+    const attempts: Array<[string, unknown[]]> = [
+      ["secret,str,ctx,len,impl", [exporterSecret, label, emptyContext, length, impl]],
+      ["secret,bytes,ctx,len,impl", [exporterSecret, labelBytes, emptyContext, length, impl]],
+      ["schedule,str,ctx,len,impl", [schedule, label, emptyContext, length, impl]],
+      ["state,str,ctx,len,impl", [state, label, emptyContext, length, impl]],
+      ["secret,str,ctx,len", [exporterSecret, label, emptyContext, length]],
+      ["impl,secret,str,ctx,len", [impl, exporterSecret, label, emptyContext, length]],
+    ];
+
+    const failures: string[] = [];
+
+    for (const [name, args] of attempts) {
+      try {
+        const result = await fn(...args);
+        if (result instanceof Uint8Array && result.length === length) {
+          return result;
         }
+        failures.push(`${name}: returned ${result === undefined ? "undefined" : typeof result}`);
+      } catch (err) {
+        failures.push(`${name}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 
-    const topLevel = Object.keys(tsMls)
-      .filter((k) => /export|secret|derive|expand/i.test(k))
-      .join(", ");
-    const kdfKeys = Object.keys(impl.kdf as object).join(", ");
-
     throw new Error(
-      `no exporter found. ts-mls exports matching export/secret/derive/expand: ` +
-      `[${topLevel || "none"}]. impl.kdf has: [${kdfKeys}]`,
+      `mlsExporter arity ${fn.length}; keySchedule has [${Object.keys(schedule).join(", ")}]; ` +
+      `attempts -> ${failures.join(" ;; ")}`,
     );
   }
 }
