@@ -16,8 +16,8 @@ import {
   TsMlsProvider,
   encodeState,
   restoreState,
-  createGroupWithTree,
-  groupExtensionShape,
+  encodeTree,
+  decodeTree,
 } from "./mls/tsmls.js";
 import type { MlsProvider } from "./mls/provider.js";
 import { Identity, type ApiCall, type IdentityStatus } from "./identity.js";
@@ -111,16 +111,8 @@ export async function selfTest(): Promise<SelfTestResult> {
     const bob = await provider.generateKeyPackage("bob-device");
     steps.push("generated two key packages");
 
-    // Created with the ratchet_tree extension so welcomes are
-    // self-contained; see createGroupWithTree.
-    const impl = (provider as TsMlsProvider).impl;
-    let aliceGroup: unknown = await createGroupWithTree(
-      new TextEncoder().encode("selftest"),
-      alice.publicPackage,
-      alice.privatePackage,
-      impl,
-    );
-    steps.push(`created a group (tree extension: ${groupExtensionShape})`);
+    let aliceGroup = await provider.createGroup("selftest", alice);
+    steps.push("created a group");
 
     const bobPackage = provider.encodeKeyPackage(bob);
     steps.push(`encoded a key package (${bobPackage.length} bytes)`);
@@ -134,23 +126,15 @@ export async function selfTest(): Promise<SelfTestResult> {
       `welcome ${commit.welcome.length} bytes`,
     );
 
-    // ts-mls exposes no ratchet tree encoder, but it does build GroupInfo
-    // with the tree inside, which suggests the welcome already carries
-    // it. If so there is nothing separate to transport: a joiner needs
-    // only the welcome bytes.
-    //
-    // Tried first, because it is both simpler and the RFC-intended shape.
-    let bobGroup: unknown;
-    try {
-      bobGroup = await provider.joinGroup(commit.welcome, bob, undefined);
-      steps.push("joined from the welcome alone - tree travels inside it");
-    } catch (withoutTree) {
-      bobGroup = await provider.joinGroup(commit.welcome, bob, commit.ratchetTree);
-      steps.push(
-        "joined, but the welcome alone was not enough: " +
-        (withoutTree instanceof Error ? withoutTree.message : String(withoutTree)),
-      );
-    }
+    // The tree has to survive a round trip through the server as bytes,
+    // so the join uses the DESERIALISED copy rather than the in-memory
+    // object. Joining from the original would prove nothing about what
+    // happens in production.
+    const treeBytes = encodeTree(commit.ratchetTree);
+    const restoredTree = decodeTree(treeBytes);
+
+    const bobGroup = await provider.joinGroup(commit.welcome, bob, restoredTree);
+    steps.push(`joined from a ${treeBytes.length}-byte serialised tree`);
 
     const plaintext = new TextEncoder().encode("hello from the self test");
     const encrypted = await provider.encrypt(aliceGroup, plaintext);
