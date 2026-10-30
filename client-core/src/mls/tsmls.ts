@@ -131,57 +131,57 @@ export function restoreState(bytes: Uint8Array): unknown {
 }
 
 /**
- * Try to create a group whose welcomes carry the ratchet tree.
+ * Serialise a ratchet tree for transport.
  *
- * Without the ratchet_tree extension a joiner needs the tree delivered
- * separately, and ts-mls exposes no encoder for one - so it would have to
- * travel as part of something else or not at all. With the extension the
- * welcome is self-contained, which is both the RFC-intended shape and far
- * simpler for the server, which then stores one blob instead of two.
+ * A joiner needs the group's ratchet tree alongside the welcome, and it
+ * has to reach them through the server as bytes.
  *
- * The extension's representation is undocumented, so this tries the
- * plausible shapes and reports which worked.
+ * The RFC-intended route is the ratchet_tree extension, which would make
+ * the welcome self-contained. ts-mls exposes no encoder for a bare tree
+ * and no documented way to populate that extension, and several attempts
+ * at inferring one failed. So this is a deliberate detour: JSON with
+ * base64 for the binary leaves, which is wholly under our control.
+ *
+ * What it costs: the bytes are not MLS wire format, so another MLS
+ * implementation could not read them. That matters only for
+ * interoperability we do not have and are not promising, and swapping
+ * the provider would change this layer anyway. Recorded in
+ * docs/decisions.md rather than left as a surprise.
+ *
+ * What it does not cost: anything cryptographic. A ratchet tree is public
+ * data - it is what a joiner is given precisely because it reveals no
+ * secrets - so how it is framed in transit is a compatibility question,
+ * not a security one.
  */
-export let groupExtensionShape = "untried";
+const U8_TAG = "__u8";
 
-export async function createGroupWithTree(
-  groupId: Uint8Array,
-  publicPackage: unknown,
-  privatePackage: unknown,
-  impl: unknown,
-): Promise<unknown> {
-  const shapes: Array<[string, unknown[]]> = [
-    ["object-empty-data", [{ extensionType: "ratchet_tree", extensionData: new Uint8Array() }]],
-    ["string", ["ratchet_tree"]],
-    ["number-2", [{ extensionType: 2, extensionData: new Uint8Array() }]],
-  ];
-
-  const failures: string[] = [];
-
-  for (const [name, extensions] of shapes) {
-    try {
-      const state = await createGroup(
-        groupId,
-        publicPackage as never,
-        privatePackage as never,
-        extensions as never,
-        impl as never,
-      );
-      groupExtensionShape = name;
-      return state;
-    } catch (err) {
-      failures.push(`${name}: ${err instanceof Error ? err.message : String(err)}`);
+export function encodeTree(tree: unknown): Uint8Array {
+  const json = JSON.stringify(tree, (_key, value) => {
+    if (value instanceof Uint8Array) {
+      let binary = "";
+      for (const byte of value) binary += String.fromCharCode(byte);
+      return { [U8_TAG]: btoa(binary) };
     }
-  }
+    return value;
+  });
 
-  groupExtensionShape = `none worked -> ${failures.join(" ;; ")}`;
-  return createGroup(
-    groupId,
-    publicPackage as never,
-    privatePackage as never,
-    [],
-    impl as never,
-  );
+  return new TextEncoder().encode(json);
+}
+
+export function decodeTree(bytes: Uint8Array): unknown {
+  return JSON.parse(new TextDecoder().decode(bytes), (_key, value) => {
+    if (
+      value !== null &&
+      typeof value === "object" &&
+      typeof (value as Record<string, unknown>)[U8_TAG] === "string"
+    ) {
+      const binary = atob((value as Record<string, string>)[U8_TAG]!);
+      const out = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+      return out;
+    }
+    return value;
+  });
 }
 
 export class TsMlsProvider implements MlsProvider {
