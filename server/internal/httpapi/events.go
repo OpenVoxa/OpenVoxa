@@ -44,6 +44,12 @@ type channelChangedEvent struct {
 	ChannelID string `json:"channel_id"`
 }
 
+type groupAdvancedEvent struct {
+	Type      string `json:"type"`
+	ChannelID string `json:"channel_id"`
+	Epoch     int64  `json:"epoch"`
+}
+
 type roleChangedEvent struct {
 	Type   string `json:"type"`
 	UserID string `json:"user_id"`
@@ -109,6 +115,21 @@ func (a *API) NotifyChannelChanged(channelID string) {
 
 func (a *API) NotifyChannelDeleted(channelID string) {
 	a.emitAll(channelChangedEvent{Type: "channel_deleted", ChannelID: channelID})
+}
+
+// NotifyGroupAdvanced tells members of a channel that the MLS group moved
+// to a new epoch, so they fetch and apply the commit immediately rather
+// than discovering it when their next message fails to decrypt.
+//
+// Carries the epoch only. The commit itself is fetched over HTTP, because
+// a client that was offline may need several and the websocket is not the
+// right place to replay a log.
+func (a *API) NotifyGroupAdvanced(channelID string, epoch int64) {
+	a.emitChannel(channelID, groupAdvancedEvent{
+		Type:      "group_advanced",
+		ChannelID: channelID,
+		Epoch:     epoch,
+	})
 }
 
 // NotifyRoleChanged lets a client discover a promotion or demotion

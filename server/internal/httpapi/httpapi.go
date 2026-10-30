@@ -180,6 +180,21 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 	mux.HandleFunc("POST /api/v1/users/{id}/key-packages/claim",
 		api.requireAuth(api.claimKeyPackages))
 
+	// MLS groups. The server orders commits and routes opaque blobs; it
+	// holds no group state it can read.
+	mux.HandleFunc("GET /api/v1/channels/{id}/mls",
+		api.requireAuth(api.groupState))
+	mux.HandleFunc("POST /api/v1/channels/{id}/mls",
+		api.requireAuth(api.createGroup))
+	mux.HandleFunc("POST /api/v1/channels/{id}/mls/commit",
+		api.requireAuth(api.submitCommit))
+	mux.HandleFunc("GET /api/v1/channels/{id}/mls/handshakes",
+		api.requireAuth(api.listHandshakes))
+
+	mux.HandleFunc("GET /api/v1/mls/welcomes", api.requireAuth(api.listWelcomes))
+	mux.HandleFunc("POST /api/v1/mls/welcomes/{id}/ack",
+		api.requireAuth(api.ackWelcome))
+
 	mux.HandleFunc("POST /api/v1/channels",
 		api.requireRole(perm.Administrator, api.createChannel))
 	mux.HandleFunc("DELETE /api/v1/channels/{id}",
