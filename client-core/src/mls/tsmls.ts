@@ -71,48 +71,34 @@ function encodeCommit(commit: unknown): WireMessage {
 }
 
 /**
- * Serialise a ratchet tree for transport.
+ * Serialise group state for storage.
  *
- * A joiner needs the group's ratchet tree alongside the welcome, and it
- * has to travel through the server as bytes. It cannot go as JSON: the
- * structure is full of Uint8Arrays, which JSON turns into objects with
- * numeric keys and silently does not restore.
+ * Browsers restart, so group state has to survive on disk or every
+ * reload would mean rejoining every channel. ts-mls exposes
+ * encodeGroupState/decodeGroupState for exactly this.
  *
- * Which ts-mls function does this is not documented, so this resolves it
- * at call time and reports what is available if nothing matches. Pinned
- * once observed, like the other four.
+ * The output contains PRIVATE key material and must never be sent
+ * anywhere. It is written to IndexedDB on this device and nowhere else.
  */
-export function encodeTree(tree: unknown): Uint8Array {
-  const candidates = ["encodeRatchetTree", "encodeTree", "encodeNodes"];
+export function encodeState(state: unknown): Uint8Array {
+  const fn = (tsMls as Record<string, unknown>)["encodeGroupState"];
+  if (typeof fn !== "function") throw new Error("ts-mls has no encodeGroupState");
 
-  for (const name of candidates) {
-    const fn = (tsMls as Record<string, unknown>)[name];
-    if (typeof fn !== "function") continue;
-    const out = (fn as (t: unknown) => unknown)(tree);
-    if (out instanceof Uint8Array) return out;
+  const out = (fn as (s: unknown) => unknown)(state);
+  if (!(out instanceof Uint8Array)) {
+    throw new Error("encodeGroupState did not return bytes");
   }
-
-  const available = Object.keys(tsMls)
-    .filter((k) => /ratchet|tree|encode|decode/i.test(k))
-    .join(", ");
-  throw new Error(`no ratchet tree encoder. candidates present: [${available}]`);
+  return out;
 }
 
-export function decodeTree(bytes: Uint8Array): unknown {
-  const candidates = ["decodeRatchetTree", "decodeTree", "decodeNodes"];
+export function decodeState(bytes: Uint8Array): unknown {
+  const fn = (tsMls as Record<string, unknown>)["decodeGroupState"];
+  if (typeof fn !== "function") throw new Error("ts-mls has no decodeGroupState");
 
-  for (const name of candidates) {
-    const fn = (tsMls as Record<string, unknown>)[name];
-    if (typeof fn !== "function") continue;
-
-    // ts-mls decoders generally take (bytes, offset) and return
-    // [value, bytesRead].
-    const out = (fn as (b: Uint8Array, o: number) => unknown)(bytes, 0);
-    if (Array.isArray(out) && out.length >= 1) return out[0];
-    if (out !== undefined) return out;
-  }
-
-  throw new Error("no ratchet tree decoder");
+  // ts-mls decoders take (bytes, offset) and return [value, bytesRead].
+  const out = (fn as (b: Uint8Array, o: number) => unknown)(bytes, 0);
+  if (Array.isArray(out)) return out[0];
+  return out;
 }
 
 export class TsMlsProvider implements MlsProvider {
