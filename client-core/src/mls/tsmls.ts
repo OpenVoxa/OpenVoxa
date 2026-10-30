@@ -241,6 +241,21 @@ export function decodeTree(bytes: Uint8Array): unknown {
   });
 }
 
+/**
+ * The epoch a group state is currently at.
+ *
+ * Needed because the server orders commits by epoch and a client has to
+ * tell it which one its commit builds on. ts-mls keeps this as a BigInt;
+ * it is narrowed here because the server stores it as a 64-bit integer
+ * and no group will approach the point where that loses precision.
+ */
+export function epochOf(state: unknown): number {
+  const group = state as { groupContext?: { epoch?: bigint | number } };
+  const epoch = group.groupContext?.epoch;
+  if (epoch === undefined) throw new Error("mls: state has no epoch");
+  return typeof epoch === "bigint" ? Number(epoch) : epoch;
+}
+
 export class TsMlsProvider implements MlsProvider {
   readonly name = "ts-mls";
 
