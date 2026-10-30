@@ -70,6 +70,51 @@ function encodeCommit(commit: unknown): WireMessage {
   return encodeMlsMessage(commit as never);
 }
 
+/**
+ * Serialise a ratchet tree for transport.
+ *
+ * A joiner needs the group's ratchet tree alongside the welcome, and it
+ * has to travel through the server as bytes. It cannot go as JSON: the
+ * structure is full of Uint8Arrays, which JSON turns into objects with
+ * numeric keys and silently does not restore.
+ *
+ * Which ts-mls function does this is not documented, so this resolves it
+ * at call time and reports what is available if nothing matches. Pinned
+ * once observed, like the other four.
+ */
+export function encodeTree(tree: unknown): Uint8Array {
+  const candidates = ["encodeRatchetTree", "encodeTree", "encodeNodes"];
+
+  for (const name of candidates) {
+    const fn = (tsMls as Record<string, unknown>)[name];
+    if (typeof fn !== "function") continue;
+    const out = (fn as (t: unknown) => unknown)(tree);
+    if (out instanceof Uint8Array) return out;
+  }
+
+  const available = Object.keys(tsMls)
+    .filter((k) => /ratchet|tree|encode|decode/i.test(k))
+    .join(", ");
+  throw new Error(`no ratchet tree encoder. candidates present: [${available}]`);
+}
+
+export function decodeTree(bytes: Uint8Array): unknown {
+  const candidates = ["decodeRatchetTree", "decodeTree", "decodeNodes"];
+
+  for (const name of candidates) {
+    const fn = (tsMls as Record<string, unknown>)[name];
+    if (typeof fn !== "function") continue;
+
+    // ts-mls decoders generally take (bytes, offset) and return
+    // [value, bytesRead].
+    const out = (fn as (b: Uint8Array, o: number) => unknown)(bytes, 0);
+    if (Array.isArray(out) && out.length >= 1) return out[0];
+    if (out !== undefined) return out;
+  }
+
+  throw new Error("no ratchet tree decoder");
+}
+
 export class TsMlsProvider implements MlsProvider {
   readonly name = "ts-mls";
 

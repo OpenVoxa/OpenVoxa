@@ -12,7 +12,7 @@
  * client-web is built.
  */
 
-import { TsMlsProvider } from "./mls/tsmls.js";
+import { TsMlsProvider, encodeTree, decodeTree } from "./mls/tsmls.js";
 import type { MlsProvider } from "./mls/provider.js";
 import { Identity, type ApiCall, type IdentityStatus } from "./identity.js";
 import { storage } from "./storage.js";
@@ -120,8 +120,17 @@ export async function selfTest(): Promise<SelfTestResult> {
       `welcome ${commit.welcome.length} bytes`,
     );
 
-    let bobGroup = await provider.joinGroup(commit.welcome, bob, commit.ratchetTree);
-    steps.push("second member joined from the welcome");
+    // The tree has to survive a round trip through the server as bytes,
+    // so the test joins from the DESERIALISED copy rather than from the
+    // in-memory object. Testing with the original would prove nothing
+    // about what actually happens in production.
+    const treeBytes = encodeTree(commit.ratchetTree);
+    steps.push(`ratchet tree serialised to ${treeBytes.length} bytes`);
+
+    const restoredTree = decodeTree(treeBytes);
+
+    let bobGroup = await provider.joinGroup(commit.welcome, bob, restoredTree);
+    steps.push("second member joined from a serialised welcome and tree");
 
     const plaintext = new TextEncoder().encode("hello from the self test");
     const encrypted = await provider.encrypt(aliceGroup, plaintext);
