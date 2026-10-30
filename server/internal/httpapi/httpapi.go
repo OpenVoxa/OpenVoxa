@@ -143,53 +143,56 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 	mux.HandleFunc("GET /api/v1/users",
 		api.requireRole(perm.Moderator, api.listUsers))
 	mux.HandleFunc("PATCH /api/v1/users/{id}/role",
-		api.requireRole(perm.Administrator, api.setUserRole))
+		withUUIDPath(api.requireRole(perm.Administrator, api.setUserRole)))
 	mux.HandleFunc("DELETE /api/v1/users/{id}",
-		api.requireRole(perm.Administrator, api.deleteUser))
+		withUUIDPath(api.requireRole(perm.Administrator, api.deleteUser)))
 
 	mux.HandleFunc("DELETE /api/v1/me", api.requireAuth(api.deleteOwnAccount))
 
 	// Authors delete their own; the handler checks for moderator rank
 	// before allowing anyone else's.
-	mux.HandleFunc("DELETE /api/v1/messages/{id}", api.requireAuth(api.deleteMessage))
-	mux.HandleFunc("POST /api/v1/messages/{id}/report", api.requireAuth(api.reportMessage))
+	mux.HandleFunc("DELETE /api/v1/messages/{id}",
+		withUUIDPath(api.requireAuth(api.deleteMessage)))
+	mux.HandleFunc("POST /api/v1/messages/{id}/report",
+		withUUIDPath(api.requireAuth(api.reportMessage)))
 
 	mux.HandleFunc("GET /api/v1/reports",
 		api.requireRole(perm.Moderator, api.listReports))
 	mux.HandleFunc("POST /api/v1/reports/{id}/resolve",
-		api.requireRole(perm.Moderator, api.resolveReport))
+		withUUIDPath(api.requireRole(perm.Moderator, api.resolveReport)))
 
 	mux.HandleFunc("GET /api/v1/bans",
 		api.requireRole(perm.Moderator, api.listBans))
 	mux.HandleFunc("POST /api/v1/users/{id}/ban",
-		api.requireRole(perm.Moderator, api.banUser))
+		withUUIDPath(api.requireRole(perm.Moderator, api.banUser)))
 	mux.HandleFunc("DELETE /api/v1/users/{id}/ban",
-		api.requireRole(perm.Moderator, api.unbanUser))
+		withUUIDPath(api.requireRole(perm.Moderator, api.unbanUser)))
 
 	// MLS identity. The server stores and routes this material and never
 	// parses it; see docs/decisions.md.
 	mux.HandleFunc("POST /api/v1/devices", api.requireAuth(api.registerDevice))
 	mux.HandleFunc("GET /api/v1/devices", api.requireAuth(api.listDevices))
-	mux.HandleFunc("DELETE /api/v1/devices/{id}", api.requireAuth(api.revokeDevice))
+	mux.HandleFunc("DELETE /api/v1/devices/{id}",
+		withUUIDPath(api.requireAuth(api.revokeDevice)))
 
 	mux.HandleFunc("POST /api/v1/devices/{id}/key-packages",
-		api.requireAuth(api.publishKeyPackages))
+		withUUIDPath(api.requireAuth(api.publishKeyPackages)))
 	mux.HandleFunc("GET /api/v1/devices/{id}/key-packages",
-		api.requireAuth(api.keyPackageCount))
+		withUUIDPath(api.requireAuth(api.keyPackageCount)))
 
 	mux.HandleFunc("POST /api/v1/users/{id}/key-packages/claim",
-		api.requireAuth(api.claimKeyPackages))
+		withUUIDPath(api.requireAuth(api.claimKeyPackages)))
 
 	// MLS groups. The server orders commits and routes opaque blobs; it
 	// holds no group state it can read.
 	mux.HandleFunc("GET /api/v1/channels/{id}/mls",
-		api.requireAuth(api.groupState))
+		withUUIDPath(api.requireAuth(api.groupState)))
 	mux.HandleFunc("POST /api/v1/channels/{id}/mls",
-		api.requireAuth(api.createGroup))
+		withUUIDPath(api.requireAuth(api.createGroup)))
 	mux.HandleFunc("POST /api/v1/channels/{id}/mls/commit",
-		api.requireAuth(api.submitCommit))
+		withUUIDPath(api.requireAuth(api.submitCommit)))
 	mux.HandleFunc("GET /api/v1/channels/{id}/mls/handshakes",
-		api.requireAuth(api.listHandshakes))
+		withUUIDPath(api.requireAuth(api.listHandshakes)))
 
 	mux.HandleFunc("GET /api/v1/mls/welcomes", api.requireAuth(api.listWelcomes))
 	mux.HandleFunc("POST /api/v1/mls/welcomes/{id}/ack",
@@ -198,26 +201,27 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 	mux.HandleFunc("POST /api/v1/channels",
 		api.requireRole(perm.Administrator, api.createChannel))
 	mux.HandleFunc("DELETE /api/v1/channels/{id}",
-		api.requireRole(perm.Administrator, api.deleteChannel))
+		withUUIDPath(api.requireRole(perm.Administrator, api.deleteChannel)))
 
 	mux.HandleFunc("POST /api/v1/channels/{id}/voice-token",
-		api.requireAuth(api.voiceToken))
+		withUUIDPath(api.requireAuth(api.voiceToken)))
 	mux.HandleFunc("PATCH /api/v1/channels/{id}/force-ptt",
-		api.requireRole(perm.Moderator, api.setForcePTT))
+		withUUIDPath(api.requireRole(perm.Moderator, api.setForcePTT)))
 	mux.HandleFunc("PATCH /api/v1/channels/{id}/retention",
-		api.requireRole(perm.Administrator, api.setChannelRetention))
+		withUUIDPath(api.requireRole(perm.Administrator, api.setChannelRetention)))
 
 	mux.HandleFunc("POST /api/v1/unfurl", api.requireAuth(api.unfurlLink))
 
 	mux.HandleFunc("POST /api/v1/channels/{id}/attachments",
-		api.requireAuth(api.uploadAttachment))
+		withUUIDPath(api.requireAuth(api.uploadAttachment)))
 	// Not behind requireAuth: the signed URL carries its own
 	// authorisation, because browsers cannot send headers on <img src>.
-	mux.HandleFunc("GET /api/v1/attachments/{id}", api.downloadAttachment)
+	mux.HandleFunc("GET /api/v1/attachments/{id}", withUUIDPath(api.downloadAttachment))
 
 	mux.HandleFunc("GET /api/v1/gifs/config", api.requireAuth(api.gifConfig))
 	mux.HandleFunc("GET /api/v1/gifs/search", api.requireAuth(api.searchGifs))
-	mux.HandleFunc("POST /api/v1/channels/{id}/gifs", api.requireAuth(api.attachGif))
+	mux.HandleFunc("POST /api/v1/channels/{id}/gifs",
+		withUUIDPath(api.requireAuth(api.attachGif)))
 
 	// Signed token carries its own authorisation, as with attachments.
 	mux.HandleFunc("GET /api/v1/gifs/media", api.proxyGifMedia)
@@ -453,6 +457,26 @@ func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 		return nil, nil, errors.New("httpapi: ResponseWriter does not support hijacking")
 	}
 	return hj.Hijack()
+}
+
+// withUUIDPath rejects a request whose {id} path value is not a UUID.
+//
+// Without this, a typo in a URL reaches Postgres, fails there, and comes
+// back as a 500 with a vague message. That is wrong twice over: it tells
+// the caller the server broke when they sent a bad request, and it fills
+// the error log with entries that look like faults. Checking once at the
+// edge keeps genuine 500s meaningful.
+//
+// Applied at route registration rather than inside each handler, so a new
+// handler cannot forget it.
+func withUUIDPath(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !uuidPattern.MatchString(r.PathValue("id")) {
+			writeError(w, http.StatusBadRequest, "invalid id")
+			return
+		}
+		next(w, r)
+	}
 }
 
 // limitByIP rejects callers who have spent their token budget.
