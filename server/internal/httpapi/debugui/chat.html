@@ -262,7 +262,9 @@ const api = location.origin;
 let token = null;
 let socket = null;
 let currentChannel = null;
+let currentChannelEncrypted = false;
 let myUserID = null;
+let session = null;
 
 const $ = (id) => document.getElementById(id);
 const logEl = $("log");
@@ -373,6 +375,98 @@ function renderAttachments(after, list) {
 // bundle loads, that MLS runs in this browser, and that a group can be
 // created, joined and used - before any of it is load-bearing.
 
+// ---------------------------------------------------------- encryption
+//
+// In an encrypted channel the message body on the wire is base64 of MLS
+// ciphertext. The server stores those bytes and cannot read them.
+//
+// Base64 inside a text field costs about a third in storage. Worth
+// replacing with a binary frame eventually; not worth a protocol change
+// while the shape is still moving.
+
+function b64encode(bytes) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function b64decode(text) {
+  const binary = atob(text);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+  return out;
+}
+
+/**
+ * Turn a received message into something renderable.
+ *
+ * A message this device cannot read is normal rather than broken:
+ * anything sent before this device joined is undecryptable by design.
+ * It is shown as unreadable instead of being hidden, so the gap in the
+ * conversation is visible rather than silently papered over.
+ */
+async function prepareMessage(m) {
+  if (!currentChannelEncrypted || m.deleted || !m.body) return m;
+  if (!session || !session.groups.isMember(currentChannel)) {
+    return { ...m, body: "[encrypted]", unreadable: true };
+  }
+
+  try {
+    const plaintext = await session.groups.decrypt(currentChannel, b64decode(m.body));
+    if (!plaintext) return { ...m, body: "[sent before this device joined]", unreadable: true };
+    return { ...m, body: new TextDecoder().decode(plaintext) };
+  } catch {
+    return { ...m, body: "[could not decrypt]", unreadable: true };
+  }
+}
+
+/** Open the MLS group for a channel, reporting what happened. */
+async function openGroup(channelId) {
+  if (!session) {
+    line("err", "no crypto session; sign in again");
+    return false;
+  }
+
+  const result = await session.groups.open(channelId);
+
+  switch (result.status) {
+    case "created":
+      line("sys", `created the encrypted group for this channel (epoch ${result.epoch})`);
+      return true;
+    case "joined":
+      line("sys", `joined the encrypted group (epoch ${result.epoch})`);
+      return true;
+    case "ready":
+      line("sys", `encrypted channel ready (epoch ${result.epoch})`);
+      return true;
+    case "awaiting_invite":
+      line("sys", esc(result.detail || "waiting to be added to this channel"));
+      return false;
+    default:
+      line("err", esc(result.detail || "could not open the encrypted group"));
+      return false;
+  }
+}
+
+/** Add every other account's devices to this channel's group. */
+async function inviteEveryone() {
+  if (!session || !session.groups.isMember(currentChannel)) {
+    return line("err", "not a member of this group");
+  }
+
+  const users = await call("/api/v1/users");
+  const others = users.filter((u) => u.id !== myUserID).map((u) => u.id);
+
+  if (!others.length) return line("sys", "no other accounts to add");
+
+  try {
+    const epoch = await session.groups.addMembers(currentChannel, others);
+    line("sys", `added ${others.length} account(s); group is now at epoch ${epoch}`);
+  } catch (e) {
+    line("err", esc(e.message));
+  }
+}
+
 // ------------------------------------------------------- device identity
 //
 // Runs once after sign-in. Creates this browser's cryptographic identity
@@ -386,11 +480,12 @@ async function setUpIdentity() {
   if (typeof OpenVoxaCore === "undefined") return;
 
   try {
-    const status = await OpenVoxaCore.setUpIdentity(
+    session = await OpenVoxaCore.startSession(
       call,
       myUserID,
       `${navigator.platform || "browser"} (debug client)`,
     );
+    const status = session.status;
 
     $("idStatus").textContent =
       `device ${status.deviceId.slice(0, 8)} - ` +
@@ -413,6 +508,7 @@ async function forgetDevice() {
   )) return;
 
   await OpenVoxaCore.forgetIdentity();
+  session = null;
   $("idStatus").textContent = "device forgotten; sign in again to create a new one";
   $("idRefresh").disabled = true;
   $("idForget").disabled = true;
@@ -1045,6 +1141,7 @@ async function loadChannels() {
     const opt = document.createElement("option");
     opt.value = c.id;
     const access = c.can_post ? "can post" : "read only";
+    opt.dataset.encrypted = c.encrypted ? "1" : "";
     opt.textContent =
       `${c.name} (${c.encrypted ? "encrypted" : "plaintext"}, kept ${c.retention}, ${access})`;
     select.appendChild(opt);
@@ -1055,8 +1152,23 @@ async function loadChannels() {
 }
 
 async function connect() {
+  const opt = $("channel").selectedOptions[0];
   const channelID = $("channel").value;
   currentChannel = channelID;
+  currentChannelEncrypted = opt?.dataset.encrypted === "1";
+
+  if (currentChannelEncrypted) {
+    const ready = await openGroup(channelID);
+    $("invite").hidden = !ready;
+    if (!ready) {
+      // Still connect: the channel list and membership changes arrive
+      // over the same socket, so a device waiting for an invitation
+      // finds out through it.
+      line("sys", "connecting read-only until this device is added");
+    }
+  } else {
+    $("invite").hidden = true;
+  }
 
   // Two steps on purpose: browsers cannot set an Authorization header on a
   // websocket, so we trade the session token for a single-use ticket rather
@@ -1100,7 +1212,11 @@ async function connect() {
     if (frame.type === "history") {
       logEl.innerHTML = "";
       line("sys", `${frame.messages.length} earlier message(s)`);
-      frame.messages.forEach(renderMessage);
+      // Sequential rather than parallel: decryption advances the group
+      // state, and MLS expects messages applied in order.
+      (async () => {
+        for (const m of frame.messages) renderMessage(await prepareMessage(m));
+      })();
 
       // The server decides; this only reflects its answer in the UI.
       if (!frame.can_post) {
@@ -1110,7 +1226,7 @@ async function connect() {
         $("body").placeholder = "Read only";
       }
     } else if (frame.type === "message") {
-      renderMessage(frame);
+      prepareMessage(frame).then(renderMessage);
     } else if (frame.type === "error") {
       line("err", esc(frame.error));
     } else if (frame.type === "user_purged") {
@@ -1130,6 +1246,14 @@ async function connect() {
         socket?.close();
       }
       loadChannels().catch(() => {});
+    } else if (frame.type === "group_advanced") {
+      // Someone changed the membership. Apply their commit now rather
+      // than discovering it when the next message fails to decrypt.
+      if (frame.channel_id === currentChannel && session) {
+        session.groups.catchUp(currentChannel)
+          .then((epoch) => line("sys", `group advanced to epoch ${epoch}`))
+          .catch((e) => line("err", esc(e.message)));
+      }
     } else if (frame.type === "role_changed") {
       if (frame.user_id === myUserID) {
         myRole = frame.role;
@@ -1146,14 +1270,27 @@ async function connect() {
   };
 }
 
-function send() {
+async function send() {
   const input = $("body");
   if (!socket) return;
   if (!input.value.trim() && !pending.length) return;
 
+  let body = input.value;
+
+  if (currentChannelEncrypted) {
+    if (!session || !session.groups.isMember(currentChannel)) {
+      return line("err", "this device has not been added to this channel yet");
+    }
+    const ciphertext = await session.groups.encrypt(
+      currentChannel,
+      new TextEncoder().encode(body),
+    );
+    body = b64encode(ciphertext);
+  }
+
   socket.send(JSON.stringify({
     type: "send",
-    body: input.value,
+    body,
     attachments: pending.map((a) => a.id)
   }));
 
@@ -1633,7 +1770,9 @@ $("login").onclick = () => authenticate("/api/v1/auth/login");
 $("register").onclick = () => authenticate("/api/v1/auth/register");
 $("connect").onclick = () => connect().catch((e) => line("err", esc(e.message)));
 $("disconnect").onclick = () => socket?.close();
-$("send").onclick = send;
+$("send").onclick = () => send().catch((e) => line("err", esc(e.message)));
+on("invite", "onclick", () =>
+  inviteEveryone().catch((e) => line("err", esc(e.message))));
 $("attach").onclick = () => $("file").click();
 $("file").onchange = (e) => {
   upload(e.target.files).catch((err) => line("err", esc(err.message)));
@@ -1648,7 +1787,9 @@ $("body").onpaste = (e) => {
     upload(files).catch((err) => line("err", esc(err.message)));
   }
 };
-$("body").onkeydown = (e) => { if (e.key === "Enter") send(); };
+$("body").onkeydown = (e) => {
+  if (e.key === "Enter") send().catch((err) => line("err", esc(err.message)));
+};
 </script>
 </body>
 </html>
