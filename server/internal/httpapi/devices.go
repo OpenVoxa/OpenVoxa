@@ -8,11 +8,18 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"time"
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 )
+
+// Accepts any UUID shape; the value is an identifier the client chose,
+// and the only properties that matter are that it is well-formed and
+// unique.
+var uuidPattern = regexp.MustCompile(
+	`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 const (
 	maxDeviceLabelRunes = 64
@@ -32,8 +39,15 @@ const (
 )
 
 type registerDeviceRequest struct {
+	// Client-generated UUID. The device ID goes inside the MLS
+	// credential, so it has to exist before the key package does; a
+	// server-assigned ID would mean regenerating every key package after
+	// registration. A device ID is an identifier, not a secret.
+	ID    string `json:"id"`
 	Label string `json:"label"`
-	// Base64 of the device's MLS signature public key.
+
+	// Base64 of the device's MLS signature public key. Optional: see
+	// migration 0009.
 	SignatureKey string `json:"signature_key"`
 }
 
@@ -63,21 +77,38 @@ func (a *API) registerDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	key, err := base64.StdEncoding.DecodeString(req.SignatureKey)
-	if err != nil || len(key) == 0 || len(key) > 1024 {
-		writeError(w, http.StatusBadRequest, "signature_key must be base64-encoded key material")
+	if !uuidPattern.MatchString(req.ID) {
+		writeError(w, http.StatusBadRequest, "id must be a UUID")
 		return
 	}
 
+	var key []byte
+	if req.SignatureKey != "" {
+		decoded, err := base64.StdEncoding.DecodeString(req.SignatureKey)
+		if err != nil || len(decoded) == 0 || len(decoded) > 1024 {
+			writeError(w, http.StatusBadRequest,
+				"signature_key must be base64-encoded key material")
+			return
+		}
+		key = decoded
+	}
+
 	var out deviceResponse
-	err = a.pool.QueryRow(r.Context(),
-		`INSERT INTO devices (user_id, label, signature_key)
-		 VALUES ($1, $2, $3)
+	err := a.pool.QueryRow(r.Context(),
+		`INSERT INTO devices (id, user_id, label, signature_key)
+		 VALUES ($1, $2, $3, $4)
 		 RETURNING id, label, created_at, last_seen_at`,
-		session.UserID, req.Label, key,
+		req.ID, session.UserID, req.Label, key,
 	).Scan(&out.ID, &out.Label, &out.CreatedAt, &out.LastSeenAt)
 
 	if err != nil {
+		if isUniqueViolation(err) {
+			// Almost always a client re-registering a device it already
+			// has, which is harmless but should not silently succeed:
+			// the caller may not be the owner.
+			writeError(w, http.StatusConflict, "a device with that id already exists")
+			return
+		}
 		slog.Error("registering device", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not register the device")
 		return
