@@ -254,6 +254,50 @@ so users know which kind of space they are in before they post. Bounded
 retention softens the edge considerably: in a channel that keeps thirty
 days, "nothing before you joined" is a small loss.
 
+**Ratchet trees are serialised with our own codec, not MLS wire format.**
+A joiner needs the group's ratchet tree alongside the welcome, and it has
+to reach them through the server as bytes. The RFC-intended route is the
+`ratchet_tree` extension, which would make the welcome self-contained;
+ts-mls exposes no encoder for a bare tree and no documented way to
+populate that extension, and several attempts at inferring one failed.
+
+So the tree travels as JSON with explicit tags for the types JSON cannot
+represent. What that costs is interoperability: another MLS
+implementation could not read those bytes. That matters only for
+interoperability this project does not have and is not promising, and
+swapping the provider would change this layer anyway.
+
+What it does not cost is anything cryptographic. A ratchet tree is public
+data - it is what a joiner is handed precisely because it reveals no
+secrets - so how it is framed in transit is a compatibility question, not
+a security one.
+
+This is nonetheless the weakest part of the crypto layer and the first
+thing to replace if ts-mls documents the extension. Three types needed
+explicit handling and each was found by failure rather than by reading:
+
+- `Uint8Array`, which JSON turns into an object with numeric keys
+- `BigInt`, used for leaf indices and generations, which JSON throws on
+  rather than silently narrowing to a float
+- `undefined`, used for blank nodes, which JSON converts to `null` in
+  arrays - and this one is the dangerous shape, because it SUCCEEDS and
+  returns something subtly different. ts-mls then tests for an absent
+  node, a null passes the test, and it reads a property off nothing.
+
+Hand-rolled serialisation of another library's internal structure is
+fragile by nature. The failures that throw are fine; the one to fear is
+the one that round-trips cleanly and is wrong.
+
+**Group state is stored as bytes with its configuration rebuilt.**
+`encodeGroupState` loses exactly one field, `clientConfig`, and for a good
+reason: it holds an authentication service and other callables that
+cannot be serialised at all. It is reconstructed from the library
+defaults on load rather than carried across, because a config captured
+before a restart could hold stale callables closed over a dead session.
+
+The encoded state contains private key material and never leaves the
+device.
+
 **The server is a delivery service, never a participant.** It stores and
 routes key packages, handshake blobs and ciphertext, and parses none of
 it. Its one substantive job is ordering commits: MLS groups advance in
@@ -474,9 +518,19 @@ request and no error anywhere obvious. GIF and moderation controls are now
 attached through a helper that warns rather than throws. This disappears
 with `client-web`, where components fail independently.
 
-**Four ts-mls API details were observed rather than documented.** Each
-was written against the README first and was wrong, which cost several
-round trips. Recorded so the next person does not repeat it:
+**Seven ts-mls API details were observed rather than documented.** Each
+was written against the README first and was wrong. The pattern, not any
+individual case, is the useful record: this library's documentation
+describes what the functions are for, not what they return or in what
+shape, and inferring either from prose did not work once.
+
+That is the real argument for the OpenMLS swap, and it is not that its
+MLS is better. It is that its API would be types that can be read.
+Against that, the wrapper would be unreviewed Rust written by someone new
+to Rust, so the trade is API clarity for a new risk surface rather than a
+clear win. Recorded so the decision can be made on accurate costs.
+
+The details themselves:
 
 - `createCommit` returns `commit` as a COMPLETE MLSMessage carrying its
   own version and wireformat, while `welcome` comes back as a bare
@@ -491,6 +545,14 @@ round trips. Recorded so the next person does not repeat it:
   npm skips them, but esbuild follows every import reachable from the
   entry point and needs them present regardless of which ciphersuite is
   used. Optional peer dependencies and bundlers do not mix.
+- `encodeGroupState` exists and round-trips, minus `clientConfig`. There
+  is no equivalent for a bare ratchet tree.
+- Passing a `ratchet_tree` extension to `createGroup` is accepted but
+  does not put the tree in the welcome; joining still reports "No
+  RatchetTree passed and no ratchet_tree extension". Whatever populates
+  that extension was not found.
+- `joinGroup` takes the tree as an in-memory object, so transporting it
+  is entirely the caller's problem.
 
 **One parse-time throw disables every handler below it.** The debug
 client is a single script with no module boundaries. A reference to an
@@ -527,8 +589,13 @@ the Dockerfile's Go version at or above the directive.
    - ✅ Browser self-test: group create, add, join, encrypt, decrypt,
      matching exported secrets
    - ✅ Server-side device identity and key package storage
-   - ⬜ Client identity: real keys, private storage, device registration
-   - ⬜ Groups per channel: creation, welcome distribution, commit ordering
+   - ✅ Client identity: real keys in IndexedDB, device registration,
+     key package publishing and replenishment
+   - ✅ Server-side group state, epoch-ordered commits, handshake log,
+     welcome delivery
+   - ✅ Tree and state serialisation proven end to end in the browser
+   - ⬜ Client group logic: create or join, apply commits, persist,
+     rebase on conflict
    - ⬜ Encrypted application messages
 10. ⬜ Media encryption keyed off the MLS exporter secret
 11. ⬜ The real client: `client-web`, `client-desktop`
@@ -552,9 +619,15 @@ the Dockerfile's Go version at or above the directive.
       interface does not exist.
 - [ ] Reports in encrypted channels will need MLS signature verification
       before `verified` can be anything but NULL there.
-- [ ] MLS group state is not yet persisted. A browser restart currently
-      loses it; it needs encrypted storage in IndexedDB, keyed by
-      something derived from the user's password or recovery key.
+- [ ] Group state persists to IndexedDB as bytes, but UNENCRYPTED. The
+      protection today is browser origin isolation; anyone able to read
+      browser profile data on the device can read the keys. The fix needs
+      recovery keys to exist first, since encrypting with a key also
+      stored in IndexedDB would look like protection while providing
+      none.
+- [ ] The `ratchet_tree` column in migration 0010 assumes the tree
+      travels separately from the welcome. If the extension route is ever
+      made to work, both that column and the custom serialiser go away.
 - [ ] Recovery keys do not exist. Without one, a forgotten password means
       permanently unreadable history, because the server holds only
       ciphertext. The key has to be generated at signup and shown once.
