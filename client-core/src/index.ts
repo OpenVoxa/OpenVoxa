@@ -21,6 +21,7 @@ import {
 } from "./mls/tsmls.js";
 import type { MlsProvider } from "./mls/provider.js";
 import { Identity, type ApiCall, type IdentityStatus } from "./identity.js";
+import { Groups, type GroupStatus, type OpenResult } from "./groups.js";
 import { storage } from "./storage.js";
 
 export type {
@@ -34,8 +35,10 @@ export type {
 
 export { TsMlsProvider } from "./mls/tsmls.js";
 export { Identity } from "./identity.js";
+export { Groups } from "./groups.js";
 export { storage } from "./storage.js";
 export type { ApiCall, IdentityStatus } from "./identity.js";
+export type { GroupStatus, OpenResult } from "./groups.js";
 export type { StoredDevice, StoredKeyPair } from "./storage.js";
 
 export const VERSION = "0.1.0";
@@ -66,6 +69,34 @@ export async function setUpIdentity(
   const identity = new Identity(mls, call);
   await identity.ensureDevice(userId, label);
   return identity.replenish();
+}
+
+/**
+ * A session: one device, its MLS provider, and the groups it belongs to.
+ *
+ * Built once after sign-in and held for as long as the user stays signed
+ * in. Everything crypto-related goes through it, so the rest of the
+ * client never touches key material directly.
+ */
+export interface Session {
+  readonly identity: Identity;
+  readonly groups: Groups;
+  readonly status: IdentityStatus;
+}
+
+export async function startSession(
+  call: ApiCall,
+  userId: string,
+  label: string,
+): Promise<Session> {
+  const mls = createMlsProvider();
+  await mls.init();
+
+  const identity = new Identity(mls, call);
+  const device = await identity.ensureDevice(userId, label);
+  const status = await identity.replenish();
+
+  return { identity, groups: new Groups(mls, call, device.id), status };
 }
 
 /** Destroy all local key material. Called on sign-out. */
