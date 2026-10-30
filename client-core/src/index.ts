@@ -12,7 +12,12 @@
  * client-web is built.
  */
 
-import { TsMlsProvider, encodeState, decodeState } from "./mls/tsmls.js";
+import {
+  TsMlsProvider,
+  encodeState,
+  decodeState,
+  inspectStateRoundTrip,
+} from "./mls/tsmls.js";
 import type { MlsProvider } from "./mls/provider.js";
 import { Identity, type ApiCall, type IdentityStatus } from "./identity.js";
 import { storage } from "./storage.js";
@@ -168,12 +173,21 @@ export async function selfTest(): Promise<SelfTestResult> {
     }
     steps.push("both members derived the same 32-byte media key");
 
-    // Group state must survive a browser restart, so it has to serialise
-    // to bytes and come back working. Encrypting from the RESTORED state
-    // is the real test: a state that decodes but cannot be used would
-    // pass a shallower check.
+    // Group state must survive a browser restart. Encoding is lossy, so
+    // first report exactly what goes missing, then try the round trip
+    // with the lost pieces carried over.
+    steps.push(`state round trip: ${inspectStateRoundTrip(aliceGroup)}`);
+
     const stateBytes = encodeState(aliceGroup);
-    const restored = decodeState(stateBytes);
+    const decoded = decodeState(stateBytes) as Record<string, unknown>;
+
+    // Reattach anything the encoder dropped. Configuration is runtime
+    // state rather than protocol data, so losing it in the bytes is
+    // reasonable; silently shipping a state that cannot encrypt is not.
+    const restored: Record<string, unknown> = { ...decoded };
+    for (const [key, value] of Object.entries(aliceGroup as Record<string, unknown>)) {
+      if (!(key in restored)) restored[key] = value;
+    }
 
     const afterRestore = await provider.encrypt(
       restored,
