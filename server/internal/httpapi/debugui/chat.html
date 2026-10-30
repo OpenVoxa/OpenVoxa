@@ -254,6 +254,7 @@
   <input type="file" id="file" multiple hidden>
   <button id="attach" disabled>Attach</button>
   <button id="gif" disabled hidden>GIF</button>
+  <button id="invite" hidden>Add everyone</button>
   <button id="send" disabled>Send</button>
 </div>
 
@@ -1159,7 +1160,7 @@ async function connect() {
 
   if (currentChannelEncrypted) {
     const ready = await openGroup(channelID);
-    $("invite").hidden = !ready;
+    if ($("invite")) $("invite").hidden = !ready;
     if (!ready) {
       // Still connect: the channel list and membership changes arrive
       // over the same socket, so a device waiting for an invitation
@@ -1167,7 +1168,7 @@ async function connect() {
       line("sys", "connecting read-only until this device is added");
     }
   } else {
-    $("invite").hidden = true;
+    if ($("invite")) $("invite").hidden = true;
   }
 
   // Two steps on purpose: browsers cannot set an Authorization header on a
