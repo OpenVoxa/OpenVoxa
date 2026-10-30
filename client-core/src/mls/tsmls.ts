@@ -66,13 +66,6 @@ type Impl = Awaited<ReturnType<typeof getCiphersuiteImpl>>;
  * blob and the server treats it as a hint for serialising commits, never
  * as something to trust.
  */
-/**
- * Which mlsExporter argument shape succeeded, for diagnostics.
- *
- * Temporary. Once observed it gets pinned and this goes away.
- */
-export let exporterShape = "untried";
-
 function encodeCommit(commit: unknown): WireMessage {
   return encodeMlsMessage(commit as never);
 }
@@ -235,56 +228,24 @@ export class TsMlsProvider implements MlsProvider {
   ): Promise<Uint8Array> {
     const impl = this.#require();
 
-    const fn = (tsMls as Record<string, unknown>)["mlsExporter"] as
-      | ((...args: unknown[]) => unknown)
-      | undefined;
+    // RFC 9420 section 8.5. Signature observed from ts-mls 1.6.2 rather
+    // than inferred:
+    //
+    //   mlsExporter(exporterSecret, label, context, length, ciphersuite)
+    //
+    // It derives from the key schedule's exporter secret, not from the
+    // group state, which is why passing the state silently failed.
+    const group = state as { keySchedule: { exporterSecret: Uint8Array } };
 
-    if (typeof fn !== "function") {
-      throw new Error("ts-mls does not export mlsExporter");
-    }
-
-    const group = state as {
-      keySchedule?: Record<string, unknown>;
-      groupContext?: unknown;
-    };
-    const schedule = group.keySchedule ?? {};
-    const exporterSecret = schedule["exporterSecret"];
-
-    const enc = new TextEncoder();
-    const labelBytes = enc.encode(label);
-    const emptyContext = new Uint8Array();
-
-    // RFC 9420 section 8.5 derives from the key schedule's exporter
-    // secret, not from the group state, so that is the most likely first
-    // argument. Label may be a string or bytes depending on how the
-    // library frames it.
-    const attempts: Array<[string, unknown[]]> = [
-      ["secret,str,ctx,len,impl", [exporterSecret, label, emptyContext, length, impl]],
-      ["secret,bytes,ctx,len,impl", [exporterSecret, labelBytes, emptyContext, length, impl]],
-      ["schedule,str,ctx,len,impl", [schedule, label, emptyContext, length, impl]],
-      ["state,str,ctx,len,impl", [state, label, emptyContext, length, impl]],
-      ["secret,str,ctx,len", [exporterSecret, label, emptyContext, length]],
-      ["impl,secret,str,ctx,len", [impl, exporterSecret, label, emptyContext, length]],
-    ];
-
-    const failures: string[] = [];
-
-    for (const [name, args] of attempts) {
-      try {
-        const result = await fn(...args);
-        if (result instanceof Uint8Array && result.length === length) {
-          exporterShape = name;
-          return result;
-        }
-        failures.push(`${name}: returned ${result === undefined ? "undefined" : typeof result}`);
-      } catch (err) {
-        failures.push(`${name}: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-
-    throw new Error(
-      `mlsExporter arity ${fn.length}; keySchedule has [${Object.keys(schedule).join(", ")}]; ` +
-      `attempts -> ${failures.join(" ;; ")}`,
-    );
+    // Context is empty for now. When media keys are derived it carries
+    // the channel and epoch, so two uses of the same group cannot
+    // produce the same key.
+    return tsMls.mlsExporter(
+      group.keySchedule.exporterSecret,
+      label,
+      new Uint8Array(),
+      length,
+      impl,
+    ) as Promise<Uint8Array>;
   }
 }

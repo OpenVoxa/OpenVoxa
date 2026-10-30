@@ -12,7 +12,7 @@
  * client-web is built.
  */
 
-import { TsMlsProvider, exporterShape } from "./mls/tsmls.js";
+import { TsMlsProvider } from "./mls/tsmls.js";
 import type { MlsProvider } from "./mls/provider.js";
 
 export type {
@@ -117,7 +117,7 @@ export async function selfTest(): Promise<SelfTestResult> {
     if (!aliceKey.every((byte, i) => byte === bobKey[i])) {
       throw new Error("exported secrets differ between members");
     }
-    steps.push(`both members derived the same 32-byte media key (${exporterShape})`);
+    steps.push("both members derived the same 32-byte media key");
 
     return {
       ok: true,
