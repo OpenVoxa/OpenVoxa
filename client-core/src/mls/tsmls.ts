@@ -66,6 +66,13 @@ type Impl = Awaited<ReturnType<typeof getCiphersuiteImpl>>;
  * blob and the server treats it as a hint for serialising commits, never
  * as something to trust.
  */
+/**
+ * Which mlsExporter argument shape succeeded, for diagnostics.
+ *
+ * Temporary. Once observed it gets pinned and this goes away.
+ */
+export let exporterShape = "untried";
+
 function encodeCommit(commit: unknown): WireMessage {
   return encodeMlsMessage(commit as never);
 }
@@ -266,6 +273,7 @@ export class TsMlsProvider implements MlsProvider {
       try {
         const result = await fn(...args);
         if (result instanceof Uint8Array && result.length === length) {
+          exporterShape = name;
           return result;
         }
         failures.push(`${name}: returned ${result === undefined ? "undefined" : typeof result}`);
