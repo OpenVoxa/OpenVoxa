@@ -155,9 +155,10 @@ export function restoreState(bytes: Uint8Array): unknown {
  */
 const U8_TAG = "__u8";
 const BIGINT_TAG = "__bigint";
+const UNDEF_TAG = "__undef";
 
 export function encodeTree(tree: unknown): Uint8Array {
-  const json = JSON.stringify(tree, (_key, value) => {
+  const json = JSON.stringify(normaliseUndefined(tree), (_key, value) => {
     if (value instanceof Uint8Array) {
       let binary = "";
       for (const byte of value) binary += String.fromCharCode(byte);
@@ -173,10 +174,46 @@ export function encodeTree(tree: unknown): Uint8Array {
       return { [BIGINT_TAG]: value.toString() };
     }
 
+    // Blank nodes in a ratchet tree are `undefined`, and JSON turns an
+    // undefined array entry into null. That difference matters: ts-mls
+    // tests for an absent node, a null passes the test, and it then
+    // reads a property off nothing.
+    //
+    // This is the serialisation failure worth watching for - not the
+    // kind that throws, but the kind that succeeds and quietly returns
+    // something subtly different.
+    if (value === undefined) {
+      return { [UNDEF_TAG]: true };
+    }
+
     return value;
   });
 
   return new TextEncoder().encode(json);
+}
+
+/**
+ * Replace undefined with its tag before stringifying.
+ *
+ * Done as a pre-pass rather than relying on the replacer alone, because
+ * an engine may convert an undefined array entry to null before the
+ * replacer is ever consulted for it. Walking the structure first removes
+ * the ambiguity.
+ */
+function normaliseUndefined(value: unknown): unknown {
+  if (value === undefined) return { [UNDEF_TAG]: true };
+  if (value === null || value instanceof Uint8Array) return value;
+  if (typeof value !== "object") return value;
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => normaliseUndefined(entry));
+  }
+
+  const out: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    out[key] = normaliseUndefined(entry);
+  }
+  return out;
 }
 
 export function decodeTree(bytes: Uint8Array): unknown {
@@ -194,6 +231,10 @@ export function decodeTree(bytes: Uint8Array): unknown {
 
     if (typeof tagged[BIGINT_TAG] === "string") {
       return BigInt(tagged[BIGINT_TAG] as string);
+    }
+
+    if (tagged[UNDEF_TAG] === true) {
+      return undefined;
     }
 
     return value;
