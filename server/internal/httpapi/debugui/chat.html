@@ -161,6 +161,7 @@
   <select id="channel"></select>
   <button id="connect" disabled>Connect</button>
   <button id="disconnect" disabled>Disconnect</button>
+  <div id="cryptoStatus" class="ptt-hint"></div>
 </fieldset>
 
 <fieldset>
@@ -406,8 +407,31 @@ function b64decode(text) {
  * It is shown as unreadable instead of being hidden, so the gap in the
  * conversation is visible rather than silently papered over.
  */
+// Plaintext of messages sent from here but not yet echoed back, oldest
+// first. The server broadcasts in order, so the first echo from this
+// account matches the first entry.
+const awaitingEcho = [];
+
 async function prepareMessage(m) {
   if (!currentChannelEncrypted || m.deleted || !m.body) return m;
+
+  // Our own messages. MLS senders cannot read their own application
+  // messages, so the plaintext comes from local storage instead: from
+  // the send queue if this is the echo, or from what was saved when it
+  // was.
+  if (m.author_id && m.author_id === myUserID) {
+    const queued = awaitingEcho.shift();
+    if (queued !== undefined) {
+      await OpenVoxaCore.storage.putSent(m.id, queued);
+      return { ...m, body: queued };
+    }
+
+    const saved = await OpenVoxaCore.storage.getSent(m.id);
+    if (saved !== undefined) return { ...m, body: saved };
+
+    return { ...m, body: "[sent from another device]", unreadable: true };
+  }
+
   if (!session || !session.groups.isMember(currentChannel)) {
     return { ...m, body: "[encrypted]", unreadable: true };
   }
@@ -421,10 +445,20 @@ async function prepareMessage(m) {
   }
 }
 
-/** Open the MLS group for a channel, reporting what happened. */
+/**
+ * Open the MLS group for a channel, reporting what happened.
+ *
+ * Status goes to its own element rather than the message log, because
+ * loading history clears the log and would wipe it a moment later.
+ */
+function cryptoStatus(text) {
+  const el = $("cryptoStatus");
+  if (el) el.textContent = text;
+}
+
 async function openGroup(channelId) {
   if (!session) {
-    line("err", "no crypto session; sign in again");
+    cryptoStatus("no crypto session; sign in again");
     return false;
   }
 
@@ -432,19 +466,19 @@ async function openGroup(channelId) {
 
   switch (result.status) {
     case "created":
-      line("sys", `created the encrypted group for this channel (epoch ${result.epoch})`);
+      cryptoStatus(`encrypted: created this channel's group (epoch ${result.epoch})`);
       return true;
     case "joined":
-      line("sys", `joined the encrypted group (epoch ${result.epoch})`);
+      cryptoStatus(`encrypted: joined the group (epoch ${result.epoch})`);
       return true;
     case "ready":
-      line("sys", `encrypted channel ready (epoch ${result.epoch})`);
+      cryptoStatus(`encrypted: ready (epoch ${result.epoch})`);
       return true;
     case "awaiting_invite":
-      line("sys", esc(result.detail || "waiting to be added to this channel"));
+      cryptoStatus(result.detail || "waiting to be added to this channel");
       return false;
     default:
-      line("err", esc(result.detail || "could not open the encrypted group"));
+      cryptoStatus(result.detail || "could not open the encrypted group");
       return false;
   }
 }
@@ -1195,6 +1229,7 @@ async function connect() {
   };
 
   socket.onclose = () => {
+    awaitingEcho.length = 0;
     $("status").textContent = "disconnected";
     $("connect").disabled = false;
     $("disconnect").disabled = true;
@@ -1286,6 +1321,7 @@ async function send() {
       currentChannel,
       new TextEncoder().encode(body),
     );
+    awaitingEcho.push(body);
     body = b64encode(ciphertext);
   }
 
