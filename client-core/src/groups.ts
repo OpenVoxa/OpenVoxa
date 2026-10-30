@@ -41,6 +41,13 @@ interface ServerGroupState {
   reason?: string;
 }
 
+/** Outcome of addMembers: who got in and who had no device to add. */
+export interface AddResult {
+  epoch: number;
+  added: string[];
+  skipped: string[];
+}
+
 interface PendingWelcome {
   id: number;
   channel_id: string;
@@ -275,27 +282,44 @@ export class Groups {
    * leaf, which is what lets someone read a channel on a laptop and a
    * phone without either holding the other's keys.
    */
-  async addMembers(channelId: string, userIds: string[]): Promise<number> {
+  async addMembers(channelId: string, userIds: string[]): Promise<AddResult> {
     if (!this.#states.has(channelId)) {
       throw new Error(`groups: not a member of ${channelId}`);
     }
 
+    // An account that has never signed in on an MLS-capable client has
+    // no device and therefore nothing to add. That is normal, not an
+    // error: skip it and report it, rather than letting one idle account
+    // block everyone else from being added.
     const claimed: ClaimedPackage[] = [];
+    const added: string[] = [];
+    const skipped: string[] = [];
     for (const userId of userIds) {
-      const packages = (await this.#call(
-        `/api/v1/users/${userId}/key-packages/claim`,
-        { method: "POST" },
-      )) as ClaimedPackage[];
-      claimed.push(...packages);
+      try {
+        const packages = (await this.#call(
+          `/api/v1/users/${userId}/key-packages/claim`,
+          { method: "POST" },
+        )) as ClaimedPackage[];
+        if (packages.length === 0) {
+          skipped.push(userId);
+          continue;
+        }
+        claimed.push(...packages);
+        added.push(userId);
+      } catch (err) {
+        if (!String(err).includes("no devices registered")) throw err;
+        skipped.push(userId);
+      }
     }
 
     if (claimed.length === 0) {
-      throw new Error("groups: no key packages available for those users");
+      throw new Error("groups: none of those accounts have a device to add");
     }
 
     const keyPackages: WireMessage[] = claimed.map((c) => fromBase64(c.package));
 
-    return this.#commitWithRetry(channelId, keyPackages, claimed);
+    const epoch = await this.#commitWithRetry(channelId, keyPackages, claimed);
+    return { epoch, added, skipped };
   }
 
   /**
