@@ -188,6 +188,86 @@ whatever it cached until it reconnects, and nothing prevents a screenshot.
 Deletion is enforced server-side and propagated live, which is the part
 that can be enforced.
 
+## Encryption
+
+Decided before any of it was built, because each of these is expensive to
+change later.
+
+**ts-mls now, OpenMLS possibly later, behind an interface.** OpenMLS is
+the reference implementation and more heavily scrutinised, but there is no
+published JavaScript or WebAssembly build of it. Using it means authoring
+a Rust crate that wraps it with wasm-bindgen, adding a Rust toolchain to
+the build, and solving state persistence across browser restarts. That
+wrapper would itself be unreviewed security-sensitive code written by
+someone new to Rust, so "use the audited library" buys less than it
+sounds like.
+
+ts-mls is pure TypeScript and installs with npm. It is younger and
+self-describes as containing possible undiscovered vulnerabilities. The
+protocol work - identity, key packages, groups, commit ordering, encrypted
+messages - is the same either way and is weeks of effort that has nothing
+to do with which library sits underneath. So: build against an
+`MlsProvider` interface, implement it with ts-mls, and treat the OpenMLS
+wrapper as a possible hardening pass once there is a working system and
+tests to swap behind.
+
+**Ciphersuite 1, `MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519`.**
+Mandatory to implement in RFC 9420, so any conforming implementation can
+interoperate - which is the point, given the provider may be replaced. It
+also has the smallest dependency footprint ts-mls offers. Post-quantum
+suites are available and deliberately unused: they add packages and
+address a threat that is not this project's first problem.
+
+**A device is the cryptographic identity, not an account.** Each device
+holds its own signature key and is its own leaf in every group. That is
+what allows reading a channel on a desktop and a phone without either
+holding the other's private keys. Only single-device is implemented, but
+the schema is multi-device from the start: retrofitting it onto a
+user-keyed design would mean rebuilding every group.
+
+**Key packages are single use, with a reusable last resort.** You are
+added to groups while offline, so devices publish key packages in advance
+and the server hands them out one at a time. Handing the same one out
+twice would mean two groups sharing an initial secret, which is exactly
+the forward secrecy failure MLS exists to prevent. Claiming is an
+`UPDATE ... FOR UPDATE SKIP LOCKED` so simultaneous adds take different
+packages.
+
+When a device's pool runs dry there is a last-resort package, which RFC
+9420 permits and is explicit about: it is reusable and therefore weakens
+forward secrecy for joins that use it. The claim response reports when one
+was used so a client can surface the weaker guarantee rather than hide it.
+It is a fallback, not the normal path, and clients replenish before
+reaching it.
+
+**New members see no history.** Forward secrecy and new-member scrollback
+are mutually exclusive: old keys are destroyed as the group ratchets
+forward, and handing them to a newcomer means anyone added later, or any
+member who is compromised, gets the archive too.
+
+Rather than weaken the guarantee or build a re-encryption mechanism, the
+existing per-channel encryption toggle answers this. An encrypted channel
+is private from the operator and shows nothing from before you joined; a
+plaintext channel has full searchable history for everyone. Both states
+are already displayed in the channel label beside the retention policy,
+so users know which kind of space they are in before they post. Bounded
+retention softens the edge considerably: in a channel that keeps thirty
+days, "nothing before you joined" is a small loss.
+
+**The server is a delivery service, never a participant.** It stores and
+routes key packages, handshake blobs and ciphertext, and parses none of
+it. Its one substantive job is ordering commits: MLS groups advance in
+epochs, and two clients committing against the same epoch is a conflict,
+so the server picks a winner by refusing any commit whose epoch is not
+current.
+
+ts-mls frames commits as private messages, which means the server cannot
+read the epoch out of them. The client therefore sends `{epoch, opaque
+blob}` and the server does a compare-and-swap on the epoch. The epoch is
+a hint for ordering, never something trusted: a client that lies about it
+has its commit accepted by the server and then rejected cryptographically
+by every other member, which is a self-correcting failure.
+
 ## Implementation notes
 
 Things that cost real time to discover and will be invisible when the
@@ -394,6 +474,39 @@ request and no error anywhere obvious. GIF and moderation controls are now
 attached through a helper that warns rather than throws. This disappears
 with `client-web`, where components fail independently.
 
+**Four ts-mls API details were observed rather than documented.** Each
+was written against the README first and was wrong, which cost several
+round trips. Recorded so the next person does not repeat it:
+
+- `createCommit` returns `commit` as a COMPLETE MLSMessage carrying its
+  own version and wireformat, while `welcome` comes back as a bare
+  Welcome that still needs wrapping in `encodeMlsMessage`. The asymmetry
+  produces confusing errors deep inside the encoder.
+- Commits are framed as private messages by default.
+- The exporter is `mlsExporter(exporterSecret, label, context, length,
+  ciphersuite)`. It takes the key schedule's exporter secret, not the
+  group state, and the ciphersuite's `kdf` object has only `extract`,
+  `expand` and `size` - no `expandWithLabel`.
+- `@noble/curves` and `@noble/hashes` are OPTIONAL peer dependencies, so
+  npm skips them, but esbuild follows every import reachable from the
+  entry point and needs them present regardless of which ciphersuite is
+  used. Optional peer dependencies and bundlers do not mix.
+
+**One parse-time throw disables every handler below it.** The debug
+client is a single script with no module boundaries. A reference to an
+element that did not exist threw while handlers were being attached, and
+everything after that line - including the login button - was silently
+never wired up. The symptom was a button that did nothing, with no
+network request and no obvious error. Controls added since are attached
+through a helper that warns rather than throws. This disappears with
+`client-web`, where components fail independently.
+
+**The Docker build context is the repository root.** The server image
+bundles client-core alongside the Go binary, so the Node stage and the Go
+stage both need to be in context. The bundle must be copied in BEFORE
+`go build`: the embed directive reads the directory at compile time, so a
+bundle copied afterwards silently produces a server with no client.
+
 **`go mod tidy` silently raises the `go` directive.** Running it with a
 newer local toolchain than the Dockerfile's base image rewrites `go.mod`
 and the container build then fails with a confusing version error. Keep
@@ -409,9 +522,16 @@ the Dockerfile's Go version at or above the directive.
 6. ✅ Retention enforcement, account deletion, live deletion events
 7. ✅ Rich text — markdown, link previews, attachments, GIF picker
 8. ✅ Moderation tooling — message removal, verified reports, bans
-9. ⬜ MLS for text — the largest single piece of work
+9. 🔶 MLS for text — the largest single piece of work
+   - ✅ `client-core` package, build pipeline, MLS provider interface
+   - ✅ Browser self-test: group create, add, join, encrypt, decrypt,
+     matching exported secrets
+   - ✅ Server-side device identity and key package storage
+   - ⬜ Client identity: real keys, private storage, device registration
+   - ⬜ Groups per channel: creation, welcome distribution, commit ordering
+   - ⬜ Encrypted application messages
 10. ⬜ Media encryption keyed off the MLS exporter secret
-11. ⬜ The real client: `client-core`, `client-web`, `client-desktop`
+11. ⬜ The real client: `client-web`, `client-desktop`
 
 ## Open items
 
@@ -432,6 +552,15 @@ the Dockerfile's Go version at or above the directive.
       interface does not exist.
 - [ ] Reports in encrypted channels will need MLS signature verification
       before `verified` can be anything but NULL there.
+- [ ] MLS group state is not yet persisted. A browser restart currently
+      loses it; it needs encrypted storage in IndexedDB, keyed by
+      something derived from the user's password or recovery key.
+- [ ] Recovery keys do not exist. Without one, a forgotten password means
+      permanently unreadable history, because the server holds only
+      ciphertext. The key has to be generated at signup and shown once.
+- [ ] Removing a revoked device from the groups it belongs to is
+      client-side work. The server cannot do it, because it cannot
+      produce a commit.
 - [ ] Attachment bytes are not yet encrypted. Content addressing
       deduplicates across users, which reveals that someone else uploaded
       an identical file. Once channels are encrypted, clients will encrypt

@@ -106,7 +106,9 @@ We did not write our own cryptography, which is the single best decision in the 
 | Rich text: markdown, previews, attachments | ✅ Done |
 | GIF picker | ✅ Done |
 | Moderation: removal, reports, bans | ✅ Done |
-| End-to-end encrypted text (MLS) | ⬜ Not started |
+| `client-core` package and MLS toolchain | ✅ Done |
+| Device identity and key packages | ✅ Done |
+| End-to-end encrypted text (MLS) | 🔶 In progress |
 | End-to-end encrypted media | ⬜ Not started |
 | A user interface a human would enjoy | ⬜ Not started |
 
@@ -125,7 +127,7 @@ The encryption rows are the ones that matter. Everything above them is foundatio
 | Attachments | Content-addressed blobs on disk; local or network storage |
 | GIF search | Giphy or Tenor, proxied server-side; off by default |
 | Reverse proxy | [Caddy](https://caddyserver.com), optional |
-| Group encryption | MLS (RFC 9420) |
+| Group encryption | MLS (RFC 9420) via ts-mls, behind a swappable interface |
 
 The server never sits in the media path. It mints short-lived, room-scoped tokens and LiveKit carries the audio directly. See [`docs/decisions.md`](docs/decisions.md) for the reasoning behind every choice, including the tradeoffs taken on purpose.
 
