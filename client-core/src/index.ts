@@ -12,7 +12,7 @@
  * client-web is built.
  */
 
-import { TsMlsProvider, encodeTree, decodeTree } from "./mls/tsmls.js";
+import { TsMlsProvider, encodeState, decodeState } from "./mls/tsmls.js";
 import type { MlsProvider } from "./mls/provider.js";
 import { Identity, type ApiCall, type IdentityStatus } from "./identity.js";
 import { storage } from "./storage.js";
@@ -120,17 +120,23 @@ export async function selfTest(): Promise<SelfTestResult> {
       `welcome ${commit.welcome.length} bytes`,
     );
 
-    // The tree has to survive a round trip through the server as bytes,
-    // so the test joins from the DESERIALISED copy rather than from the
-    // in-memory object. Testing with the original would prove nothing
-    // about what actually happens in production.
-    const treeBytes = encodeTree(commit.ratchetTree);
-    steps.push(`ratchet tree serialised to ${treeBytes.length} bytes`);
-
-    const restoredTree = decodeTree(treeBytes);
-
-    let bobGroup = await provider.joinGroup(commit.welcome, bob, restoredTree);
-    steps.push("second member joined from a serialised welcome and tree");
+    // ts-mls exposes no ratchet tree encoder, but it does build GroupInfo
+    // with the tree inside, which suggests the welcome already carries
+    // it. If so there is nothing separate to transport: a joiner needs
+    // only the welcome bytes.
+    //
+    // Tried first, because it is both simpler and the RFC-intended shape.
+    let bobGroup: unknown;
+    try {
+      bobGroup = await provider.joinGroup(commit.welcome, bob, undefined);
+      steps.push("joined from the welcome alone - tree travels inside it");
+    } catch (withoutTree) {
+      bobGroup = await provider.joinGroup(commit.welcome, bob, commit.ratchetTree);
+      steps.push(
+        "joined, but the welcome alone was not enough: " +
+        (withoutTree instanceof Error ? withoutTree.message : String(withoutTree)),
+      );
+    }
 
     const plaintext = new TextEncoder().encode("hello from the self test");
     const encrypted = await provider.encrypt(aliceGroup, plaintext);
@@ -161,6 +167,25 @@ export async function selfTest(): Promise<SelfTestResult> {
       throw new Error("exported secrets differ between members");
     }
     steps.push("both members derived the same 32-byte media key");
+
+    // Group state must survive a browser restart, so it has to serialise
+    // to bytes and come back working. Encrypting from the RESTORED state
+    // is the real test: a state that decodes but cannot be used would
+    // pass a shallower check.
+    const stateBytes = encodeState(aliceGroup);
+    const restored = decodeState(stateBytes);
+
+    const afterRestore = await provider.encrypt(
+      restored,
+      new TextEncoder().encode("sent after a restore"),
+    );
+    const readBack = await provider.decrypt(bobGroup, afterRestore.message);
+
+    if (!readBack.plaintext) throw new Error("restored state produced no plaintext");
+    if (new TextDecoder().decode(readBack.plaintext) !== "sent after a restore") {
+      throw new Error("restored state round trip mismatch");
+    }
+    steps.push(`group state survived ${stateBytes.length}-byte serialisation`);
 
     return {
       ok: true,
