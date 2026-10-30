@@ -15,8 +15,9 @@
 import {
   TsMlsProvider,
   encodeState,
-  decodeState,
-  inspectStateRoundTrip,
+  restoreState,
+  createGroupWithTree,
+  groupExtensionShape,
 } from "./mls/tsmls.js";
 import type { MlsProvider } from "./mls/provider.js";
 import { Identity, type ApiCall, type IdentityStatus } from "./identity.js";
@@ -100,7 +101,7 @@ export interface SelfTestResult {
 export async function selfTest(): Promise<SelfTestResult> {
   const started = performance.now();
   const steps: string[] = [];
-  const provider = createMlsProvider();
+  const provider = new TsMlsProvider();
 
   try {
     await provider.init();
@@ -110,8 +111,16 @@ export async function selfTest(): Promise<SelfTestResult> {
     const bob = await provider.generateKeyPackage("bob-device");
     steps.push("generated two key packages");
 
-    let aliceGroup = await provider.createGroup("selftest", alice);
-    steps.push("created a group");
+    // Created with the ratchet_tree extension so welcomes are
+    // self-contained; see createGroupWithTree.
+    const impl = (provider as TsMlsProvider).impl;
+    let aliceGroup: unknown = await createGroupWithTree(
+      new TextEncoder().encode("selftest"),
+      alice.publicPackage,
+      alice.privatePackage,
+      impl,
+    );
+    steps.push(`created a group (tree extension: ${groupExtensionShape})`);
 
     const bobPackage = provider.encodeKeyPackage(bob);
     steps.push(`encoded a key package (${bobPackage.length} bytes)`);
@@ -173,21 +182,10 @@ export async function selfTest(): Promise<SelfTestResult> {
     }
     steps.push("both members derived the same 32-byte media key");
 
-    // Group state must survive a browser restart. Encoding is lossy, so
-    // first report exactly what goes missing, then try the round trip
-    // with the lost pieces carried over.
-    steps.push(`state round trip: ${inspectStateRoundTrip(aliceGroup)}`);
-
+    // Group state must survive a browser restart, with its runtime
+    // configuration rebuilt rather than carried across.
     const stateBytes = encodeState(aliceGroup);
-    const decoded = decodeState(stateBytes) as Record<string, unknown>;
-
-    // Reattach anything the encoder dropped. Configuration is runtime
-    // state rather than protocol data, so losing it in the bytes is
-    // reasonable; silently shipping a state that cannot encrypt is not.
-    const restored: Record<string, unknown> = { ...decoded };
-    for (const [key, value] of Object.entries(aliceGroup as Record<string, unknown>)) {
-      if (!(key in restored)) restored[key] = value;
-    }
+    const restored = restoreState(stateBytes);
 
     const afterRestore = await provider.encrypt(
       restored,

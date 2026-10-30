@@ -102,30 +102,86 @@ export function decodeState(bytes: Uint8Array): unknown {
 }
 
 /**
- * What the state round trip loses, and what ts-mls offers to restore it.
+ * Rebuild the runtime configuration that encoding drops.
  *
- * Encoding is clearly lossy: the decoded state is missing at least
- * paddingConfig, which createApplicationMessage needs. Some of the state
- * is runtime configuration rather than protocol data, so it is probably
- * meant to be reattached after decoding rather than carried in the bytes.
+ * encodeGroupState loses exactly one field, `clientConfig`, and for a
+ * good reason: it holds an authentication service and other callables,
+ * which cannot be serialised at all.
  *
- * Temporary.
+ * So it is reconstructed from the library defaults rather than carried
+ * across from the old object. That matters beyond tidiness - a config
+ * captured before a restart could hold stale callables closed over a
+ * previous session, and restoring those would be worse than rebuilding.
  */
-export function inspectStateRoundTrip(original: unknown): string {
-  const bytes = encodeState(original);
+function defaultClientConfig(): Record<string, unknown> {
+  const lib = tsMls as Record<string, unknown>;
+  return {
+    paddingConfig: lib["defaultPaddingConfig"],
+    keyRetentionConfig: lib["defaultKeyRetentionConfig"],
+    lifetimeConfig: lib["defaultLifetimeConfig"],
+    authenticationService: lib["defaultAuthenticationService"],
+    keyPackageEqualityConfig: lib["defaultKeyPackageEqualityConfig"],
+  };
+}
+
+/** Decode stored state and make it usable again. */
+export function restoreState(bytes: Uint8Array): unknown {
   const decoded = decodeState(bytes) as Record<string, unknown>;
-  const before = original as Record<string, unknown>;
+  return { ...decoded, clientConfig: defaultClientConfig() };
+}
 
-  const missing = Object.keys(before).filter((k) => !(k in decoded));
-  const added = Object.keys(decoded).filter((k) => !(k in before));
+/**
+ * Try to create a group whose welcomes carry the ratchet tree.
+ *
+ * Without the ratchet_tree extension a joiner needs the tree delivered
+ * separately, and ts-mls exposes no encoder for one - so it would have to
+ * travel as part of something else or not at all. With the extension the
+ * welcome is self-contained, which is both the RFC-intended shape and far
+ * simpler for the server, which then stores one blob instead of two.
+ *
+ * The extension's representation is undocumented, so this tries the
+ * plausible shapes and reports which worked.
+ */
+export let groupExtensionShape = "untried";
 
-  const helpers = Object.keys(tsMls)
-    .filter((k) => /padding|config|default|extension/i.test(k))
-    .join(", ");
+export async function createGroupWithTree(
+  groupId: Uint8Array,
+  publicPackage: unknown,
+  privatePackage: unknown,
+  impl: unknown,
+): Promise<unknown> {
+  const shapes: Array<[string, unknown[]]> = [
+    ["object-empty-data", [{ extensionType: "ratchet_tree", extensionData: new Uint8Array() }]],
+    ["string", ["ratchet_tree"]],
+    ["number-2", [{ extensionType: 2, extensionData: new Uint8Array() }]],
+  ];
 
-  return `${bytes.length} bytes; lost [${missing.join(", ") || "nothing"}]; ` +
-    `gained [${added.join(", ") || "nothing"}]; ` +
-    `ts-mls offers [${helpers || "none"}]`;
+  const failures: string[] = [];
+
+  for (const [name, extensions] of shapes) {
+    try {
+      const state = await createGroup(
+        groupId,
+        publicPackage as never,
+        privatePackage as never,
+        extensions as never,
+        impl as never,
+      );
+      groupExtensionShape = name;
+      return state;
+    } catch (err) {
+      failures.push(`${name}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  groupExtensionShape = `none worked -> ${failures.join(" ;; ")}`;
+  return createGroup(
+    groupId,
+    publicPackage as never,
+    privatePackage as never,
+    [],
+    impl as never,
+  );
 }
 
 export class TsMlsProvider implements MlsProvider {
@@ -136,6 +192,11 @@ export class TsMlsProvider implements MlsProvider {
   async init(): Promise<void> {
     if (this.#impl) return;
     this.#impl = await getCiphersuiteImpl(getCiphersuiteFromName(CIPHERSUITE));
+  }
+
+  /** The prepared ciphersuite. Null until init() has run. */
+  get impl(): Impl | null {
+    return this.#impl;
   }
 
   #require(): Impl {
