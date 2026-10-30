@@ -38,7 +38,7 @@ export { Identity } from "./identity.js";
 export { Groups } from "./groups.js";
 export { storage } from "./storage.js";
 export type { ApiCall, IdentityStatus } from "./identity.js";
-export type { GroupStatus, OpenResult } from "./groups.js";
+export type { AddResult, GroupStatus, OpenResult } from "./groups.js";
 export type { StoredDevice, StoredKeyPair } from "./storage.js";
 
 export const VERSION = "0.1.0";
