@@ -7,8 +7,13 @@ import {
   createCommit,
   createGroup,
   decodeMlsMessage,
+  defaultAuthenticationService,
   defaultCapabilities,
+  defaultKeyPackageEqualityConfig,
+  defaultKeyRetentionConfig,
   defaultLifetime,
+  defaultLifetimeConfig,
+  defaultPaddingConfig,
   emptyPskIndex,
   encodeMlsMessage,
   generateKeyPackage,
@@ -17,6 +22,7 @@ import {
   joinGroup,
   processPrivateMessage,
   zeroOutUint8Array,
+  type ClientConfig,
   type Credential,
   type Proposal,
 } from "ts-mls";
@@ -113,14 +119,18 @@ export function decodeState(bytes: Uint8Array): unknown {
  * captured before a restart could hold stale callables closed over a
  * previous session, and restoring those would be worse than rebuilding.
  */
-function defaultClientConfig(): Record<string, unknown> {
-  const lib = tsMls as Record<string, unknown>;
+function defaultClientConfig(): ClientConfig {
+  // Typed against ts-mls's own ClientConfig so a wrong key name is a
+  // compile error. It used to be an untyped record, which let
+  // `authenticationService` stand in for the real key `authService`:
+  // every group loaded from storage then had no auth service, and the
+  // first commit failed reading `validateCredential` off undefined.
   return {
-    paddingConfig: lib["defaultPaddingConfig"],
-    keyRetentionConfig: lib["defaultKeyRetentionConfig"],
-    lifetimeConfig: lib["defaultLifetimeConfig"],
-    authenticationService: lib["defaultAuthenticationService"],
-    keyPackageEqualityConfig: lib["defaultKeyPackageEqualityConfig"],
+    paddingConfig: defaultPaddingConfig,
+    keyRetentionConfig: defaultKeyRetentionConfig,
+    lifetimeConfig: defaultLifetimeConfig,
+    authService: defaultAuthenticationService,
+    keyPackageEqualityConfig: defaultKeyPackageEqualityConfig,
   };
 }
 
