@@ -133,7 +133,9 @@ export async function selfTest(): Promise<SelfTestResult> {
     const treeBytes = encodeTree(commit.ratchetTree);
     const restoredTree = decodeTree(treeBytes);
 
-    const bobGroup = await provider.joinGroup(commit.welcome, bob, restoredTree);
+    // Reassigned below: every MLS operation returns new state rather
+    // than mutating, so the current value has to be carried forward.
+    let bobGroup = await provider.joinGroup(commit.welcome, bob, restoredTree);
     steps.push(`joined from a ${treeBytes.length}-byte serialised tree`);
 
     const plaintext = new TextEncoder().encode("hello from the self test");
