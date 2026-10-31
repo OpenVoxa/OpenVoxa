@@ -113,7 +113,7 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
 
 ## Current state (update every session)
 
-_Last updated: 2026-10-31, step 12 (permission groups) built; awaiting Docker test._
+_Last updated: 2026-10-31, step 12 (permission groups) complete and verified on Docker._
 
 - Build-order step 9 (MLS for text) is functionally working on Docker:
   messages in an encrypted channel are ciphertext in Postgres (only the
@@ -169,8 +169,8 @@ _Last updated: 2026-10-31, step 12 (permission groups) built; awaiting Docker te
      rejoins), banned users staying in calls (LiveKit RemoveParticipant +
      old media keys retired after 10 s). Cosmetic: a kicked client says
      "left voice", not "removed by the server".
-  3. Custom permission groups (step 12): BUILT 2026-10-31, not yet
-     verified on Docker. Migration 0012 converts roles to groups
+  3. Custom permission groups (step 12): DONE, verified on Docker
+     2026-10-31 (D1-D5). Migration 0012 converts roles to groups
      (Everyone, Member, Moderator, Administrator); switches decide what,
      rank decides whom; channels carry an allow-list (decisions.md
      "Permission groups"). API: `/groups`, `/users/{id}/groups/{group}`,
@@ -181,8 +181,8 @@ _Last updated: 2026-10-31, step 12 (permission groups) built; awaiting Docker te
      No settings UI yet (real client).
      Event socket (`/ws` without channel) added after D3 on Docker:
      server-wide events reach a client with no channel open.
-     Docker: D1, D2, D3 passed (D3 on `4a670de`, no reload needed). Next
-     D4 voice, then D5 rank.
+     Voice keys: retired slots must not move LiveKit's current key
+     index (`overwriteSlot` in chat.html, fixed `efc38c6`).
   4. Opt-in history sharing (Ryan wants it; see decisions.md Open items).
   5. Local storage encryption (blocked on recovery keys).
 - Other open items (revoked-device removal, recovery keys, etc.) live in

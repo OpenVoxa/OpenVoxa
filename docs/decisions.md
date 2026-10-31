@@ -1151,9 +1151,15 @@ skip those event types while it is up.
    - ✅ "Forget this device" revokes it on the server first. Before, the
      device stayed active and members kept re-adding a device nobody held
      keys for (found in the step 8 test; old ones revoked by hand)
-12. 🔶 Custom permission groups replacing the fixed roles. Built
-    2026-10-31 (migration 0012, `groups.go`, `perm`); checked against a
-    local Postgres and a headless browser, not yet on Docker
+12. ✅ Custom permission groups replacing the fixed roles (migration
+    0012, `groups.go`, `perm`). Verified on Docker 2026-10-31 (ryan,
+    staff, tester): upgrade kept every account's access; new group +
+    encrypted channel; removal and re-add while connected (one commit
+    each, no reload, after adding the event socket); losing access mid
+    call removed staff via the LiveKit sweep; a ban-only group at rank 12
+    could act on a Member but not on staff, and could not hand out
+    groups. Found on the way: retiring old voice keys switched every
+    device onto junk keys 10 s after a key change (fixed `efc38c6`)
 13. ⬜ The real client: `client-web`, `client-desktop`
 
 ## Open items
