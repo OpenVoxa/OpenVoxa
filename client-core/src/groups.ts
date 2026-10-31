@@ -695,7 +695,12 @@ export class Groups {
     throw new Error("groups: commit failed");
   }
 
+  /**
+   * Only ever asked about a refused POST to the commit endpoint, where a
+   * 409 means exactly one thing: someone else committed first.
+   */
   #isEpochConflict(err: unknown): boolean {
+    if ((err as { status?: unknown } | null)?.status === 409) return true;
     const text = String(err);
     return text.includes("the group has moved on") || text.includes("409");
   }

@@ -23,6 +23,11 @@ const TARGET_POOL = 25;
 /** Replenish when the server reports fewer than this remaining. */
 const LOW_WATER = 10;
 
+/**
+ * Performs an API request and returns the parsed JSON body. On a non-2xx
+ * response it must throw an Error carrying the HTTP status as `status`
+ * and the server's `error` (or `reason`) text as its message.
+ */
 export interface ApiCall {
   (path: string, init?: RequestInit): Promise<unknown>;
 }
