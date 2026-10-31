@@ -195,6 +195,8 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 		withUUIDPath(api.requireAuth(api.listHandshakes)))
 	mux.HandleFunc("GET /api/v1/channels/{id}/mls/allowed-devices",
 		withUUIDPath(api.requireAuth(api.listAllowedDevices)))
+	mux.HandleFunc("GET /api/v1/channels/{id}/mls/device-names",
+		withUUIDPath(api.requireAuth(api.listDeviceNames)))
 
 	mux.HandleFunc("GET /api/v1/mls/welcomes", api.requireAuth(api.listWelcomes))
 	mux.HandleFunc("POST /api/v1/mls/welcomes/{id}/ack",
