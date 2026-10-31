@@ -76,7 +76,7 @@ over.
 | Markdown | Hand-rolled minimal renderer rather than a library: bold, italic, strikethrough, inline and fenced code, blockquote, autolinks. Small enough to audit, and avoids trusting a dependency with untrusted input. |
 | TLS | Required in practice. Caddy provided but optional; three deployment paths documented. |
 | Permissions | Admin-defined groups, each with its own permissions, assigned to channels (Discord roles / TeamSpeak server groups). Replaces the fixed four roles later; the fixed roles stay until then. Decided by Ryan, 2026-10-30. |
-| Encrypted channel membership | Follows channel access automatically. Nobody adds people to encryption groups by hand; every device that joins is announced to the channel. Decided by Ryan, 2026-10-30; see Encryption. |
+| Encrypted channel membership | Follows channel access automatically. Nobody adds people to encryption groups by hand; every join is announced to the channel: per person by default, per device as a client option (Ryan, 2026-10-31). Decided by Ryan, 2026-10-30; see Encryption. |
 
 ### How reporting works under encryption
 
@@ -392,6 +392,30 @@ change its answer without touching the encryption code.
 Every device joining or leaving is shown in the channel ("staff added a
 device", "ryan's laptop was removed"). That is the mitigation for the
 tension below and is part of the feature, not polish.
+
+**Notices are per person by default, per device on request.** Decided by
+Ryan, 2026-10-31. Most users care who is in a channel, not which of
+their devices is. So chat shows, by default:
+
+- "staff joined" when an account's first device enters the group, and
+  "staff left" when its last device leaves;
+- "ryan joined on a new device" when an account already present gains
+  another one. Not silent, because a device slipped in under an existing
+  account is exactly what the announcement exists to expose;
+- nothing when one of several devices leaves, which lets no one read
+  more than before.
+
+A client setting, off by default, shows the full per-device lines
+(account, label, device ID, who committed, epoch). Both views come from
+the user's own group state, so neither can be faked by the server.
+
+Role-specific detail lives outside the chat, in the real client: a
+moderator pane (reports, tickets, bans, deletions) and an admin pane
+(device history, membership and encryption log, diagnostics, roles and
+channels). The admin pane shows the server's records, useful for running
+the server but not a safeguard against it; the per-device view above is
+that safeguard and stays available to every user. The debug page keeps
+printing everything, as a test tool.
 
 **A group nobody permitted can commit to is replaced, not rescued.**
 Decided by Ryan, 2026-10-31. If every remaining member loses access, no
