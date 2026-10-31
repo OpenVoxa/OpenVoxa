@@ -1,7 +1,7 @@
 // Copyright (C) 2026 The OpenVoxa Authors
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import type { MlsProvider, WireMessage } from "./mls/provider.js";
+import type { CommitResult, MemberLeaf, MlsProvider, WireMessage } from "./mls/provider.js";
 import { encodeState, restoreState, encodeTree, decodeTree, epochOf } from "./mls/tsmls.js";
 import { storage } from "./storage.js";
 import type { ApiCall } from "./identity.js";
@@ -68,6 +68,50 @@ export interface AddResult {
   skipped: string[];
 }
 
+/**
+ * Outcome of reconcile, by device ID.
+ *
+ * removed: leaves taken out because their device lost access (or was a
+ *   stale duplicate of this device).
+ * added: devices that joined in this reconcile's add commit.
+ * skipped: devices that belong in the group but could not be added,
+ *   usually because they have no key package left to claim.
+ */
+export interface ReconcileResult {
+  epoch: number;
+  removed: string[];
+  added: string[];
+  skipped: string[];
+}
+
+/**
+ * This device is no longer in the group. Its local state has been
+ * discarded; opening the channel again joins afresh if a welcome is
+ * waiting.
+ */
+export class RemovedFromGroup extends Error {
+  constructor(readonly channelId: string) {
+    super("groups: this device was removed from the channel's encryption group");
+    this.name = "RemovedFromGroup";
+  }
+}
+
+/** One entry of GET /channels/{id}/mls/allowed-devices. */
+interface AllowedDevice {
+  device_id: string;
+  user_id: string;
+  username: string;
+  label: string;
+}
+
+/**
+ * What a commit builder hands back: either a commit to submit, or
+ * nothing to do on this state (someone else's commit already did it).
+ */
+type Built<T> =
+  | { commit: CommitResult; welcomeTo: string[]; done: T }
+  | { nothing: T };
+
 interface PendingWelcome {
   id: number;
   channel_id: string;
@@ -127,6 +171,9 @@ export class Groups {
   /** Live group state per channel, mirrored to IndexedDB after every change. */
   readonly #states = new Map<string, unknown>();
 
+  /** Tail of each channel's operation queue; see #serial. */
+  readonly #queues = new Map<string, Promise<unknown>>();
+
   constructor(mls: MlsProvider, call: ApiCall, deviceId: string) {
     this.#mls = mls;
     this.#call = call;
@@ -142,13 +189,24 @@ export class Groups {
    * error but a state the interface has to show.
    */
   async open(channelId: string): Promise<OpenResult> {
+    return this.#serial(channelId, () => this.#open(channelId));
+  }
+
+  async #open(channelId: string): Promise<OpenResult> {
     const stored = (await storage.getGroup(channelId)) as Uint8Array | undefined;
 
     if (stored) {
       const state = restoreState(stored);
       this.#states.set(channelId, state);
-      const epoch = await this.catchUp(channelId);
-      return { status: "ready", epoch };
+      try {
+        const epoch = await this.#catchUp(channelId);
+        return { status: "ready", epoch };
+      } catch (err) {
+        // Removed while we were away. The stale state is already gone;
+        // carry on as a newcomer, which picks up a welcome if someone
+        // has added this device back.
+        if (!(err instanceof RemovedFromGroup)) throw err;
+      }
     }
 
     const remote = (await this.#call(
@@ -221,7 +279,7 @@ export class Groups {
       // is the real one; ours is a local object with no members, so
       // discard it and come back as a joiner.
       if (String(err).includes("already has a group")) {
-        return this.open(channelId);
+        return this.#open(channelId);
       }
       throw err;
     }
@@ -300,6 +358,10 @@ export class Groups {
    * epoch, so they are not returned.
    */
   async catchUp(channelId: string): Promise<number> {
+    return this.#serial(channelId, () => this.#catchUp(channelId));
+  }
+
+  async #catchUp(channelId: string): Promise<number> {
     let state = this.#states.get(channelId);
     if (!state) throw new Error(`groups: not a member of ${channelId}`);
 
@@ -326,6 +388,14 @@ export class Groups {
         const result = await this.#mls.decrypt(state, fromBase64(entry.blob));
         state = result.state;
         applied++;
+
+        // Checked after every commit, not once at the end: a later
+        // commit cannot be processed by a device that is no longer in
+        // the group, and would fail with a confusing error instead.
+        if (!(await this.#mls.stillMember(state))) {
+          await this.#forget(channelId);
+          throw new RemovedFromGroup(channelId);
+        }
       }
 
       await this.#persist(channelId, state);
@@ -347,20 +417,133 @@ export class Groups {
    * phone without either holding the other's keys.
    */
   async addMembers(channelId: string, userIds: string[]): Promise<AddResult> {
-    const state = this.#states.get(channelId);
-    if (!state) {
-      throw new Error(`groups: not a member of ${channelId}`);
-    }
+    return this.#serial(channelId, async () => {
+      const state = this.#requireState(channelId);
+      const { pending, alreadyMembers, skipped } = await this.#claim(
+        channelId,
+        userIds,
+        this.#mls.memberIdentities(state),
+      );
 
-    // Devices already in the group are excluded before claiming, not
-    // after. Claiming consumes a single-use key package, so filtering
-    // afterwards would still burn one per device on every click.
-    const members = this.#mls.memberIdentities(state);
+      if (pending.length === 0) {
+        if (alreadyMembers.length > 0) {
+          // Nothing new to add. No commit, so the epoch does not move.
+          return { epoch: epochOf(state), added: [], alreadyMembers, skipped };
+        }
+        throw new Error("groups: none of those accounts have a device to add");
+      }
 
-    // An account that has never signed in on an MLS-capable client has
-    // no device and therefore nothing to add. That is normal, not an
-    // error: skip it and report it, rather than letting one idle account
-    // block everyone else from being added.
+      const { epoch, done: committed } = await this.#addPending(channelId, pending);
+
+      // Someone else's commit may have added some of these devices while
+      // we were rebasing. Report those users as already members unless
+      // another of their devices went in with our commit.
+      const added = [...new Set(committed.map((p) => p.user_id))];
+      for (const userId of new Set(pending.map((p) => p.user_id))) {
+        if (!added.includes(userId)) alreadyMembers.push(userId);
+      }
+      return { epoch, added, alreadyMembers, skipped };
+    });
+  }
+
+  /**
+   * Make the group's membership match who may view the channel.
+   *
+   * The server lists every device that belongs (each non-revoked device
+   * of each account that may view the channel); this device compares
+   * that with its own ratchet tree, which the server cannot read, and
+   * commits the difference.
+   *
+   * Two commits, removals first. Combining them lets an added device land
+   * in the leaf a removed device just vacated, and ts-mls then leaves the
+   * removed device believing it is still in (decisions.md, "Removes and
+   * adds go in separate commits"). Each commit goes through the usual
+   * compare-and-swap, so two members reconciling at once cannot fork the
+   * group: the loser rebases and usually finds nothing left to do.
+   *
+   * Duplicate leaves (one device in twice, after rejoining from a
+   * GroupInfo) are only cleaned up by the device itself. Any other member
+   * cannot tell which of the two leaves is the live one, and removing the
+   * wrong one would kick the device out.
+   */
+  async reconcile(channelId: string): Promise<ReconcileResult> {
+    return this.#serial(channelId, async () => {
+      this.#requireState(channelId);
+
+      // Build on the newest state, or the first attempt is a wasted
+      // commit and a guaranteed conflict.
+      await this.#catchUp(channelId);
+
+      const allowed = (await this.#call(
+        `/api/v1/channels/${channelId}/mls/allowed-devices`,
+      )) as AllowedDevice[];
+      const allowedIds = new Set(allowed.map((d) => d.device_id));
+
+      // 1. Removals. The leaves are looked up again on every attempt,
+      // from the state the commit is built on: after a rebase the same
+      // index can name a different device.
+      const removal = await this.#commitWithRetry<MemberLeaf[]>(channelId, async (state) => {
+        const own = this.#mls.ownLeafIndex(state);
+        const leaves = this.#mls.memberLeaves(state).filter(
+          (l) =>
+            l.leafIndex !== own &&
+            (!allowedIds.has(l.identity) || l.identity === this.#deviceId),
+        );
+        if (leaves.length === 0) return { nothing: [] };
+        const commit = await this.#mls.removeMembers(
+          state,
+          leaves.map((l) => l.leafIndex),
+        );
+        return { commit, welcomeTo: [], done: leaves };
+      });
+
+      // 2. Additions, against the post-removal state.
+      const members = this.#mls.memberIdentities(this.#requireState(channelId));
+      const missing = allowed.filter((d) => !members.includes(d.device_id));
+
+      let epoch = removal.epoch;
+      let added: string[] = [];
+      if (missing.length > 0) {
+        const users = [...new Set(missing.map((d) => d.user_id))];
+        const { pending } = await this.#claim(channelId, users, members);
+        if (pending.length > 0) {
+          const addition = await this.#addPending(channelId, pending);
+          epoch = addition.epoch;
+          added = addition.done.map((p) => p.device_id);
+        }
+      }
+
+      // Anything still missing could not be claimed (no key package left)
+      // or went in via someone else's commit; report only the former.
+      const nowIn = new Set(this.#mls.memberIdentities(this.#requireState(channelId)));
+      const skipped = missing.map((d) => d.device_id).filter((id) => !nowIn.has(id));
+
+      return {
+        epoch,
+        removed: removal.done.map((l) => l.identity),
+        added,
+        skipped,
+      };
+    });
+  }
+
+  /**
+   * Claim one key package per device of each user, skipping devices
+   * already in the group.
+   *
+   * Devices already in the group are excluded before claiming, not
+   * after. Claiming consumes a single-use key package, so filtering
+   * afterwards would still burn one per device on every attempt.
+   *
+   * An account with no device, no access, or no key package left has
+   * nothing to add. That is normal, not an error: it is reported as
+   * skipped rather than letting one idle account block everyone else.
+   */
+  async #claim(
+    channelId: string,
+    userIds: string[],
+    members: string[],
+  ): Promise<{ pending: PendingAdd[]; alreadyMembers: string[]; skipped: string[] }> {
     const pending: PendingAdd[] = [];
     const alreadyMembers: string[] = [];
     const skipped: string[] = [];
@@ -383,34 +566,46 @@ export class Groups {
           skipped.push(userId);
         }
       } catch (err) {
-        // No device, or no access to this channel: nothing to add for
-        // this account, which should not stop the others being added.
         const msg = String(err);
-        if (!msg.includes("no devices registered") && !msg.includes("does not have access")) {
+        if (
+          !msg.includes("no devices registered") &&
+          !msg.includes("does not have access") &&
+          !msg.includes("key packages available")
+        ) {
           throw err;
         }
         skipped.push(userId);
       }
     }
+    return { pending, alreadyMembers, skipped };
+  }
 
-    if (pending.length === 0) {
-      if (alreadyMembers.length > 0) {
-        // Nothing new to add. No commit, so the epoch does not move.
-        return { epoch: epochOf(state), added: [], alreadyMembers, skipped };
+  /**
+   * Add claimed devices in one commit.
+   *
+   * The device list is re-checked on every attempt: if the commit that
+   * beat us added one of the same devices, adding it again would put two
+   * leaves in the tree for one device.
+   */
+  async #addPending(
+    channelId: string,
+    pending: PendingAdd[],
+  ): Promise<{ epoch: number; done: PendingAdd[] }> {
+    return this.#commitWithRetry<PendingAdd[]>(channelId, async (state) => {
+      const members = new Set(this.#mls.memberIdentities(state));
+      const toAdd = pending.filter((p) => !members.has(p.device_id));
+      if (toAdd.length === 0) {
+        // Everyone we meant to add got in through someone else's commit.
+        return { nothing: [] };
       }
-      throw new Error("groups: none of those accounts have a device to add");
-    }
 
-    const { epoch, committed } = await this.#commitWithRetry(channelId, pending);
-
-    // Someone else's commit may have added some of these devices while
-    // we were rebasing. Report those users as already members unless
-    // another of their devices went in with our commit.
-    const added = [...new Set(committed.map((p) => p.user_id))];
-    for (const userId of new Set(pending.map((p) => p.user_id))) {
-      if (!added.includes(userId)) alreadyMembers.push(userId);
-    }
-    return { epoch, added, alreadyMembers, skipped };
+      const keyPackages: WireMessage[] = toAdd.map((c) => fromBase64(c.package));
+      const commit = await this.#mls.addMembers(state, keyPackages);
+      if (!commit.welcome) {
+        throw new Error("groups: commit produced no welcome");
+      }
+      return { commit, welcomeTo: toAdd.map((c) => c.device_id), done: toAdd };
+    });
   }
 
   /**
@@ -421,40 +616,36 @@ export class Groups {
    * against the same epoch would fork the group irrecoverably, so the
    * server accepts one and rejects the other. The loser catches up,
    * rebuilds its commit on the new state, and tries again - which is why
-   * the commit is constructed inside the loop rather than outside it.
-   *
-   * The device list is re-checked on every attempt: if the commit that
-   * beat us added one of the same devices, adding it again would put two
-   * leaves in the tree for one device.
+   * the commit is built by a callback inside the loop rather than once
+   * outside it.
    */
-  async #commitWithRetry(
+  async #commitWithRetry<T>(
     channelId: string,
-    pending: PendingAdd[],
-  ): Promise<{ epoch: number; committed: PendingAdd[] }> {
+    build: (state: unknown) => Promise<Built<T>>,
+  ): Promise<{ epoch: number; done: T }> {
     for (let attempt = 1; attempt <= MAX_COMMIT_ATTEMPTS; attempt++) {
-      const state = this.#states.get(channelId);
-      if (!state) throw new Error(`groups: not a member of ${channelId}`);
-
+      const state = this.#requireState(channelId);
       const builtOn = epochOf(state);
-      const members = new Set(this.#mls.memberIdentities(state));
-      const toAdd = pending.filter((p) => !members.has(p.device_id));
-      if (toAdd.length === 0) {
-        // Everyone we meant to add got in through someone else's commit.
-        return { epoch: builtOn, committed: [] };
-      }
 
-      const keyPackages: WireMessage[] = toAdd.map((c) => fromBase64(c.package));
-      const commit = await this.#mls.addMembers(state, keyPackages);
-
-      if (!commit.welcome) {
-        throw new Error("groups: commit produced no welcome");
-      }
+      const built = await build(state);
+      if ("nothing" in built) return { epoch: builtOn, done: built.nothing };
+      const { commit, welcomeTo } = built;
 
       // One welcome covers every device added by this commit; each
       // decrypts only its own secrets from it. The same bytes therefore
       // go to each recipient.
-      const welcomeB64 = toBase64(commit.welcome);
-      const treeB64 = toBase64(encodeTree(commit.ratchetTree));
+      const welcomes =
+        commit.welcome && welcomeTo.length > 0
+          ? (() => {
+              const welcomeB64 = toBase64(commit.welcome!);
+              const treeB64 = toBase64(encodeTree(commit.ratchetTree));
+              return welcomeTo.map((device_id) => ({
+                device_id,
+                welcome: welcomeB64,
+                ratchet_tree: treeB64,
+              }));
+            })()
+          : [];
 
       try {
         const response = (await this.#call(
@@ -465,20 +656,27 @@ export class Groups {
               device_id: this.#deviceId,
               epoch: builtOn,
               commit: toBase64(commit.commit),
-              welcomes: toAdd.map((c) => ({
-                device_id: c.device_id,
-                welcome: welcomeB64,
-                ratchet_tree: treeB64,
-              })),
+              welcomes,
             }),
           },
         )) as { epoch: number };
 
+        // Our own commit cannot remove us, so this should never fire. It
+        // is checked anyway, because if it ever does the group is in a
+        // state this client does not understand, and carrying on would
+        // be worse than starting over.
+        if (!(await this.#mls.stillMember(commit.state))) {
+          await this.#forget(channelId);
+          throw new RemovedFromGroup(channelId);
+        }
+
         // Only now is the new state real. Persisting before the server
         // accepted would leave this device on a branch nobody else
-        // follows.
+        // follows. Likewise the spent keys: until now they were still
+        // needed in case we lost the race (see spentWiper in tsmls.ts).
         await this.#persist(channelId, commit.state);
-        return { epoch: response.epoch, committed: toAdd };
+        commit.wipeSpent();
+        return { epoch: response.epoch, done: built.done };
       } catch (err) {
         if (!this.#isEpochConflict(err)) throw err;
 
@@ -490,7 +688,7 @@ export class Groups {
 
         // Discard the commit built on the stale epoch, take everyone
         // else's changes, and rebuild.
-        await this.catchUp(channelId);
+        await this.#catchUp(channelId);
       }
     }
 
@@ -504,12 +702,12 @@ export class Groups {
 
   /** Encrypt a message for a channel. */
   async encrypt(channelId: string, plaintext: Uint8Array): Promise<Uint8Array> {
-    const state = this.#states.get(channelId);
-    if (!state) throw new Error(`groups: not a member of ${channelId}`);
-
-    const result = await this.#mls.encrypt(state, plaintext);
-    await this.#persist(channelId, result.state);
-    return result.message;
+    return this.#serial(channelId, async () => {
+      const state = this.#requireState(channelId);
+      const result = await this.#mls.encrypt(state, plaintext);
+      await this.#persist(channelId, result.state);
+      return result.message;
+    });
   }
 
   /**
@@ -521,16 +719,49 @@ export class Groups {
    * would fill the log with noise for a working system.
    */
   async decrypt(channelId: string, ciphertext: Uint8Array): Promise<Uint8Array | null> {
-    const state = this.#states.get(channelId);
-    if (!state) return null;
+    return this.#serial(channelId, async () => {
+      const state = this.#states.get(channelId);
+      if (!state) return null;
 
-    try {
-      const result = await this.#mls.decrypt(state, ciphertext);
-      await this.#persist(channelId, result.state);
-      return result.plaintext ?? null;
-    } catch {
-      return null;
-    }
+      try {
+        const result = await this.#mls.decrypt(state, ciphertext);
+        await this.#persist(channelId, result.state);
+        return result.plaintext ?? null;
+      } catch {
+        return null;
+      }
+    });
+  }
+
+  /**
+   * Run one group operation at a time per channel.
+   *
+   * Every operation reads the current state, awaits, then writes a new
+   * one. Two interleaved (say a background reconcile and a message being
+   * sent) would each write a state derived from the same starting point,
+   * and whichever wrote second would silently undo the other - for a
+   * commit, leaving this device an epoch behind a group it thinks it is
+   * current in. Internal helpers (#open, #catchUp) do not queue, so
+   * queued operations can call them without deadlocking.
+   */
+  #serial<T>(channelId: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.#queues.get(channelId) ?? Promise.resolve();
+    const next = prev.then(fn);
+    // The queue must keep going after a failure; the caller still sees it.
+    this.#queues.set(channelId, next.catch(() => undefined));
+    return next;
+  }
+
+  #requireState(channelId: string): unknown {
+    const state = this.#states.get(channelId);
+    if (!state) throw new Error(`groups: not a member of ${channelId}`);
+    return state;
+  }
+
+  /** Drop this device's state for a group it is no longer in. */
+  async #forget(channelId: string): Promise<void> {
+    this.#states.delete(channelId);
+    await storage.deleteGroup(channelId);
   }
 
   async #persist(channelId: string, state: unknown): Promise<void> {
