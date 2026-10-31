@@ -130,28 +130,38 @@ export const storage = {
   },
 
   /**
-   * Remember what this device sent, keyed by message id.
+   * The local message archive: plaintext of every message this device
+   * has read or sent in an encrypted channel, keyed by message id.
    *
-   * MLS senders cannot decrypt their own application messages: the key
-   * schedule does not retain a sender's own ratchet for reading. So a
-   * client that round-tripped its own messages through the server would
-   * find its own history unreadable after a reload, while everyone
-   * else's was fine.
+   * MLS gives forward secrecy by deleting each message key the moment it
+   * is used. So a message can be decrypted exactly once: reload the page,
+   * fetch history again, and the ciphertext is unreadable to the very
+   * device that read it a minute ago. Senders are worse off still: they
+   * cannot decrypt their own application messages at all.
    *
    * Every MLS client solves this the same way, by keeping its own
-   * plaintext. That is a real cost of the design and worth stating: this
-   * copy is as readable as any other local data, so "the server cannot
-   * read your messages" remains true while "nothing on your device can"
-   * does not.
+   * plaintext once it has it. That is a real cost of the design and worth
+   * stating: this copy is as readable as any other local data, so "the
+   * server cannot read your messages" remains true while "nothing on your
+   * device can" does not. It must also be deleted when the message is,
+   * or a deletion would only ever reach the server.
+   *
+   * The object store is still called "sent" because it began as only
+   * this device's own messages; renaming it would need a migration for
+   * no change in behaviour.
    */
-  async putSent(messageId: string, text: string): Promise<void> {
+  async putPlaintext(messageId: string, text: string): Promise<void> {
     await run(STORE_SENT, "readwrite", (s) => s.put(text, messageId));
   },
 
-  async getSent(messageId: string): Promise<string | undefined> {
+  async getPlaintext(messageId: string): Promise<string | undefined> {
     return run<string | undefined>(STORE_SENT, "readonly", (s) =>
       s.get(messageId) as IDBRequest<string | undefined>,
     );
+  },
+
+  async deletePlaintext(messageId: string): Promise<void> {
+    await run(STORE_SENT, "readwrite", (s) => s.delete(messageId));
   },
 
   async getGroup(channelId: string): Promise<unknown> {

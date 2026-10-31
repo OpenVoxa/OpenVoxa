@@ -517,13 +517,30 @@ function b64decode(text) {
 // account matches the first entry.
 const awaitingEcho = [];
 
-async function prepareMessage(m) {
-  if (!currentChannelEncrypted || m.deleted || !m.body) return m;
+// Every received message, history or live, goes through one queue.
+// Decryption reads and rewrites the stored group state, so two running
+// at once can each start from the same state and the later save
+// silently discards the earlier one's ratchet progress. The queue also
+// keeps rendering in arrival order and keeps own-message echoes matched
+// to the right entry in awaitingEcho.
+let inbound = Promise.resolve();
 
-  // Our own messages. MLS senders cannot read their own application
-  // messages, so the plaintext comes from local storage instead: from
-  // the send queue if this is the echo, or from what was saved when it
-  // was.
+function enqueueInbound(m) {
+  inbound = inbound
+    .then(() => prepareMessage(m))
+    .then(renderMessage)
+    .catch((err) => line("err", esc(`could not show a message: ${err.message}`)));
+}
+
+async function prepareMessage(m) {
+  if (!currentChannelEncrypted || !m.body) return m;
+
+  // A deleted message must not survive in the local archive either.
+  if (m.deleted) {
+    await OpenVoxaCore.storage.deletePlaintext(m.id);
+    return m;
+  }
+
   // Plaintext is an envelope: the text plus any attachment keys. Older
   // messages are bare text, which decodeEnvelope passes through.
   const opened = (plain) => {
@@ -531,18 +548,25 @@ async function prepareMessage(m) {
     return { ...m, body: env.text, files: env.files };
   };
 
-  if (m.author_id && m.author_id === myUserID) {
+  // Our own message coming back from the server. MLS senders cannot read
+  // their own application messages, so the plaintext comes from the send
+  // queue instead.
+  const own = m.author_id && m.author_id === myUserID;
+  if (own) {
     const queued = awaitingEcho.shift();
     if (queued !== undefined) {
-      await OpenVoxaCore.storage.putSent(m.id, queued);
+      await OpenVoxaCore.storage.putPlaintext(m.id, queued);
       return opened(queued);
     }
-
-    const saved = await OpenVoxaCore.storage.getSent(m.id);
-    if (saved !== undefined) return opened(saved);
-
-    return { ...m, body: "[sent from another device]", unreadable: true };
   }
+
+  // Anything this device has read or sent before. This has to come
+  // before decryption, not after: MLS deletes each message key once it
+  // is used, so the second attempt at the same ciphertext always fails.
+  const saved = await OpenVoxaCore.storage.getPlaintext(m.id);
+  if (saved !== undefined) return opened(saved);
+
+  if (own) return { ...m, body: "[sent from another device]", unreadable: true };
 
   if (!session || !session.groups.isMember(currentChannel)) {
     return { ...m, body: "[encrypted]", unreadable: true };
@@ -550,8 +574,15 @@ async function prepareMessage(m) {
 
   try {
     const plaintext = await session.groups.decrypt(currentChannel, b64decode(m.body));
-    if (!plaintext) return { ...m, body: "[sent before this device joined]", unreadable: true };
-    return opened(new TextDecoder().decode(plaintext));
+    if (!plaintext) {
+      // Either it predates this device joining, or it was read before
+      // the local archive existed and its key is gone. The two cannot be
+      // told apart from here, so the label does not pretend to.
+      return { ...m, body: "[not readable on this device]", unreadable: true };
+    }
+    const text = new TextDecoder().decode(plaintext);
+    await OpenVoxaCore.storage.putPlaintext(m.id, text);
+    return opened(text);
   } catch {
     return { ...m, body: "[could not decrypt]", unreadable: true };
   }
@@ -1204,6 +1235,7 @@ function tombstone(el) {
 function onUserPurged(userID) {
   let n = 0;
   logEl.querySelectorAll(`[data-author="${CSS.escape(userID)}"]`).forEach((el) => {
+    forgetPlaintext(el.dataset.id);
     tombstone(el);
     n++;
   });
@@ -1217,6 +1249,7 @@ function onChannelPurged(channelID, before) {
   let n = 0;
   logEl.querySelectorAll("[data-ts]").forEach((el) => {
     if (new Date(el.dataset.ts).getTime() < cutoff) {
+      forgetPlaintext(el.dataset.id);
       while (el.nextElementSibling?.classList.contains("preview") ||
              el.nextElementSibling?.classList.contains("attachments")) {
         el.nextElementSibling.remove();
@@ -1229,8 +1262,19 @@ function onChannelPurged(channelID, before) {
 }
 
 function onMessageDeleted(messageID) {
+  forgetPlaintext(messageID);
   const el = logEl.querySelector(`[data-id="${CSS.escape(messageID)}"]`);
   if (el) tombstone(el);
+}
+
+// Deletion has to reach this device's archive too, or a removed message
+// would reappear from local storage on the next history load. Only the
+// rendered messages are known here. A tombstone not on screen is caught
+// when history next delivers it; a message removed by retention while
+// off screen stays in the archive, unreachable but on disk (open item).
+function forgetPlaintext(messageID) {
+  if (!messageID) return;
+  OpenVoxaCore.storage.deletePlaintext(messageID).catch(() => {});
 }
 
 async function call(path, options = {}) {
@@ -1370,11 +1414,7 @@ async function connect() {
     if (frame.type === "history") {
       logEl.innerHTML = "";
       line("sys", `${frame.messages.length} earlier message(s)`);
-      // Sequential rather than parallel: decryption advances the group
-      // state, and MLS expects messages applied in order.
-      (async () => {
-        for (const m of frame.messages) renderMessage(await prepareMessage(m));
-      })();
+      for (const m of frame.messages) enqueueInbound(m);
 
       // The server decides; this only reflects its answer in the UI.
       if (!frame.can_post) {
@@ -1384,7 +1424,7 @@ async function connect() {
         $("body").placeholder = "Read only";
       }
     } else if (frame.type === "message") {
-      prepareMessage(frame).then(renderMessage);
+      enqueueInbound(frame);
     } else if (frame.type === "error") {
       line("err", esc(frame.error));
     } else if (frame.type === "user_purged") {
