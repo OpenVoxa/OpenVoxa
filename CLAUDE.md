@@ -106,7 +106,7 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
 
 ## Current state (update every session)
 
-_Last updated: 2026-10-30, at commit `ea617d3`._
+_Last updated: 2026-10-30, after commit `6e20d9b` (encrypted attachments uncommitted)._
 
 - Build-order step 9 (MLS for text) is functionally working on Docker:
   messages in an encrypted channel are ciphertext in Postgres (only the
@@ -116,12 +116,17 @@ _Last updated: 2026-10-30, at commit `ea617d3`._
 - Done: device identity + key packages; group create/join/catch-up;
   epoch-ordered commits with rebase; encrypted text end to end; own sent
   plaintext kept locally (MLS senders can't decrypt their own messages).
-- **Known gap: attachments in encrypted channels are stored as plaintext
-  blobs.** Fix is client-side encrypt-before-upload / decrypt-after-
-  download; breaks content-addressed dedup (accepted tradeoff). Encryption
-  must not be called "done" until this is fixed.
+- Encrypted attachments implemented (not yet tested on Docker): per-file
+  AES-256-GCM in `client-core/src/attachments.ts`, key carried in a JSON
+  envelope inside the MLS message; server stores ciphertext as
+  `encrypted` / octet-stream regardless of what the client sends. Link
+  previews skipped and GIFs refused in encrypted channels (both would
+  show content to the server). Encryption is not "done" until a
+  two-party attachment test passes.
 - Remaining, in order:
-  1. Encrypted attachments.
+  1. Two-party test of encrypted attachments (image preview, non-image
+     download, check `blobs` dir holds ciphertext, filename is
+     `encrypted` in Postgres).
   2. "Add everyone" should skip devices already in the group.
   3. Media keys from the MLS exporter secret (build-order step 10).
   4. Multi-party testing.

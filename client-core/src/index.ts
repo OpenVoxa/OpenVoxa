@@ -37,6 +37,13 @@ export { TsMlsProvider } from "./mls/tsmls.js";
 export { Identity } from "./identity.js";
 export { Groups } from "./groups.js";
 export { storage } from "./storage.js";
+export {
+  encryptFile,
+  decryptFile,
+  encodeEnvelope,
+  decodeEnvelope,
+} from "./attachments.js";
+export type { Envelope, EncryptedFile, FileKey } from "./attachments.js";
 export type { ApiCall, IdentityStatus } from "./identity.js";
 export type { AddResult, GroupStatus, OpenResult } from "./groups.js";
 export type { StoredDevice, StoredKeyPair } from "./storage.js";
