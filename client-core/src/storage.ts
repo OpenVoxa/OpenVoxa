@@ -21,8 +21,22 @@
  * stored in IndexedDB - would look like protection while providing none.
  */
 
-const DB_NAME = "openvoxa";
+/**
+ * One database per account, named after the account.
+ *
+ * A browser profile used for two accounts at once (two windows, signed in
+ * as different people) used to share one database, and so one device
+ * identity and one copy of every group. Each window kept overwriting the
+ * other's, and a window that loaded the other account's group state
+ * removed its own real leaf as a "duplicate" and rejoined, in a loop
+ * (found on Docker, 2026-10-31). Per-account databases make the two
+ * windows independent. Data from the old shared database is moved into
+ * the right account's database once; see useAccount.
+ */
+const LEGACY_DB_NAME = "openvoxa";
 const DB_VERSION = 2;
+
+let dbName = LEGACY_DB_NAME;
 
 const STORE_DEVICE = "device";
 const STORE_KEYPAIRS = "keypairs";
@@ -50,9 +64,11 @@ export interface StoredKeyPair {
   readonly createdAt: number;
 }
 
-function open(): Promise<IDBDatabase> {
+const ALL_STORES = [STORE_DEVICE, STORE_KEYPAIRS, STORE_GROUPS, STORE_SENT];
+
+function open(name: string = dbName): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    const request = indexedDB.open(name, DB_VERSION);
 
     request.onupgradeneeded = () => {
       const db = request.result;
@@ -94,7 +110,88 @@ function run<T>(
   );
 }
 
+function request<T>(req: IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error ?? new Error("indexeddb: operation failed"));
+  });
+}
+
+/**
+ * Move the old shared database into this account's, if it belongs to
+ * this account. One belonging to another account is left for that
+ * account's first sign-in. Copied store by store with keys, then the old
+ * database is deleted.
+ */
+async function migrateLegacy(userId: string): Promise<void> {
+  // Opening a database creates it, so check it exists first where the
+  // browser can say; otherwise every sign-in would leave an empty one.
+  if (typeof indexedDB.databases === "function") {
+    const names = (await indexedDB.databases()).map((d) => d.name);
+    if (!names.includes(LEGACY_DB_NAME)) return;
+  }
+  const legacy = await open(LEGACY_DB_NAME);
+  try {
+    const tx = legacy.transaction(STORE_DEVICE, "readonly");
+    const device = (await request(tx.objectStore(STORE_DEVICE).get("self"))) as
+      | StoredDevice
+      | undefined;
+    if (!device || device.userId !== userId) return;
+
+    const target = await open(dbName);
+    try {
+      const existing = await request(
+        target.transaction(STORE_DEVICE, "readonly").objectStore(STORE_DEVICE).get("self"),
+      );
+      if (existing) return; // already has its own identity; never overwrite it
+
+      for (const name of ALL_STORES) {
+        const src = legacy.transaction(name, "readonly").objectStore(name);
+        const [keys, values] = await Promise.all([
+          request(src.getAllKeys()),
+          request(src.getAll()),
+        ]);
+        const out = target.transaction(name, "readwrite");
+        const dst = out.objectStore(name);
+        values.forEach((value, i) => {
+          // Stores with a keyPath take the key from the value itself.
+          if (dst.keyPath === null) dst.put(value, keys[i]);
+          else dst.put(value);
+        });
+        await new Promise<void>((resolve, reject) => {
+          out.oncomplete = () => resolve();
+          out.onerror = () => reject(out.error ?? new Error("indexeddb: copy failed"));
+        });
+      }
+    } finally {
+      target.close();
+    }
+  } finally {
+    legacy.close();
+  }
+  await new Promise<void>((resolve) => {
+    const del = indexedDB.deleteDatabase(LEGACY_DB_NAME);
+    // A blocked delete (another old tab still open) is not worth failing
+    // sign-in over; the copy is already safe.
+    del.onsuccess = del.onerror = del.onblocked = () => resolve();
+  });
+}
+
 export const storage = {
+  /**
+   * Point storage at one account's database. Called once per page, at
+   * sign-in, before anything is read or written.
+   */
+  async useAccount(userId: string): Promise<void> {
+    dbName = `${LEGACY_DB_NAME}-${userId}`;
+    try {
+      await migrateLegacy(userId);
+    } catch {
+      // Migration is a convenience: without it this account simply
+      // starts with a new device, as on a fresh browser.
+    }
+  },
+
   async getDevice(): Promise<StoredDevice | undefined> {
     return run<StoredDevice | undefined>(STORE_DEVICE, "readonly", (s) =>
       s.get("self") as IDBRequest<StoredDevice | undefined>,
@@ -186,7 +283,7 @@ export const storage = {
   async wipe(): Promise<void> {
     const db = await open();
     await Promise.all(
-      [STORE_DEVICE, STORE_KEYPAIRS, STORE_GROUPS, STORE_SENT].map(
+      ALL_STORES.map(
         (name) =>
           new Promise<void>((resolve, reject) => {
             const tx = db.transaction(name, "readwrite");

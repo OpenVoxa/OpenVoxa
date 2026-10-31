@@ -962,6 +962,19 @@ path, so a new device no longer needs someone in the call. Details:
   catch-up, one from stored state); two simultaneous external joins; a
   stale-generation commit refused (409) and catch-up told 410.
 
+**One browser database per account, one tab per account.** Found on
+Docker 2026-10-31: two windows of one Brave profile signed in as
+different accounts shared the single `openvoxa` IndexedDB, so they shared
+one device identity slot and one copy of each group. Each sign-in wiped
+the other's identity, and a window that loaded the other account's group
+state removed its own real leaf as a "duplicate" and rejoined, 70 epochs
+in a few minutes. Now each account has its own database
+(`openvoxa-<user id>`); the old shared one is moved into its owner's on
+first sign-in and deleted. Two tabs of the same account would share keys
+just as badly, so a Web Lock lets one tab per account and browser hold
+them; a second tab is refused with a message. And a client drops any
+stored group whose own leaf is not its device, whatever put it there.
+
 **Only a device removes its own duplicate leaves.** After rejoining from
 a GroupInfo a device can hold two leaves. Another member cannot tell
 which is live, and removing the wrong one would kick the device out, so
