@@ -625,7 +625,8 @@ async function openGroup(channelId) {
     case "created":
       if (result.replaced) {
         cryptoStatus(`encrypted: started a new group (epoch ${result.epoch})`);
-        line("sys", "nobody with access could update this channel's old encryption group, " +
+        // Held like a membership notice: loading history clears the log.
+        noticeLine("nobody with access could update this channel's old encryption group, " +
           "so this device replaced it with a new one. Messages from before can't be read " +
           "by devices that hadn't already decrypted them.");
       } else {
@@ -637,7 +638,7 @@ async function openGroup(channelId) {
         ? `encrypted: joined from the published group info (epoch ${result.epoch})`
         : `encrypted: joined the group (epoch ${result.epoch})`);
       if (result.replaced) {
-        line("sys", "this channel's encryption group was replaced since this device last " +
+        noticeLine("this channel's encryption group was replaced since this device last " +
           "used it; messages it hadn't already decrypted can't be read");
       }
       return true;
@@ -883,6 +884,22 @@ async function forgetDevice() {
     "All local key material is destroyed. Messages in encrypted channels " +
     "that only this device could read become unreadable, permanently."
   )) return;
+
+  // Revoke it on the server first. Wiping only the local keys used to
+  // leave the device listed as active, so members kept adding a device
+  // nobody holds the keys for, spending its key packages and in the end
+  // its reusable last-resort one. 404 means it was already revoked.
+  if (session) {
+    try {
+      await call(`/api/v1/devices/${session.status.deviceId}`, { method: "DELETE" });
+    } catch (e) {
+      if (e.status !== 404) {
+        $("idStatus").textContent =
+          `could not revoke this device on the server (${e.message}); nothing was forgotten`;
+        return;
+      }
+    }
+  }
 
   await OpenVoxaCore.forgetIdentity();
   session = null;
