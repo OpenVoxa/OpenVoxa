@@ -46,7 +46,13 @@ export {
 } from "./attachments.js";
 export type { Envelope, EncryptedFile, FileKey } from "./attachments.js";
 export type { ApiCall, IdentityStatus } from "./identity.js";
-export type { AddResult, GroupStatus, OpenResult, ReconcileResult } from "./groups.js";
+export type {
+  AddResult,
+  AutoEvent,
+  GroupStatus,
+  OpenResult,
+  ReconcileResult,
+} from "./groups.js";
 export type { StoredDevice, StoredKeyPair } from "./storage.js";
 
 export const VERSION = "0.1.0";
