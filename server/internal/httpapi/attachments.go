@@ -125,10 +125,13 @@ func (a *API) uploadAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var minPost string
+	var (
+		minPost   string
+		encrypted bool
+	)
 	err = a.pool.QueryRow(r.Context(),
-		`SELECT min_role_post FROM channels WHERE id = $1`, channelID,
-	).Scan(&minPost)
+		`SELECT min_role_post, encrypted FROM channels WHERE id = $1`, channelID,
+	).Scan(&minPost, &encrypted)
 
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
@@ -192,6 +195,16 @@ func (a *API) uploadAttachment(w http.ResponseWriter, r *http.Request) {
 
 	filename := safeFilename(header.Filename)
 	contentType := detectType(header.Header.Get("Content-Type"), filename)
+
+	// In an encrypted channel the client encrypts before upload and the
+	// real name and type travel inside the MLS message. Whatever the
+	// client sent here is discarded rather than trusted: a client bug
+	// that leaked the real filename would otherwise be stored forever,
+	// and the bytes are ciphertext, so no type but octet-stream is true.
+	if encrypted {
+		filename = "encrypted"
+		contentType = "application/octet-stream"
+	}
 
 	tx, err := a.pool.Begin(r.Context())
 	if err != nil {

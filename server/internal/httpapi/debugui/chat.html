@@ -307,7 +307,24 @@ function fmtSize(bytes) {
 async function upload(files) {
   for (const file of files) {
     const form = new FormData();
-    form.append("file", file);
+
+    // In an encrypted channel the file is encrypted here with its own
+    // key, and the server gets ciphertext under a placeholder name. The
+    // key, real name and real type ride inside the MLS message that
+    // claims the upload (see send()).
+    let fileKey = null;
+    if (currentChannelEncrypted) {
+      if (!session || !session.groups.isMember(currentChannel)) {
+        line("err", "this device has not been added to this channel yet");
+        return;
+      }
+      const enc = await OpenVoxaCore.encryptFile(
+        await file.arrayBuffer(), file.name, file.type);
+      fileKey = enc.key;
+      form.append("file", new Blob([enc.ciphertext]), "encrypted");
+    } else {
+      form.append("file", file);
+    }
 
     // Deliberately not using call(): FormData must set its own
     // Content-Type, including the multipart boundary.
@@ -323,16 +340,104 @@ async function upload(files) {
       continue;
     }
 
-    pending.push(await res.json());
+    const info = await res.json();
+    if (fileKey) {
+      // Show the real name and size locally; the server's are placeholders.
+      pending.push({ ...info, filename: file.name, size: file.size,
+                     fileKey: { ...fileKey, id: info.id } });
+    } else {
+      pending.push(info);
+    }
     renderPending();
   }
 }
 
-function renderAttachments(after, list) {
+// Types the server would serve inline. The decrypted copy obeys the same
+// list: anything else becomes an octet-stream download, never a page.
+const PREVIEWABLE = new Set([
+  "image/png", "image/jpeg", "image/gif", "image/webp",
+  "audio/mpeg", "audio/ogg", "audio/wav", "video/mp4", "video/webm",
+]);
+
+/**
+ * Fetch an encrypted attachment and return a blob: URL of the plaintext.
+ *
+ * A blob: URL belongs to this page's origin. Typed text/html and opened
+ * in a tab, it would run script as us, which is exactly the stored-XSS
+ * the server's allowlist prevents. So the type comes from the allowlist,
+ * not from the sender, and everything else is an octet-stream.
+ */
+async function decryptToURL(at, fk) {
+  const res = await fetch(api + at.url);
+  if (!res.ok) throw new Error(`download failed (${res.status})`);
+  const plain = await OpenVoxaCore.decryptFile(await res.arrayBuffer(), fk);
+  const type = PREVIEWABLE.has(fk.type) ? fk.type : "application/octet-stream";
+  return URL.createObjectURL(new Blob([plain], { type }));
+}
+
+function renderEncryptedAttachments(box, list, files) {
+  const keys = new Map((files || []).map((f) => [f.id, f]));
+
+  for (const at of list) {
+    const fk = keys.get(at.id);
+    if (!fk) {
+      // Uploaded but its key is not in a message this device can read.
+      const span = document.createElement("span");
+      span.textContent = "[encrypted attachment]";
+      box.appendChild(span);
+      continue;
+    }
+
+    const link = document.createElement("a");
+    link.href = "#";
+    link.textContent = `${fk.name} (${fmtSize(fk.size)})`;
+    box.appendChild(link);
+
+    let urlPromise = null;
+    const getURL = () => (urlPromise ??= decryptToURL(at, fk));
+
+    // download= rather than target=_blank: saving never navigates, so
+    // the blob is never rendered as a document on our origin.
+    link.onclick = async (e) => {
+      e.preventDefault();
+      try {
+        const a = document.createElement("a");
+        a.href = await getURL();
+        a.download = fk.name;
+        a.click();
+      } catch (err) {
+        link.textContent = `${fk.name} (could not decrypt: ${err.message})`;
+      }
+    };
+
+    if (!PREVIEWABLE.has(fk.type)) continue;
+
+    const kind = fk.type.split("/")[0];
+    const el = document.createElement(kind === "image" ? "img" : kind);
+    if (kind === "image") el.alt = fk.name;
+    else el.controls = true;
+    box.appendChild(el);
+
+    // Previews decrypt straight away, which means downloading the whole
+    // file: GCM cannot be streamed into a <video> without chunking.
+    getURL().then((u) => { el.src = u; }).catch((err) => {
+      el.remove();
+      link.textContent = `${fk.name} (could not decrypt: ${err.message})`;
+    });
+  }
+}
+
+function renderAttachments(after, list, files) {
   if (!list || !list.length) return;
 
   const box = document.createElement("div");
   box.className = "attachments";
+
+  if (currentChannelEncrypted) {
+    renderEncryptedAttachments(box, list, files);
+    after.insertAdjacentElement("afterend", box);
+    return;
+  }
 
   for (const at of list) {
     // Signed by the server and already time-limited, so it works in an
@@ -419,15 +524,22 @@ async function prepareMessage(m) {
   // messages, so the plaintext comes from local storage instead: from
   // the send queue if this is the echo, or from what was saved when it
   // was.
+  // Plaintext is an envelope: the text plus any attachment keys. Older
+  // messages are bare text, which decodeEnvelope passes through.
+  const opened = (plain) => {
+    const env = OpenVoxaCore.decodeEnvelope(plain);
+    return { ...m, body: env.text, files: env.files };
+  };
+
   if (m.author_id && m.author_id === myUserID) {
     const queued = awaitingEcho.shift();
     if (queued !== undefined) {
       await OpenVoxaCore.storage.putSent(m.id, queued);
-      return { ...m, body: queued };
+      return opened(queued);
     }
 
     const saved = await OpenVoxaCore.storage.getSent(m.id);
-    if (saved !== undefined) return { ...m, body: saved };
+    if (saved !== undefined) return opened(saved);
 
     return { ...m, body: "[sent from another device]", unreadable: true };
   }
@@ -439,7 +551,7 @@ async function prepareMessage(m) {
   try {
     const plaintext = await session.groups.decrypt(currentChannel, b64decode(m.body));
     if (!plaintext) return { ...m, body: "[sent before this device joined]", unreadable: true };
-    return { ...m, body: new TextDecoder().decode(plaintext) };
+    return opened(new TextDecoder().decode(plaintext));
   } catch {
     return { ...m, body: "[could not decrypt]", unreadable: true };
   }
@@ -1060,12 +1172,15 @@ function renderMessage(m) {
     `<span class="who">${esc(m.username || "[deleted user]")}</span>: ${markdown(m.body)}`));
 
   messageActions(el, m);
-  renderAttachments(el, m.attachments);
+  renderAttachments(el, m.attachments, m.files);
 
   // One preview per message, for the first link only. Several cards under
   // a single message is noise rather than information.
+  //
+  // Not in encrypted channels: the server fetches the preview, so asking
+  // for one would hand it every link in a conversation it cannot read.
   const first = m.body.match(/https?:\/\/[^\s]+/);
-  if (first) addPreview(el, first[0]);
+  if (first && !currentChannelEncrypted) addPreview(el, first[0]);
 }
 
 // ------------------------------------------------- server event handling
@@ -1230,7 +1345,9 @@ async function connect() {
     $("body").disabled = false;
     $("send").disabled = false;
     $("attach").disabled = false;
-    if ($("gif")) $("gif").disabled = !gifEnabled;
+    // The server fetches and stores GIFs itself, so it refuses them in
+    // encrypted channels; the button says so before a click does.
+    if ($("gif")) $("gif").disabled = !gifEnabled || currentChannelEncrypted;
   };
 
   socket.onclose = () => {
@@ -1322,11 +1439,15 @@ async function send() {
     if (!session || !session.groups.isMember(currentChannel)) {
       return line("err", "this device has not been added to this channel yet");
     }
+    const envelope = OpenVoxaCore.encodeEnvelope({
+      text: body,
+      files: pending.filter((a) => a.fileKey).map((a) => a.fileKey),
+    });
     const ciphertext = await session.groups.encrypt(
       currentChannel,
-      new TextEncoder().encode(body),
+      new TextEncoder().encode(envelope),
     );
-    awaitingEcho.push(body);
+    awaitingEcho.push(envelope);
     body = b64encode(ciphertext);
   }
 
