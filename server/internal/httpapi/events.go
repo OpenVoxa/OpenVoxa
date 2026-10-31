@@ -50,6 +50,10 @@ type groupAdvancedEvent struct {
 	Epoch     int64  `json:"epoch"`
 }
 
+type accessChangedEvent struct {
+	Type string `json:"type"`
+}
+
 type roleChangedEvent struct {
 	Type   string `json:"type"`
 	UserID string `json:"user_id"`
@@ -137,4 +141,18 @@ func (a *API) NotifyGroupAdvanced(channelID string, epoch int64) {
 // only keeps the interface honest.
 func (a *API) NotifyRoleChanged(userID, role string) {
 	a.emitAll(roleChangedEvent{Type: "role_changed", UserID: userID, Role: role})
+}
+
+// NotifyAccessChanged tells clients that who belongs in some encryption
+// groups may have changed: an account was banned or unbanned, a device
+// was revoked, or a device published key packages (which is how a new
+// device, or one that ran out, becomes addable). Members' clients
+// reconcile the groups they have open in response.
+//
+// Carries nothing. Which channels are affected depends on permissions
+// each client has to ask about anyway, and the allowed-devices endpoint
+// is the authoritative answer. Role changes have their own event, which
+// clients treat the same way.
+func (a *API) NotifyAccessChanged() {
+	a.emitAll(accessChangedEvent{Type: "access_changed"})
 }

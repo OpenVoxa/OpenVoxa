@@ -556,6 +556,10 @@ func (a *API) banUser(w http.ResponseWriter, r *http.Request) {
 		a.NotifyUserPurged(subjectID)
 	}
 
+	// A banned account's devices drop off every allowed list, so members
+	// reconcile them out of the groups they were in.
+	a.NotifyAccessChanged()
+
 	slog.Info("user banned", "actor_id", actor.UserID,
 		"subject_id", subjectID, "permanent", expires == nil,
 		"purged_messages", purged)
@@ -587,6 +591,9 @@ func (a *API) unbanUser(w http.ResponseWriter, r *http.Request) {
 	); err != nil {
 		slog.Error("recording moderation action", "err", err)
 	}
+
+	// Back on the allowed lists; members add their devices again.
+	a.NotifyAccessChanged()
 
 	slog.Info("user unbanned", "actor_id", actor.UserID, "subject_id", subjectID)
 	w.WriteHeader(http.StatusNoContent)
