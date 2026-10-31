@@ -438,8 +438,9 @@ announced in the channel like any membership change. A hostile server
 could force one, but that gains it nothing it cannot already do by
 granting itself access (see Known tensions).
 
-The "Add everyone" and "Add everyone to voice" buttons in the debug page
-are test scaffolding for this and go away when reconciliation exists.
+The "Add everyone" and "Add everyone to voice" buttons that stood in for
+this in the debug page were removed on 2026-10-31, along with the public
+`groups.addMembers`: reconciliation is the only way into a group.
 
 ## Implementation notes
 
@@ -990,6 +991,8 @@ reconcile removes duplicates of its own device ID only.
      device (10) and removed it after revocation, marked revoked (11);
      ryan's main device, offline throughout, announced both on
      reconnecting, credited to staff
+   - ✅ "Add everyone" buttons and public `groups.addMembers` removed
+     (2026-10-31)
    - ⬜ External join and stuck-group reset
 12. ⬜ Custom permission groups replacing the fixed roles
 13. ⬜ The real client: `client-web`, `client-desktop`
@@ -1060,11 +1063,10 @@ reconcile removes duplicates of its own device ID only.
 - [x] The commit endpoint checks that each welcome's recipient device
       belongs to an account with access to the channel (step 11, server
       side). The whole commit is refused if one does not.
-- [ ] The "Add everyone" buttons in the debug page are now redundant
-      (membership is automatic since step 11 triggers) and go in step 7
-      of the step 11 plan. A new device can only join a call while
-      someone already in that voice group is in the call, until external
-      join exists.
+- [ ] A new device can only join a call while someone already in that
+      voice group is in the call, and can only join an encrypted text
+      channel once a member comes online. External join (step 11, last
+      part) closes both.
 - [ ] LiveKit's `encryption` option also turns on data channel
       encryption. Nothing uses data channels yet; anything that does
       later gets it for free, but must not assume the SFU can read them.
