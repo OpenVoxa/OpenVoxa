@@ -652,7 +652,7 @@ request and no error anywhere obvious. GIF and moderation controls are now
 attached through a helper that warns rather than throws. This disappears
 with `client-web`, where components fail independently.
 
-**Ten ts-mls API details were observed rather than documented.** Each
+**Eleven ts-mls API details were observed rather than documented.** Each
 was written against the README first and was wrong. The pattern, not any
 individual case, is the useful record: this library's documentation
 describes what the functions are for, not what they return or in what
@@ -703,6 +703,14 @@ The details themselves:
   still cannot read anything (it lacks the new epoch's secrets) and its
   messages are rejected, so nothing leaks, but it cannot tell it was
   removed. See the removal note below.
+- A removed device processing its own removal THROWS when the removal
+  shrinks the tree past its leaf (removing the rightmost leaves):
+  "Could not find common ancestor" or "RangeError: Invalid array
+  length". Removing a leaf in the middle reports `removedFromGroup` as
+  documented. Found on Docker 2026-10-31 (staff stuck reopening
+  `stuck-test`), reproduced in Node. So catch-up treats any commit it
+  cannot apply as removal: drop the state, rejoin by welcome or
+  GroupInfo.
 
 **The Docker build context is the repository root.** The server image
 bundles client-core alongside the Go binary, so the Node stage and the Go
