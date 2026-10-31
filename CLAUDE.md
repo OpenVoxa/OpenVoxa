@@ -70,13 +70,14 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
   (never commit or print it). Ryan still rebuilds Docker by hand.
 - Commit/push only when asked. Never commit `.env`, keys, or
   `docker-compose.override.yml`.
-- When handing over changes, always give Ryan both:
-  1. Repo update (on Git-terminal): `git pull` (or the push commands
-     if he is committing).
-  2. Docker update:
+- **After EVERY push (docs-only included), give Ryan the Docker block**
+  in the same reply, without being asked. He multitasks and forgets. Also
+  give the Git-terminal `git pull` (or push commands if he is committing).
+  Docker block, with the expected hash filled in:
      ```bash
-     cd ~/OpenVoxa && git pull && cd deploy
-     docker compose --profile tls up -d --build
+     # DOCKER
+     cd ~/OpenVoxa && git pull && git log --oneline -1
+     cd ~/OpenVoxa/deploy && docker compose --profile tls up -d --build
      ```
      Then hard-refresh the browser (Ctrl+Shift+R) for `debugui/` changes.
      Env changes need `--force-recreate`.
