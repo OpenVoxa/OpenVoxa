@@ -1313,7 +1313,11 @@ async function accessList(access) {
 async function mkChannel(name, kind = "text", encrypted = false, access) {
   const body = { name, kind, encrypted };
   if (access) body.access = await accessList(access);
-  return call("/api/v1/channels", { method: "POST", body: JSON.stringify(body) });
+  const c = await call("/api/v1/channels", { method: "POST", body: JSON.stringify(body) });
+  // The change event only reaches pages with a channel open; refresh
+  // this page's list directly so the new channel shows up here too.
+  await loadChannels();
+  return c;
 }
 
 // setAccess("vip-chat", [["VIP", true], ["Everyone", false]])
@@ -1323,6 +1327,7 @@ async function setAccess(channelName, access) {
   await call(`/api/v1/channels/${c.id}/access`, {
     method: "PUT", body: JSON.stringify({ access: await accessList(access) })
   });
+  await loadChannels();
   return `${channelName}: ${access.map(([n, p]) => `${n}${p ? " (post)" : " (view)"}`).join(", ") || "administrators only"}`;
 }
 
