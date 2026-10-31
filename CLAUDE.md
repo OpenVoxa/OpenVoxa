@@ -111,7 +111,8 @@ _Last updated: 2026-10-30, at commit `ea617d3`._
 - Build-order step 9 (MLS for text) is functionally working on Docker:
   messages in an encrypted channel are ciphertext in Postgres (only the
   MLS framing header — group ID, epoch — is in the clear); plaintext
-  channels show plaintext. Verified single-user only.
+  channels show plaintext. Two-party test passed (ryan + staff): welcome
+  path works, pre-join messages unreadable, messages flow both ways.
 - Done: device identity + key packages; group create/join/catch-up;
   epoch-ordered commits with rebase; encrypted text end to end; own sent
   plaintext kept locally (MLS senders can't decrypt their own messages).
@@ -120,12 +121,11 @@ _Last updated: 2026-10-30, at commit `ea617d3`._
   download; breaks content-addressed dedup (accepted tradeoff). Encryption
   must not be called "done" until this is fixed.
 - Remaining, in order:
-  1. Two-party test: second account, "Add everyone", confirm it reads new
-     messages but not old ones (exercises welcome path + forward-secrecy
-     boundary on a real second device).
-  2. Encrypted attachments.
+  1. Encrypted attachments.
+  2. "Add everyone" should skip devices already in the group.
   3. Media keys from the MLS exporter secret (build-order step 10).
   4. Multi-party testing.
-  5. Local storage encryption (blocked on recovery keys).
+  5. Opt-in history sharing (Ryan wants it; see decisions.md Open items).
+  6. Local storage encryption (blocked on recovery keys).
 - Other open items (revoked-device removal, recovery keys, etc.) live in
   decisions.md "Open items" — check there before proposing new work.
