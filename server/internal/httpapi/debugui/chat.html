@@ -171,7 +171,6 @@
   <button id="joinVoice" disabled>Join</button>
   <button id="leaveVoice" disabled>Leave</button>
   <button id="muteToggle" disabled>Mute</button>
-  <button id="inviteVoice" disabled>Add everyone to voice</button>
   <div id="voiceCrypto" class="ptt-hint"></div>
   <label style="margin-top:.5rem">
     <input type="checkbox" id="pttMode"> push-to-talk
@@ -258,7 +257,6 @@
   <input type="file" id="file" multiple hidden>
   <button id="attach" disabled>Attach</button>
   <button id="gif" disabled hidden>GIF</button>
-  <button id="invite" hidden>Add everyone</button>
   <button id="send" disabled>Send</button>
 </div>
 
@@ -642,37 +640,6 @@ async function openGroup(channelId) {
   }
 }
 
-/** Add every other account's devices to a channel's group. */
-async function inviteEveryone(channelId = currentChannel) {
-  if (!session || !session.groups.isMember(channelId)) {
-    return line("err", "not a member of this group");
-  }
-
-  const users = await call("/api/v1/users");
-  const names = new Map(users.map((u) => [u.id, u.username]));
-  const others = users.filter((u) => u.id !== myUserID).map((u) => u.id);
-
-  if (!others.length) return line("sys", "no other accounts to add");
-
-  try {
-    const r = await session.groups.addMembers(channelId, others);
-    const list = (ids) => ids.map((id) => esc(names.get(id) || id)).join(", ");
-    if (r.added.length) {
-      line("sys", `added ${list(r.added)}; group is now at epoch ${r.epoch}`);
-    } else {
-      line("sys", `nothing to add; group stays at epoch ${r.epoch}`);
-    }
-    if (r.alreadyMembers.length) {
-      line("sys", `already in the group: ${list(r.alreadyMembers)}`);
-    }
-    if (r.skipped.length) {
-      line("sys", `skipped (no device registered yet): ${list(r.skipped)}`);
-    }
-  } catch (e) {
-    line("err", esc(e.message));
-  }
-}
-
 // ------------------------------------------------- automatic membership
 //
 // Membership follows channel access (decisions.md, Encryption). The
@@ -823,7 +790,6 @@ async function onGroupAdvanced() {
   if (!session.groups.isMember(channelId)) {
     const ready = await openGroup(channelId);
     if (ready) line("sys", "this device was added to the channel's encryption group");
-    if ($("invite")) $("invite").hidden = !ready;
     if (ready) session.groups.reconcileSoon(channelId);
     return;
   }
@@ -1559,7 +1525,6 @@ async function connect() {
 
   if (currentChannelEncrypted) {
     const ready = await openGroup(channelID);
-    if ($("invite")) $("invite").hidden = !ready;
     if (ready) session.groups.reconcileSoon(channelID);
     if (!ready) {
       // Still connect: the channel list and membership changes arrive
@@ -1567,8 +1532,6 @@ async function connect() {
       // finds out through it.
       line("sys", "connecting read-only until this device is added");
     }
-  } else {
-    if ($("invite")) $("invite").hidden = true;
   }
 
   // Two steps on purpose: browsers cannot set an Authorization header on a
@@ -2078,7 +2041,7 @@ let voiceLastError = 0;
 const VOICE_WAIT_MS = 60000;
 
 // Every group operation on the voice channel goes through this chain, so
-// a poll, a join event and an "add everyone" never run against the same
+// a poll and a join event never run against the same
 // group state at once (the later save would discard the earlier one).
 let voiceChain = Promise.resolve();
 function voiceGroupTask(fn) {
@@ -2120,7 +2083,6 @@ function stopVoiceCrypto() {
   voiceKeyEpoch = null;
   voiceChannelId = null;
   voiceCrypto("");
-  if ($("inviteVoice")) $("inviteVoice").disabled = true;
 }
 
 /**
@@ -2327,7 +2289,6 @@ async function joinVoice() {
 
   $("joinVoice").disabled = true;
   $("leaveVoice").disabled = false;
-  if ($("inviteVoice")) $("inviteVoice").disabled = false;
   renderParticipants();
 }
 
@@ -2340,10 +2301,6 @@ async function setMuted(muted) {
 
 $("joinVoice").onclick = () => joinVoice().catch((e) => line("err", esc(e.message)));
 $("leaveVoice").onclick = () => room?.disconnect();
-on("inviteVoice", "onclick", () =>
-  voiceGroupTask(() => inviteEveryone(voiceChannelId))
-    .then(() => syncVoiceKey())
-    .catch((e) => line("err", esc(e.message))));
 $("muteToggle").onclick = () => setMuted(!micTrack?.isMuted);
 
 $("pttMode").onchange = () => setMuted($("pttMode").checked);
@@ -2403,8 +2360,6 @@ $("connect").onclick = () => connect().catch((e) => {
 });
 $("disconnect").onclick = () => socket?.close();
 $("send").onclick = () => send().catch((e) => line("err", esc(e.message)));
-on("invite", "onclick", () =>
-  inviteEveryone().catch((e) => line("err", esc(e.message))));
 $("attach").onclick = () => $("file").click();
 $("file").onchange = (e) => {
   upload(e.target.files).catch((err) => line("err", esc(err.message)));

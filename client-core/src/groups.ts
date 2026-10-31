@@ -52,23 +52,6 @@ interface ServerGroupState {
 }
 
 /**
- * Outcome of addMembers, by user ID.
- *
- * added: at least one of their devices joined in this commit.
- * alreadyMembers: every device they have is already in the group.
- * skipped: they have no device that could be added.
- *
- * Each user lands in exactly one list. Someone whose laptop is already
- * in but whose new phone was just added counts as added.
- */
-export interface AddResult {
-  epoch: number;
-  added: string[];
-  alreadyMembers: string[];
-  skipped: string[];
-}
-
-/**
  * Outcome of reconcile, by device ID.
  *
  * removed: leaves taken out because their device lost access (or was a
@@ -540,42 +523,8 @@ export class Groups {
     return epochOf(state);
   }
 
-  /**
-   * Add every device belonging to the given users.
-   *
-   * Members are added per device, not per account: each device is its own
-   * leaf, which is what lets someone read a channel on a laptop and a
-   * phone without either holding the other's keys.
-   */
-  async addMembers(channelId: string, userIds: string[]): Promise<AddResult> {
-    return this.#serial(channelId, async () => {
-      const state = this.#requireState(channelId);
-      const { pending, alreadyMembers, skipped } = await this.#claim(
-        channelId,
-        userIds,
-        this.#mls.memberIdentities(state),
-      );
-
-      if (pending.length === 0) {
-        if (alreadyMembers.length > 0) {
-          // Nothing new to add. No commit, so the epoch does not move.
-          return { epoch: epochOf(state), added: [], alreadyMembers, skipped };
-        }
-        throw new Error("groups: none of those accounts have a device to add");
-      }
-
-      const { epoch, done: committed } = await this.#addPending(channelId, pending);
-
-      // Someone else's commit may have added some of these devices while
-      // we were rebasing. Report those users as already members unless
-      // another of their devices went in with our commit.
-      const added = [...new Set(committed.map((p) => p.user_id))];
-      for (const userId of new Set(pending.map((p) => p.user_id))) {
-        if (!added.includes(userId)) alreadyMembers.push(userId);
-      }
-      return { epoch, added, alreadyMembers, skipped };
-    });
-  }
+  // There is deliberately no public "add these users": membership follows
+  // channel access (decisions.md), so reconcile is the only way in.
 
   /**
    * Make the group's membership match who may view the channel.
