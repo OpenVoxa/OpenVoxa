@@ -389,7 +389,17 @@ export class Groups {
         for (const w of found.stale) {
           await this.#ackWelcome(w.id).catch(() => undefined);
         }
-        return { ...result, replaced };
+        // The newest welcome can still be behind the group (this device
+        // was added, then others committed while it was away).
+        try {
+          const epoch = await this.#catchUp(channelId);
+          return { ...result, epoch, replaced };
+        } catch (err) {
+          // Removed again after that welcome. The welcome is spent, so
+          // the next look joins from the GroupInfo instead.
+          if (!(err instanceof RemovedFromGroup) || attempt + 1 >= MAX_OPEN_ATTEMPTS) throw err;
+          return this.#open(channelId, attempt + 1);
+        }
       }
       // No local key package matches it. The GroupInfo route below
       // needs none, so fall through rather than give up.
@@ -745,7 +755,20 @@ export class Groups {
         if (entry.sender_device_id === this.#deviceId) break;
 
         const before = this.#mls.memberIdentities(state);
-        const result = await this.#mls.decrypt(state, fromBase64(entry.blob));
+        let result;
+        try {
+          result = await this.#mls.decrypt(state, fromBase64(entry.blob));
+        } catch {
+          // A commit this device cannot apply means it can no longer
+          // follow the group, and the usual reason is that the commit
+          // removed it: ts-mls throws ("Could not find common ancestor",
+          // "Invalid array length") instead of reporting the removal when
+          // removing the rightmost leaves shrinks the tree past this
+          // device's own (decisions.md, ts-mls list). Either way the
+          // state is useless; drop it and rejoin like any removed device.
+          await this.#forget(channelId);
+          throw new RemovedFromGroup(channelId);
+        }
         state = result.state;
         applied++;
 

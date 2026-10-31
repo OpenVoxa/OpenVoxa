@@ -98,7 +98,7 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
 - Ratchet trees travel as tagged JSON (our own codec): watch
   `Uint8Array`, `BigInt`, and `undefined`-vs-`null` blank nodes.
 - ts-mls docs describe intent, not return shapes — **verify API shapes
-  by experiment/types, never from the README.** See the ten listed
+  by experiment/types, never from the README.** See the eleven listed
   gotchas in decisions.md Implementation notes.
 - `chat.html` is one script: a throw while wiring handlers silently
   kills every handler after it. Attach new controls via the warn-not-
