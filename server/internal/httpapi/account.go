@@ -65,6 +65,7 @@ func (a *API) deleteOwnAccount(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("account deleted", "user_id", session.UserID, "by", "self")
 	a.hub.DisconnectUser(session.UserID)
+	a.kickFromLostVoice(session.UserID)
 	a.NotifyUserPurged(session.UserID)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -128,6 +129,7 @@ func (a *API) deleteUser(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("account deleted", "user_id", subjectID, "by", actor.UserID)
 	a.hub.DisconnectUser(subjectID)
+	a.kickFromLostVoice(subjectID)
 	a.NotifyUserPurged(subjectID)
 	w.WriteHeader(http.StatusNoContent)
 }

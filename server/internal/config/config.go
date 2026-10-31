@@ -51,6 +51,11 @@ type LiveKitConfig struct {
 	URL       string
 	APIKey    string
 	APISecret string
+
+	// APIURL is where THIS SERVER reaches LiveKit's HTTP API, to remove a
+	// participant who lost access. Inside Docker that is the service name
+	// (http://livekit:7880); left empty it is derived from URL.
+	APIURL string
 }
 
 // Load reads configuration from the environment. Required values with no
@@ -73,6 +78,7 @@ func Load() (*Config, error) {
 			URL:       os.Getenv("OPENVOXA_LIVEKIT_URL"),
 			APIKey:    os.Getenv("OPENVOXA_LIVEKIT_API_KEY"),
 			APISecret: os.Getenv("OPENVOXA_LIVEKIT_API_SECRET"),
+			APIURL:    os.Getenv("OPENVOXA_LIVEKIT_API_URL"),
 		},
 	}
 

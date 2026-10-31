@@ -64,6 +64,9 @@ services:
       OPENVOXA_LIVEKIT_URL: "${OPENVOXA_LIVEKIT_URL}"
       OPENVOXA_LIVEKIT_API_KEY: "${LIVEKIT_API_KEY}"
       OPENVOXA_LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET}"
+      # Where the server itself calls LiveKit, to remove someone from a
+      # call when they lose access. Internal, so no TLS or proxy involved.
+      OPENVOXA_LIVEKIT_API_URL: "${OPENVOXA_LIVEKIT_API_URL:-http://livekit:7880}"
 
       # Per-file upload ceiling. Operators pay for the disk and the
       # bandwidth, so operators set it.

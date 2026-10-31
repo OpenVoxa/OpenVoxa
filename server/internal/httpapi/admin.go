@@ -182,6 +182,7 @@ func (a *API) setUserRole(w http.ResponseWriter, r *http.Request) {
 	// After the event, so the subject's open connections hear about the
 	// change before any of them are closed.
 	a.closeLostChannels(r.Context(), subjectID)
+	a.kickFromLostVoice(subjectID)
 
 	writeJSON(w, http.StatusOK, userSummary{
 		ID: subjectID, Username: username, Role: newRole.String(),

@@ -550,6 +550,9 @@ func (a *API) banUser(w http.ResponseWriter, r *http.Request) {
 	// carries on posting until they disconnect.
 	a.hub.DisconnectUser(subjectID)
 
+	// Likewise a call: the voice token only gated joining.
+	a.kickFromLostVoice(subjectID)
+
 	if req.PurgeMessages {
 		// Reuse the account-deletion event: connected clients already
 		// know how to turn one user's messages into tombstones on sight.
