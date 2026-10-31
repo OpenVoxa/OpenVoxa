@@ -78,6 +78,7 @@ export async function setUpIdentity(
   userId: string,
   label: string,
 ): Promise<IdentityStatus> {
+  await storage.useAccount(userId);
   const mls = createMlsProvider();
   await mls.init();
 
@@ -99,11 +100,50 @@ export interface Session {
   readonly status: IdentityStatus;
 }
 
+/** Account locks this page already holds; see holdAccountLock. */
+const heldLocks = new Set<string>();
+
+/**
+ * Claim this account's keys for this page, for as long as it is open.
+ *
+ * Two tabs of one account in one browser share a device: the same keys
+ * and the same stored group states. Each would advance its own copy and
+ * overwrite the other's, and the group breaks. So only one tab per
+ * account and browser may hold the keys, using the Web Locks API, which
+ * releases the lock when the tab closes. Without that API (Node, very
+ * old browsers) nothing is checked.
+ */
+async function holdAccountLock(userId: string): Promise<boolean> {
+  const name = `openvoxa-account-${userId}`;
+  if (heldLocks.has(name)) return true;
+  const locks = (globalThis as { navigator?: { locks?: LockManager } }).navigator?.locks;
+  if (!locks) return true;
+  return new Promise<boolean>((resolve) => {
+    void locks.request(name, { ifAvailable: true }, (lock) => {
+      if (!lock) {
+        resolve(false);
+        return;
+      }
+      heldLocks.add(name);
+      resolve(true);
+      return new Promise<void>(() => {}); // held until the page goes away
+    });
+  });
+}
+
 export async function startSession(
   call: ApiCall,
   userId: string,
   label: string,
 ): Promise<Session> {
+  await storage.useAccount(userId);
+  if (!(await holdAccountLock(userId))) {
+    throw new Error(
+      "this account is already open in another tab of this browser; " +
+        "encryption works in one tab at a time, so close the other one and reload",
+    );
+  }
+
   const mls = createMlsProvider();
   await mls.init();
 

@@ -347,7 +347,12 @@ export class Groups {
     const stored = (await storage.getGroup(channelId)) as Uint8Array | undefined;
     if (stored) {
       const state = restoreState(stored);
-      if (remote.exists && this.#generationOf(channelId, state) !== remote.generation) {
+      if (!this.#isOwnState(state)) {
+        // Another device's state, which only shared browser storage can
+        // produce. Using it made this device remove its own real leaf as
+        // a "duplicate" and rejoin, forever. Drop it and join properly.
+        await this.#forget(channelId);
+      } else if (remote.exists && this.#generationOf(channelId, state) !== remote.generation) {
         // Replaced while this device was away. Nothing in the old state
         // applies to the new group.
         await this.#forget(channelId);
@@ -409,6 +414,13 @@ export class Groups {
       detail: "the encryption group kept changing while joining; try again in a moment",
       replaced,
     };
+  }
+
+  /** Whether a state's own leaf carries this device's ID. */
+  #isOwnState(state: unknown): boolean {
+    const own = this.#mls.ownLeafIndex(state);
+    const leaf = this.#mls.memberLeaves(state).find((l) => l.leafIndex === own);
+    return leaf?.identity === this.#deviceId;
   }
 
   async #remote(channelId: string): Promise<ServerGroupState> {
