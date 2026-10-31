@@ -217,9 +217,18 @@ export class Groups {
       return this.#create(channelId);
     }
 
-    const welcome = await this.#findWelcome(channelId);
-    if (welcome) {
-      return this.#join(channelId, welcome);
+    const found = await this.#findWelcome(channelId);
+    if (found) {
+      const result = await this.#join(channelId, found.newest);
+      if (result.status === "joined") {
+        // Clear out the superseded welcomes so they are not offered
+        // again. Best effort: leaving one behind costs a wasted lookup,
+        // not correctness, since the newest is always chosen.
+        for (const w of found.stale) {
+          await this.#ackWelcome(w.id).catch(() => undefined);
+        }
+      }
+      return result;
     }
 
     return {
@@ -288,12 +297,33 @@ export class Groups {
     return { status: "created", epoch: epochOf(state) };
   }
 
-  async #findWelcome(channelId: string): Promise<PendingWelcome | null> {
+  /**
+   * The newest welcome for this channel.
+   *
+   * There can be several: a device removed and re-added while it was
+   * offline has a welcome from each add. Only the newest is still good -
+   * the older ones lead into epochs this device was later removed from -
+   * so the rest are kept aside to be discarded once the join succeeds.
+   */
+  async #findWelcome(
+    channelId: string,
+  ): Promise<{ newest: PendingWelcome; stale: PendingWelcome[] } | null> {
     const pending = (await this.#call(
       `/api/v1/mls/welcomes?device_id=${encodeURIComponent(this.#deviceId)}`,
     )) as PendingWelcome[];
 
-    return pending.find((w) => w.channel_id === channelId) ?? null;
+    const mine = pending
+      .filter((w) => w.channel_id === channelId)
+      .sort((a, b) => b.epoch - a.epoch || b.id - a.id);
+    const [newest, ...stale] = mine;
+    return newest ? { newest, stale } : null;
+  }
+
+  async #ackWelcome(id: number): Promise<void> {
+    await this.#call(`/api/v1/mls/welcomes/${id}/ack`, {
+      method: "POST",
+      body: JSON.stringify({ device_id: this.#deviceId }),
+    });
   }
 
   async #join(channelId: string, welcome: PendingWelcome): Promise<OpenResult> {
@@ -337,10 +367,7 @@ export class Groups {
     // Acknowledged only after the state is stored. Acknowledging on
     // receipt would mean a failure here leaves this device outside the
     // group with nothing left to retry from.
-    await this.#call(`/api/v1/mls/welcomes/${welcome.id}/ack`, {
-      method: "POST",
-      body: JSON.stringify({ device_id: this.#deviceId }),
-    });
+    await this.#ackWelcome(welcome.id);
 
     // A key package is single use. Keeping it would invite reuse, which
     // is the forward secrecy failure the whole design is built to avoid.
