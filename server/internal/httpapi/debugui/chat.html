@@ -711,15 +711,10 @@ function onAutoReconcile(ev) {
     return line("err", `${where} membership: ${esc(ev.error?.message || String(ev.error))}`);
   }
 
+  // Who was added or removed is announced by onMembershipChange, on
+  // every member's screen alike; only what this device could not do is
+  // reported here.
   const r = ev.result;
-  if (r.removed.length) {
-    line("sys", `${where} encryption group: removed ${r.removed.length} device(s) ` +
-      `that lost access (${r.removed.map(short).join(", ")}); epoch ${r.epoch}`);
-  }
-  if (r.added.length) {
-    line("sys", `${where} encryption group: added ${r.added.length} device(s) ` +
-      `(${r.added.map(short).join(", ")}); epoch ${r.epoch}`);
-  }
   const skipped = r.skipped.slice().sort().join(",");
   if (skipped !== (lastSkipped.get(ev.channelId) || "")) {
     lastSkipped.set(ev.channelId, skipped);
@@ -737,6 +732,62 @@ function onAutoReconcile(ev) {
       if (isRemoved(e)) onRemovedFromGroup(voiceChannelId);
       else line("err", `voice key: ${esc(e.message)}`);
     });
+  }
+}
+
+// ------------------------------------------------ join and leave notices
+//
+// Every device joining or leaving an encrypted channel is announced to
+// everyone in it. That is what keeps automatic membership honest: the
+// server decides who may join, so a device it slipped in has to be
+// visible (decisions.md, Known tensions). client-core works the changes
+// out from the MLS group itself; the names next to them are the server's
+// word, which is why the device ID is always shown as well.
+
+// Loading history clears the log, so notices that arrive while a channel
+// is opening are held and shown after its history.
+let holdNotices = false;
+let heldNotices = [];
+
+function noticeLine(text) {
+  if (holdNotices) heldNotices.push(text);
+  else line("sys", text);
+}
+
+function releaseNotices() {
+  holdNotices = false;
+  const held = heldNotices;
+  heldNotices = [];
+  for (const text of held) line("sys", text);
+}
+
+function describeDevice(d) {
+  if (session && d.deviceId === session.status.deviceId) return "this device";
+  const owner = d.username ? `${esc(d.username)}'s device` : "an unknown device";
+  const label = d.label ? ` "${esc(d.label)}"` : "";
+  return `${owner}${label} [${short(d.deviceId)}]${d.revoked ? " (revoked)" : ""}`;
+}
+
+function describeCommitter(change) {
+  if (change.self) return "this device";
+  if (!change.by) return "a member";
+  return change.by.username ? esc(change.by.username) : `device [${short(change.by.deviceId)}]`;
+}
+
+function onMembershipChange(change) {
+  let where;
+  if (change.channelId === currentChannel && currentChannelEncrypted) where = "";
+  else if (change.channelId === voiceChannelId) where = "voice: ";
+  else return;
+
+  const by = describeCommitter(change);
+  for (const d of change.joined) {
+    noticeLine(`${where}${describeDevice(d)} joined the encryption group ` +
+      `(added by ${by}, epoch ${change.epoch})`);
+  }
+  for (const d of change.left) {
+    noticeLine(`${where}${describeDevice(d)} was removed from the encryption group ` +
+      `(by ${by}, epoch ${change.epoch})`);
   }
 }
 
@@ -805,6 +856,7 @@ async function setUpIdentity() {
     );
     const status = session.status;
     session.groups.onAuto(onAutoReconcile);
+    session.groups.onMembership(onMembershipChange);
 
     $("idStatus").textContent =
       `device ${status.deviceId.slice(0, 8)} - ` +
@@ -1499,6 +1551,8 @@ async function connect() {
   const channelID = $("channel").value;
   currentChannel = channelID;
   currentChannelEncrypted = opt?.dataset.encrypted === "1";
+  holdNotices = true;
+  heldNotices = [];
 
   if (currentChannelEncrypted) {
     const ready = await openGroup(channelID);
@@ -1538,6 +1592,7 @@ async function connect() {
   };
 
   socket.onclose = () => {
+    releaseNotices();
     awaitingEcho.length = 0;
     $("status").textContent = "disconnected";
     $("connect").disabled = false;
@@ -1558,6 +1613,9 @@ async function connect() {
       logEl.innerHTML = "";
       line("sys", `${frame.messages.length} earlier message(s)`);
       for (const m of frame.messages) enqueueInbound(m);
+      // After the history renders, not before: it goes through the same
+      // queue, so held notices land below the messages they followed.
+      inbound = inbound.then(releaseNotices);
 
       // The server decides; this only reflects its answer in the UI.
       if (!frame.can_post) {
@@ -2335,7 +2393,11 @@ async function deleteAccount() {
 $("deleteAccount").onclick = () => deleteAccount().catch((e) => line("err", esc(e.message)));
 $("login").onclick = () => authenticate("/api/v1/auth/login");
 $("register").onclick = () => authenticate("/api/v1/auth/register");
-$("connect").onclick = () => connect().catch((e) => line("err", esc(e.message)));
+$("connect").onclick = () => connect().catch((e) => {
+  // Failed before a socket existed, so no history will release them.
+  releaseNotices();
+  line("err", esc(e.message));
+});
 $("disconnect").onclick = () => socket?.close();
 $("send").onclick = () => send().catch((e) => line("err", esc(e.message)));
 on("invite", "onclick", () =>

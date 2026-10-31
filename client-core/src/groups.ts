@@ -101,6 +101,51 @@ export type AutoEvent =
   | { kind: "removed"; channelId: string }
   | { kind: "error"; channelId: string; error: unknown };
 
+/**
+ * A device named in a membership notice.
+ *
+ * deviceId comes from the MLS credential in the ratchet tree and is the
+ * part that cannot be faked by the server. The rest is the server's claim
+ * about who owns it, and is missing if the lookup failed.
+ */
+export interface DeviceInfo {
+  deviceId: string;
+  userId?: string;
+  username?: string;
+  label?: string;
+  revoked?: boolean;
+}
+
+/**
+ * Who joined or left a group in one commit.
+ *
+ * Worked out by this device from its own group state before and after
+ * the commit, never from anything the server says, so a device cannot
+ * be added without every member seeing it (decisions.md, Known tensions).
+ * Reported for commits this device made and for ones it caught up on,
+ * including those made while it was offline.
+ *
+ * by: the device that submitted the commit, null when not recorded.
+ * self: this device made the commit.
+ */
+export interface MembershipChange {
+  channelId: string;
+  epoch: number;
+  joined: DeviceInfo[];
+  left: DeviceInfo[];
+  by: DeviceInfo | null;
+  self: boolean;
+}
+
+/** A change still holding raw device IDs; see #announce. */
+interface RawChange {
+  channelId: string;
+  epoch: number;
+  joined: string[];
+  left: string[];
+  by: string | null;
+}
+
 /** Wait after the first trigger, so a burst of events costs one run. */
 const RECONCILE_DEBOUNCE_MS = 300;
 
@@ -214,6 +259,14 @@ export class Groups {
   readonly #autoAgain = new Set<string>();
 
   readonly #autoListeners = new Set<(event: AutoEvent) => void>();
+
+  readonly #membershipListeners = new Set<(change: MembershipChange) => void>();
+
+  /** Who owns each device ID seen so far; see #describe. */
+  readonly #names = new Map<string, DeviceInfo>();
+
+  /** Notices are named and delivered strictly in order through this. */
+  #notices: Promise<void> = Promise.resolve();
 
   constructor(mls: MlsProvider, call: ApiCall, deviceId: string) {
     this.#mls = mls;
@@ -442,6 +495,7 @@ export class Groups {
       if (entries.length === 0) break;
 
       let applied = 0;
+      const changes: RawChange[] = [];
       for (const entry of entries) {
         if (entry.epoch < epochOf(state)) continue;
 
@@ -453,6 +507,7 @@ export class Groups {
         // failing with an opaque OperationError.
         if (entry.sender_device_id === this.#deviceId) break;
 
+        const before = this.#mls.memberIdentities(state);
         const result = await this.#mls.decrypt(state, fromBase64(entry.blob));
         state = result.state;
         applied++;
@@ -464,9 +519,17 @@ export class Groups {
           await this.#forget(channelId);
           throw new RemovedFromGroup(channelId);
         }
+
+        changes.push(
+          this.#diff(channelId, epochOf(state), before, this.#mls.memberIdentities(state),
+            entry.sender_device_id),
+        );
       }
 
       await this.#persist(channelId, state);
+      // Only once the state is saved: a notice for a change this device
+      // then forgot would be repeated after a reload.
+      for (const change of changes) this.#announce(change);
 
       // The server pages handshakes, so keep asking until a request adds
       // nothing. Stopping on a full page would silently leave a device
@@ -546,6 +609,7 @@ export class Groups {
         `/api/v1/channels/${channelId}/mls/allowed-devices`,
       )) as AllowedDevice[];
       const allowedIds = new Set(allowed.map((d) => d.device_id));
+      for (const d of allowed) this.#remember(d);
 
       // 1. Removals. The leaves are looked up again on every attempt,
       // from the state the commit is built on: after a rebase the same
@@ -674,6 +738,98 @@ export class Groups {
       Math.min(ahead, RECONCILE_MAX_RANK) * RECONCILE_STAGGER_MS +
       Math.floor(Math.random() * RECONCILE_JITTER_MS)
     );
+  }
+
+  /**
+   * Hear who joins and leaves each group. Returns a function that stops it.
+   */
+  onMembership(listener: (change: MembershipChange) => void): () => void {
+    this.#membershipListeners.add(listener);
+    return () => this.#membershipListeners.delete(listener);
+  }
+
+  #diff(
+    channelId: string,
+    epoch: number,
+    before: string[],
+    after: string[],
+    by: string | null,
+  ): RawChange {
+    const was = new Set(before);
+    const now = new Set(after);
+    return {
+      channelId,
+      epoch,
+      joined: [...now].filter((id) => !was.has(id)),
+      left: [...was].filter((id) => !now.has(id)),
+      by,
+    };
+  }
+
+  /**
+   * Name the devices in a change and tell listeners.
+   *
+   * Runs behind the group operation that found the change rather than
+   * inside it, so a slow name lookup never holds up the channel. The
+   * shared queue keeps notices in the order the changes happened.
+   */
+  #announce(raw: RawChange): void {
+    if (raw.joined.length === 0 && raw.left.length === 0) return;
+    if (this.#membershipListeners.size === 0) return;
+
+    this.#notices = this.#notices.then(async () => {
+      const ids = [...raw.joined, ...raw.left, ...(raw.by ? [raw.by] : [])];
+      await this.#describe(raw.channelId, ids, raw.left);
+      const info = (id: string): DeviceInfo => this.#names.get(id) ?? { deviceId: id };
+      const change: MembershipChange = {
+        channelId: raw.channelId,
+        epoch: raw.epoch,
+        joined: raw.joined.map(info),
+        left: raw.left.map(info),
+        by: raw.by ? info(raw.by) : null,
+        self: raw.by === this.#deviceId,
+      };
+      for (const listener of this.#membershipListeners) {
+        try {
+          listener(change);
+        } catch {
+          // One broken listener must not silence the rest.
+        }
+      }
+    });
+  }
+
+  /**
+   * Look up owners for device IDs not already known.
+   *
+   * Most are known from the allowed list reconcile fetches. Leavers
+   * usually are not on it any more, since losing access is why they left. A failed lookup is not an error: the
+   * notice still goes out, naming the device by ID.
+   */
+  async #describe(channelId: string, ids: string[], fresh: string[]): Promise<void> {
+    // Leavers are always looked up again: a cached entry from the allowed
+    // list predates the revocation or ban that is probably the reason.
+    const again = new Set(fresh);
+    const unknown = [...new Set(ids)].filter((id) => again.has(id) || !this.#names.has(id));
+    if (unknown.length === 0) return;
+    try {
+      const found = (await this.#call(
+        `/api/v1/channels/${channelId}/mls/device-names?ids=${unknown.map(encodeURIComponent).join(",")}`,
+      )) as Array<AllowedDevice & { revoked: boolean }>;
+      for (const d of found) this.#remember(d);
+    } catch {
+      // Names are a courtesy; the device ID is the announcement.
+    }
+  }
+
+  #remember(d: AllowedDevice & { revoked?: boolean }): void {
+    this.#names.set(d.device_id, {
+      deviceId: d.device_id,
+      userId: d.user_id,
+      username: d.username,
+      label: d.label,
+      revoked: d.revoked ?? false,
+    });
   }
 
   #emit(event: AutoEvent): void {
@@ -835,6 +991,10 @@ export class Groups {
         // needed in case we lost the race (see spentWiper in tsmls.ts).
         await this.#persist(channelId, commit.state);
         commit.wipeSpent();
+        this.#announce(
+          this.#diff(channelId, response.epoch, this.#mls.memberIdentities(state),
+            this.#mls.memberIdentities(commit.state), this.#deviceId),
+        );
         return { epoch: response.epoch, done: built.done };
       } catch (err) {
         if (!this.#isEpochConflict(err)) throw err;
