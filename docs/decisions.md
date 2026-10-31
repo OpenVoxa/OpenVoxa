@@ -604,7 +604,9 @@ authenticated once, at upgrade, and then runs until it is closed. Deleting
 sessions stops the next request and does nothing to a socket already open,
 so a banned user kept posting until they happened to disconnect. The hub
 tracks which user owns each connection and closes them on ban or account
-deletion. Any future change that revokes access, including role demotion,
+deletion. A role change re-checks each channel the subject has a socket
+open to and closes only the ones they can no longer view
+(`closeLostChannels`, 2026-10-31). Any future change that revokes access
 needs the same treatment.
 
 **Index predicates cannot reference `now()`.** Postgres requires them to
@@ -782,6 +784,23 @@ its voice group when someone joins, on any decryption error, and every 5
 seconds. Cheap at this scale; a socket subscribed to several channels
 would replace it.
 
+**Background reconciles are triggered by hints and staggered by leaf.**
+Every online member hears the same events, and if all reconciled at
+once each would claim a single-use key package for the same new device;
+only one commit wins and the other packages are burned. So
+`groups.reconcileSoon` debounces (300 ms), coalesces (one run at a time
+per channel, plus at most one queued), and waits 1.5 s per member leaf
+ahead of its own (capped at 8, plus jitter). The lowest leaf goes first;
+later members catch up on its commit and find nothing to do. Nothing
+depends on this for correctness: the epoch compare-and-swap still
+prevents a fork. Hints, 2026-10-31: the group was opened, a commit
+landed (`group_advanced`, and the 5 s voice poll), `role_changed`,
+`user_purged`, and a new `access_changed` event the server sends on ban,
+unban, device revoke and key package publish. Publish rather than
+device registration, because a device is not addable until it has
+packages; it also re-adds a device that was skipped for running dry.
+Temporary bans expiring send nothing; the next hint picks them up.
+
 **External commit works in ts-mls 1.6.2.** Proven in Node on
 2026-10-30 (throwaway script, not committed), with states round-tripped
 through `encodeGroupState` as the browser does:
@@ -916,7 +935,10 @@ reconcile removes duplicates of its own device ID only.
      toggled user/moderator): nothing added without access; staff added
      (epoch 1), removed (2), re-added (3) while offline; staff then joined
      from the newest welcome at epoch 3 and messages flowed both ways
-   - ⬜ Triggers, join/leave notices
+   - 🔶 Triggers built 2026-10-31 (`reconcileSoon`, `access_changed`,
+     demotion closes lost sockets, chat.html handles `RemovedFromGroup`
+     and joins on `group_advanced` while waiting); not yet verified
+   - ⬜ Join/leave notices
    - ⬜ External join and stuck-group reset
 12. ⬜ Custom permission groups replacing the fixed roles
 13. ⬜ The real client: `client-web`, `client-desktop`
@@ -933,9 +955,10 @@ reconcile removes duplicates of its own device ID only.
 - [ ] Guest accounts can be assigned but there is no anonymous or invite
       flow to create one
 - [ ] Reproducible builds
-- [ ] Role demotion does not reach a live websocket. A demoted moderator
-      keeps whatever their open connection already permits until they
-      reconnect. Same fix as bans: close or re-evaluate the connection.
+- [x] Role demotion does not reach a live websocket. Fixed 2026-10-31:
+      sockets to channels the account can no longer view are closed.
+      A promotion still leaves an open read-only socket read-only until
+      it reconnects (`can_post` is fixed at upgrade).
 - [ ] Nothing reads `moderation_log` yet. The data accumulates; a review
       interface does not exist.
 - [ ] Reports in encrypted channels will need MLS signature verification
@@ -986,9 +1009,11 @@ reconcile removes duplicates of its own device ID only.
 - [x] The commit endpoint checks that each welcome's recipient device
       belongs to an account with access to the channel (step 11, server
       side). The whole commit is refused if one does not.
-- [ ] Group membership is still manual in the debug page ("Add
-      everyone", "Add everyone to voice"). Policy decided (membership
-      follows access, see Encryption); build-order step 11.
+- [ ] The "Add everyone" buttons in the debug page are now redundant
+      (membership is automatic since step 11 triggers) and go in step 7
+      of the step 11 plan. A new device can only join a call while
+      someone already in that voice group is in the call, until external
+      join exists.
 - [ ] LiveKit's `encryption` option also turns on data channel
       encryption. Nothing uses data channels yet; anything that does
       later gets it for free, but must not assume the SFU can read them.
