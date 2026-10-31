@@ -113,7 +113,7 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
 
 ## Current state (update every session)
 
-_Last updated: 2026-10-31, step 11 complete (step 8 verified on Docker)._
+_Last updated: 2026-10-31, step 11 complete; multi-party testing done. Next: step 12._
 
 - Build-order step 9 (MLS for text) is functionally working on Docker:
   messages in an encrypted channel are ciphertext in Postgres (only the
@@ -159,7 +159,14 @@ _Last updated: 2026-10-31, step 11 complete (step 8 verified on Docker)._
      Group ops serialised per channel; commit keys wiped only after the
      server accepts; removes and adds in separate commits. Never pass
      `resync = true` (hangs). All in decisions.md Impl. notes.
-  2. Multi-party testing.
+  2. Multi-party testing: DONE 2026-10-31 (ryan + staff + tester):
+     three-way text and voice, add/remove with two members watching (one
+     commit each), removal from a live call. Found and fixed: shared
+     browser storage between accounts (per-account DB + one tab per
+     account), ts-mls throwing on removal at the tree's end (catch-up
+     rejoins), banned users staying in calls (LiveKit RemoveParticipant +
+     old media keys retired after 10 s). Cosmetic: a kicked client says
+     "left voice", not "removed by the server".
   3. Custom permission groups (step 12).
   4. Opt-in history sharing (Ryan wants it; see decisions.md Open items).
   5. Local storage encryption (blocked on recovery keys).
