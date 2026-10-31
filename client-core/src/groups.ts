@@ -2,7 +2,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import type { CommitResult, MemberLeaf, MlsProvider, WireMessage } from "./mls/provider.js";
-import { encodeState, restoreState, encodeTree, decodeTree, epochOf } from "./mls/tsmls.js";
+import {
+  encodeState,
+  restoreState,
+  encodeTree,
+  decodeTree,
+  epochOf,
+  groupIdOf,
+} from "./mls/tsmls.js";
 import { storage } from "./storage.js";
 import type { ApiCall } from "./identity.js";
 
@@ -21,6 +28,22 @@ import type { ApiCall } from "./identity.js";
 
 /** How many times to rebase a commit that lost an epoch race. */
 const MAX_COMMIT_ATTEMPTS = 4;
+
+/**
+ * How many times open() looks again after losing a race to join or
+ * replace a group (someone committed, joined or reset in between).
+ */
+const MAX_OPEN_ATTEMPTS = 3;
+
+/**
+ * Separates the channel ID from the generation in an MLS group ID.
+ *
+ * A replaced group (see #reset) gets a new group ID, so a device holding
+ * the old group's state can tell the two apart. Generation 0 is the bare
+ * channel ID, which is what every group created before resets existed
+ * already uses.
+ */
+const GENERATION_SEP = "#";
 
 /** Exporter label for voice and screen-share keys. Changing it changes every key. */
 const MEDIA_KEY_LABEL = "OpenVoxa media key v1";
@@ -43,12 +66,36 @@ export interface OpenResult {
   readonly status: GroupStatus;
   readonly epoch: number;
   readonly detail?: string;
+  /**
+   * How a "joined" device got in: a member added it ("welcome"), or it
+   * joined on its own from the published GroupInfo ("external").
+   */
+  readonly via?: "welcome" | "external";
+  /**
+   * The group this device knew, or the one on the server, was replaced
+   * (decisions.md, "replaced, not rescued"). Set on "created" when this
+   * device did the replacing, and on any result when it found its old
+   * state belonged to a replaced group. Messages it had not already
+   * decrypted can no longer be read.
+   */
+  readonly replaced?: boolean;
 }
 
 interface ServerGroupState {
   exists: boolean;
   epoch: number;
+  generation: number;
+  group_info_epoch: number | null;
   reason?: string;
+}
+
+/** GET /channels/{id}/mls/group-info. */
+interface GroupInfoResponse {
+  generation: number;
+  epoch: number;
+  group_info_epoch: number | null;
+  /** Base64; empty when no member has uploaded one. */
+  group_info: string;
 }
 
 /**
@@ -73,6 +120,8 @@ export interface ReconcileResult {
  * reconciled: a run finished; result says what changed (often nothing).
  * removed: this device turned out not to be in the group any more. Its
  *   state is gone; opening the channel again rejoins if re-added.
+ *   replaced: it is out because the whole group was replaced, not
+ *   because it lost access, so opening again rejoins straight away.
  * error: the run failed for a reason worth showing.
  *
  * A run where this device may no longer view the channel reports
@@ -81,7 +130,7 @@ export interface ReconcileResult {
  */
 export type AutoEvent =
   | { kind: "reconciled"; channelId: string; result: ReconcileResult }
-  | { kind: "removed"; channelId: string }
+  | { kind: "removed"; channelId: string; replaced: boolean }
   | { kind: "error"; channelId: string; error: unknown };
 
 /**
@@ -154,6 +203,20 @@ export class RemovedFromGroup extends Error {
   constructor(readonly channelId: string) {
     super("groups: this device was removed from the channel's encryption group");
     this.name = "RemovedFromGroup";
+  }
+}
+
+/**
+ * The channel's group was replaced while this device held the old one
+ * (decisions.md, "replaced, not rescued"). Its state is gone, as with any
+ * removal, but it has not lost access: opening the channel joins the new
+ * group.
+ */
+export class GroupReset extends RemovedFromGroup {
+  constructor(channelId: string) {
+    super(channelId);
+    this.name = "GroupReset";
+    this.message = "groups: this channel's encryption group was replaced; rejoin it";
   }
 }
 
@@ -260,35 +323,52 @@ export class Groups {
   /**
    * Make this device a working member of a channel's group.
    *
-   * Four outcomes, in the order they are attempted: already a member and
-   * caught up; no group exists so create one; a welcome is waiting so
-   * join; or the group exists and nobody has added us, which is not an
-   * error but a state the interface has to show.
+   * In the order they are attempted: already a member, so catch up; no
+   * group exists, so create one; a member added this device, so join
+   * from the welcome; otherwise join on its own from the GroupInfo the
+   * group publishes (external commit); and if there is no usable
+   * GroupInfo, nobody with access can commit to the group any more, so
+   * replace it (decisions.md, "replaced, not rescued").
+   *
+   * Joining from the GroupInfo does not wait for a member to come along
+   * and add this device. It is announced and access-checked exactly like
+   * an add, uses no key package, and works whether or not anyone is
+   * online. If a member's add lands first, the external commit loses the
+   * epoch race and the next attempt takes the welcome instead.
    */
   async open(channelId: string): Promise<OpenResult> {
-    return this.#serial(channelId, () => this.#open(channelId));
+    return this.#serial(channelId, () => this.#open(channelId, 0));
   }
 
-  async #open(channelId: string): Promise<OpenResult> {
-    const stored = (await storage.getGroup(channelId)) as Uint8Array | undefined;
+  async #open(channelId: string, attempt: number): Promise<OpenResult> {
+    let remote = await this.#remote(channelId);
+    let replaced = false;
 
+    const stored = (await storage.getGroup(channelId)) as Uint8Array | undefined;
     if (stored) {
       const state = restoreState(stored);
-      this.#states.set(channelId, state);
-      try {
-        const epoch = await this.#catchUp(channelId);
-        return { status: "ready", epoch };
-      } catch (err) {
-        // Removed while we were away. The stale state is already gone;
-        // carry on as a newcomer, which picks up a welcome if someone
-        // has added this device back.
-        if (!(err instanceof RemovedFromGroup)) throw err;
+      if (remote.exists && this.#generationOf(channelId, state) !== remote.generation) {
+        // Replaced while this device was away. Nothing in the old state
+        // applies to the new group.
+        await this.#forget(channelId);
+        replaced = true;
+      } else {
+        this.#states.set(channelId, state);
+        try {
+          const epoch = await this.#catchUp(channelId);
+          // A group created before external join existed has no
+          // GroupInfo until someone commits; any member can fill it in.
+          await this.#publishGroupInfo(channelId, remote).catch(() => undefined);
+          return { status: "ready", epoch };
+        } catch (err) {
+          // Removed while we were away, or the group was replaced. The
+          // stale state is already gone; carry on as a newcomer.
+          if (!(err instanceof RemovedFromGroup)) throw err;
+          replaced = err instanceof GroupReset;
+          remote = await this.#remote(channelId);
+        }
       }
     }
-
-    const remote = (await this.#call(
-      `/api/v1/channels/${channelId}/mls`,
-    )) as ServerGroupState;
 
     if (!remote.exists) {
       return this.#create(channelId);
@@ -304,14 +384,161 @@ export class Groups {
         for (const w of found.stale) {
           await this.#ackWelcome(w.id).catch(() => undefined);
         }
+        return { ...result, replaced };
       }
-      return result;
+      // No local key package matches it. The GroupInfo route below
+      // needs none, so fall through rather than give up.
     }
 
+    const info = (await this.#call(
+      `/api/v1/channels/${channelId}/mls/group-info`,
+    )) as GroupInfoResponse;
+
+    const result =
+      info.group_info && info.group_info_epoch === info.epoch
+        ? await this.#joinExternal(channelId, info)
+        : await this.#reset(channelId, info.generation);
+    if (result) return { ...result, replaced: result.replaced || replaced };
+
+    // Lost a race: someone committed, joined or replaced the group
+    // between our look and our write. Look again.
+    if (attempt + 1 < MAX_OPEN_ATTEMPTS) return this.#open(channelId, attempt + 1);
     return {
       status: "awaiting_invite",
-      epoch: remote.epoch,
-      detail: "this channel is encrypted and nobody has added this device yet",
+      epoch: info.epoch,
+      detail: "the encryption group kept changing while joining; try again in a moment",
+      replaced,
+    };
+  }
+
+  async #remote(channelId: string): Promise<ServerGroupState> {
+    return (await this.#call(`/api/v1/channels/${channelId}/mls`)) as ServerGroupState;
+  }
+
+  /** The MLS group ID for a channel's group of a given generation. */
+  #groupIdFor(channelId: string, generation: number): string {
+    return generation === 0 ? channelId : `${channelId}${GENERATION_SEP}${generation}`;
+  }
+
+  /** Which generation a state belongs to; null if it is not this channel's. */
+  #generationOf(channelId: string, state: unknown): number | null {
+    const id = groupIdOf(state);
+    if (id === channelId) return 0;
+    const prefix = channelId + GENERATION_SEP;
+    if (!id.startsWith(prefix)) return null;
+    const n = Number(id.slice(prefix.length));
+    return Number.isSafeInteger(n) && n > 0 ? n : null;
+  }
+
+  /** The generation to name in requests for this channel's current state. */
+  #generation(channelId: string): number {
+    return this.#generationOf(channelId, this.#requireState(channelId)) ?? 0;
+  }
+
+  /**
+   * Upload this epoch's GroupInfo if the server's is missing or older.
+   *
+   * Commits carry one already, so this only matters for a group from
+   * before external join, or one whose last upload was lost. The server
+   * refuses it unless it names the current epoch, so a device that is
+   * behind cannot replace a good one with a stale one.
+   */
+  async #publishGroupInfo(channelId: string, remote: ServerGroupState): Promise<void> {
+    const state = this.#requireState(channelId);
+    const epoch = epochOf(state);
+    if (remote.group_info_epoch === epoch) return;
+    const info = await this.#mls.groupInfo(state);
+    await this.#call(`/api/v1/channels/${channelId}/mls/group-info`, {
+      method: "PUT",
+      body: JSON.stringify({
+        device_id: this.#deviceId,
+        generation: this.#generation(channelId),
+        epoch,
+        group_info: toBase64(info),
+      }),
+    });
+  }
+
+  /**
+   * Join from the published GroupInfo with an external commit (RFC 9420).
+   *
+   * Returns null if the commit lost the epoch race: the GroupInfo is
+   * then out of date, and the caller looks again (a member may have just
+   * added this device). The external commit is checked by the server
+   * like any other: the caller must be allowed to view the channel and
+   * the device must be its own.
+   */
+  async #joinExternal(
+    channelId: string,
+    info: GroupInfoResponse,
+  ): Promise<OpenResult | null> {
+    const keys = await this.#freshKeyPair();
+    const { state, commit } = await this.#mls.joinExternal(fromBase64(info.group_info), keys);
+
+    // The GroupInfo is the server's to hand out. One for another
+    // channel's group would let this device build a commit nobody here
+    // can process, so refuse it rather than wreck the log.
+    if (groupIdOf(state) !== this.#groupIdFor(channelId, info.generation)) {
+      throw new Error("groups: the published group info belongs to a different group");
+    }
+
+    const next = await this.#mls.groupInfo(state);
+    try {
+      await this.#call(`/api/v1/channels/${channelId}/mls/commit`, {
+        method: "POST",
+        body: JSON.stringify({
+          device_id: this.#deviceId,
+          epoch: info.epoch,
+          generation: info.generation,
+          commit: toBase64(commit),
+          welcomes: [],
+          group_info: toBase64(next),
+        }),
+      });
+    } catch (err) {
+      if (this.#isEpochConflict(err)) return null;
+      throw err;
+    }
+
+    await this.#persist(channelId, state);
+    return { status: "joined", via: "external", epoch: epochOf(state) };
+  }
+
+  /**
+   * Replace a group nobody permitted can commit to.
+   *
+   * Only reached when there is no GroupInfo, or only one older than the
+   * server's epoch, so an external join cannot work; the server checks
+   * the same condition and refuses otherwise. This device builds the new
+   * group under the next generation's group ID and sends its GroupInfo
+   * with the request, so the new group is joinable the moment it exists.
+   * Returns null if someone else replaced or advanced it first.
+   */
+  async #reset(channelId: string, generation: number): Promise<OpenResult | null> {
+    const keys = await this.#freshKeyPair();
+    const state = await this.#mls.createGroup(this.#groupIdFor(channelId, generation + 1), keys);
+    const info = await this.#mls.groupInfo(state);
+
+    try {
+      await this.#call(`/api/v1/channels/${channelId}/mls/reset`, {
+        method: "POST",
+        body: JSON.stringify({
+          device_id: this.#deviceId,
+          generation,
+          group_info: toBase64(info),
+        }),
+      });
+    } catch (err) {
+      if ((err as { status?: unknown } | null)?.status === 409) return null;
+      throw err;
+    }
+
+    await this.#persist(channelId, state);
+    return {
+      status: "created",
+      epoch: epochOf(state),
+      replaced: true,
+      detail: "nobody with access could update the old encryption group, so it was replaced",
     };
   }
 
@@ -353,19 +580,20 @@ export class Groups {
 
   async #create(channelId: string): Promise<OpenResult> {
     const keys = await this.#freshKeyPair();
-    const state = await this.#mls.createGroup(channelId, keys);
+    const state = await this.#mls.createGroup(this.#groupIdFor(channelId, 0), keys);
+    const info = await this.#mls.groupInfo(state);
 
     try {
       await this.#call(`/api/v1/channels/${channelId}/mls`, {
         method: "POST",
-        body: JSON.stringify({ device_id: this.#deviceId }),
+        body: JSON.stringify({ device_id: this.#deviceId, group_info: toBase64(info) }),
       });
     } catch (err) {
       // Someone created it between our check and our write. Their group
       // is the real one; ours is a local object with no members, so
       // discard it and come back as a joiner.
       if (String(err).includes("already has a group")) {
-        return this.#open(channelId);
+        return this.#open(channelId, MAX_OPEN_ATTEMPTS - 1);
       }
       throw err;
     }
@@ -450,7 +678,7 @@ export class Groups {
     // is the forward secrecy failure the whole design is built to avoid.
     await storage.deleteKeyPair(usedId);
 
-    return { status: "joined", epoch: epochOf(state) };
+    return { status: "joined", via: "welcome", epoch: epochOf(state) };
   }
 
   /**
@@ -469,11 +697,25 @@ export class Groups {
     let state = this.#states.get(channelId);
     if (!state) throw new Error(`groups: not a member of ${channelId}`);
 
+    const generation = this.#generationOf(channelId, state);
+    const genParam = generation === null ? "" : `&generation=${generation}`;
+
     for (;;) {
       const since = epochOf(state);
-      const entries = (await this.#call(
-        `/api/v1/channels/${channelId}/mls/handshakes?since_epoch=${since}`,
-      )) as HandshakeEntry[];
+      let entries: HandshakeEntry[];
+      try {
+        entries = (await this.#call(
+          `/api/v1/channels/${channelId}/mls/handshakes?since_epoch=${since}${genParam}`,
+        )) as HandshakeEntry[];
+      } catch (err) {
+        // 410: the group was replaced. The log now belongs to the new
+        // group, which this state cannot read.
+        if ((err as { status?: unknown } | null)?.status === 410) {
+          await this.#forget(channelId);
+          throw new GroupReset(channelId);
+        }
+        throw err;
+      }
 
       if (entries.length === 0) break;
 
@@ -665,7 +907,7 @@ export class Groups {
       this.#emit({ kind: "reconciled", channelId, result });
     } catch (err) {
       if (err instanceof RemovedFromGroup) {
-        this.#emit({ kind: "removed", channelId });
+        this.#emit({ kind: "removed", channelId, replaced: err instanceof GroupReset });
         return;
       }
       // This device lost access between the trigger and the run. The
@@ -919,8 +1161,12 @@ export class Groups {
             body: JSON.stringify({
               device_id: this.#deviceId,
               epoch: builtOn,
+              generation: this.#generation(channelId),
               commit: toBase64(commit.commit),
               welcomes,
+              // For the epoch this commit produces, so a device can join
+              // from it while nobody is online.
+              group_info: toBase64(await this.#mls.groupInfo(commit.state)),
             }),
           },
         )) as { epoch: number };

@@ -623,10 +623,23 @@ async function openGroup(channelId) {
 
   switch (result.status) {
     case "created":
-      cryptoStatus(`encrypted: created this channel's group (epoch ${result.epoch})`);
+      if (result.replaced) {
+        cryptoStatus(`encrypted: started a new group (epoch ${result.epoch})`);
+        line("sys", "nobody with access could update this channel's old encryption group, " +
+          "so this device replaced it with a new one. Messages from before can't be read " +
+          "by devices that hadn't already decrypted them.");
+      } else {
+        cryptoStatus(`encrypted: created this channel's group (epoch ${result.epoch})`);
+      }
       return true;
     case "joined":
-      cryptoStatus(`encrypted: joined the group (epoch ${result.epoch})`);
+      cryptoStatus(result.via === "external"
+        ? `encrypted: joined from the published group info (epoch ${result.epoch})`
+        : `encrypted: joined the group (epoch ${result.epoch})`);
+      if (result.replaced) {
+        line("sys", "this channel's encryption group was replaced since this device last " +
+          "used it; messages it hadn't already decrypted can't be read");
+      }
       return true;
     case "ready":
       cryptoStatus(`encrypted: ready (epoch ${result.epoch})`);
@@ -650,7 +663,13 @@ async function openGroup(channelId) {
 
 /** Removed from a group: a normal event, not an error. */
 function isRemoved(err) {
-  return err instanceof OpenVoxaCore.RemovedFromGroup || err?.name === "RemovedFromGroup";
+  return err instanceof OpenVoxaCore.RemovedFromGroup ||
+    err?.name === "RemovedFromGroup" || err?.name === "GroupReset";
+}
+
+/** Out because the whole group was replaced, not because access was lost. */
+function isReset(err) {
+  return err?.name === "GroupReset";
 }
 
 /** Ask for a background reconcile of every group this page has open. */
@@ -673,7 +692,7 @@ const lastSkipped = new Map();
 function onAutoReconcile(ev) {
   const where = ev.channelId === voiceChannelId ? "voice" : "channel";
 
-  if (ev.kind === "removed") return onRemovedFromGroup(ev.channelId);
+  if (ev.kind === "removed") return onRemovedFromGroup(ev.channelId, ev.replaced);
   if (ev.kind === "error") {
     return line("err", `${where} membership: ${esc(ev.error?.message || String(ev.error))}`);
   }
@@ -696,7 +715,7 @@ function onAutoReconcile(ev) {
   }
   if (ev.channelId === voiceChannelId && (r.removed.length || r.added.length)) {
     syncVoiceKey().catch((e) => {
-      if (isRemoved(e)) onRemovedFromGroup(voiceChannelId);
+      if (isRemoved(e)) onRemovedFromGroup(voiceChannelId, isReset(e));
       else line("err", `voice key: ${esc(e.message)}`);
     });
   }
@@ -752,8 +771,13 @@ function onMembershipChange(change) {
 
   const by = describeCommitter(change);
   for (const d of change.joined) {
+    // A device that committed its own join came in from the published
+    // group info, with nobody adding it.
+    const how = change.by && change.by.deviceId === d.deviceId
+      ? "joined on its own from the published group info"
+      : `added by ${by}`;
     noticeLine(`${where}${describeDevice(d)} joined the encryption group ` +
-      `(added by ${by}, epoch ${change.epoch})`);
+      `(${how}, epoch ${change.epoch})`);
   }
   for (const d of change.left) {
     noticeLine(`${where}${describeDevice(d, true)} was removed from the encryption group ` +
@@ -766,17 +790,30 @@ function onMembershipChange(change) {
  * access. Its state is already gone. In the text channel it waits to be
  * added back (a welcome brings it in on the next group_advanced); in a
  * call it has to leave, because it can no longer derive the media key.
+ *
+ * replaced: the whole group was replaced instead (decisions.md,
+ * "replaced, not rescued"). Access is unchanged, so the text channel
+ * rejoins the new group at once; a call still has to be left and joined
+ * again, because its media key came from the old group.
  */
-function onRemovedFromGroup(channelId) {
+function onRemovedFromGroup(channelId, replaced = false) {
   if (channelId === voiceChannelId) {
-    line("sys", "this device was removed from the voice channel's encryption group; leaving the call");
+    line("sys", replaced
+      ? "the voice channel's encryption group was replaced; leaving the call (join again)"
+      : "this device was removed from the voice channel's encryption group; leaving the call");
     room?.disconnect();
     return;
   }
-  if (channelId === currentChannel) {
-    line("sys", "this device was removed from this channel's encryption group");
-    cryptoStatus("removed from the encryption group; will rejoin automatically if added back");
+  if (channelId !== currentChannel) return;
+  if (replaced) {
+    line("sys", "this channel's encryption group was replaced; rejoining");
+    openGroup(channelId)
+      .then((ready) => { if (ready) session.groups.reconcileSoon(channelId); })
+      .catch((e) => line("err", esc(e.message)));
+    return;
   }
+  line("sys", "this device was removed from this channel's encryption group");
+  cryptoStatus("removed from the encryption group; will rejoin automatically if added back");
 }
 
 /**
@@ -800,7 +837,7 @@ async function onGroupAdvanced() {
     cryptoStatus(`encrypted: ready (epoch ${epoch})`);
     session.groups.reconcileSoon(channelId);
   } catch (e) {
-    if (isRemoved(e)) return onRemovedFromGroup(channelId);
+    if (isRemoved(e)) return onRemovedFromGroup(channelId, isReset(e));
     throw e;
   }
 }
@@ -2037,9 +2074,6 @@ let voiceWorker = null;
 let voicePoll = null;
 let voiceLastError = 0;
 
-/** How long a device not yet in the voice group waits to be added. */
-const VOICE_WAIT_MS = 60000;
-
 // Every group operation on the voice channel goes through this chain, so
 // a poll and a join event never run against the same
 // group state at once (the later save would discard the earlier one).
@@ -2099,32 +2133,24 @@ async function startVoiceCrypto(channelId) {
     return false;
   }
 
-  let result = await session.groups.open(channelId);
-
-  // Someone already in the call adds this device on their next poll
-  // (automatic membership), so wait for the welcome rather than failing.
-  // Only works while a member is in the call; with nobody there, joining
-  // needs the external-join path (build-order step 11, still to come).
-  if (result.status === "awaiting_invite") {
-    voiceCrypto("waiting to be added to the voice encryption group by someone in the call...");
-    line("sys", "waiting for someone in the call to add this device (up to a minute)");
-    const until = Date.now() + VOICE_WAIT_MS;
-    while (result.status === "awaiting_invite" && Date.now() < until) {
-      await new Promise((r) => setTimeout(r, 3000));
-      result = await session.groups.open(channelId);
-    }
-  }
+  // A device not yet in the voice group joins on its own from the
+  // group's published group info, so nobody needs to be in the call.
+  const result = await session.groups.open(channelId);
 
   if (!session.groups.isMember(channelId)) {
     voiceCrypto("");
-    line("err", esc(result.status === "awaiting_invite"
-      ? "nobody in the call added this device. Someone already in this voice " +
-        "channel's group has to be in the call for a new device to join."
-      : result.detail || "could not open the voice channel's encryption group"));
+    line("err", esc(result.detail || "could not open the voice channel's encryption group"));
     return false;
   }
   if (result.status === "created") {
-    line("sys", "created this voice channel's encryption group");
+    line("sys", result.replaced
+      ? "nobody with access could update this voice channel's old encryption group; " +
+        "replaced it with a new one"
+      : "created this voice channel's encryption group");
+  } else if (result.status === "joined") {
+    line("sys", result.via === "external"
+      ? "joined the voice encryption group from its published group info"
+      : "joined the voice encryption group");
   }
 
   voiceChannelId = channelId;
@@ -2145,7 +2171,7 @@ async function startVoiceCrypto(channelId) {
   session.groups.reconcileSoon(channelId);
   voicePoll = setInterval(() => {
     syncVoiceKey().catch((e) => {
-      if (isRemoved(e)) onRemovedFromGroup(channelId);
+      if (isRemoved(e)) onRemovedFromGroup(channelId, isReset(e));
       else line("err", `voice key: ${esc(e.message)}`);
     });
     if (session?.groups.isMember(channelId)) session.groups.reconcileSoon(channelId);
@@ -2191,7 +2217,7 @@ async function joinVoice() {
       // Whoever just joined was probably just added, which moved the
       // group to a new epoch. Pick up the new key now.
       syncVoiceKey().catch((e) => {
-        if (isRemoved(e)) onRemovedFromGroup(voiceChannelId);
+        if (isRemoved(e)) onRemovedFromGroup(voiceChannelId, isReset(e));
         else line("err", `voice key: ${esc(e.message)}`);
       });
     })
