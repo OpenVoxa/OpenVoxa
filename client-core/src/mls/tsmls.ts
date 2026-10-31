@@ -32,6 +32,7 @@ import type {
   DecryptResult,
   GroupState,
   KeyPair,
+  MemberLeaf,
   MlsProvider,
   WireMessage,
 } from "./provider.js";
@@ -74,6 +75,23 @@ type Impl = Awaited<ReturnType<typeof getCiphersuiteImpl>>;
  */
 function encodeCommit(commit: unknown): WireMessage {
   return encodeMlsMessage(commit as never);
+}
+
+/**
+ * ts-mls hands back the key material a commit used up so the caller can
+ * destroy it. Skipping that leaves spent keys in memory, which quietly
+ * weakens forward secrecy: a device compromised later should not be able
+ * to read what was sent earlier.
+ *
+ * For a commit the wipe is deferred, not done on the spot. The material
+ * is shared with the state the commit was built on, and if the server
+ * refuses the commit (someone else committed first) that state is used
+ * again to process the winner. Wiping early corrupts it and the device
+ * fails with "Could not verify confirmation tag", stuck. Observed in Node,
+ * ts-mls 1.6.2, 2026-10-31.
+ */
+function spentWiper(consumed: Uint8Array[]): () => void {
+  return () => consumed.forEach(zeroOutUint8Array);
 }
 
 /**
@@ -325,25 +343,80 @@ export class TsMlsProvider implements MlsProvider {
 
   /**
    * Observed from ts-mls 1.6.2: the tree is a flat array in which even
-   * indices are leaves and odd indices are parents. A blank node is
-   * `undefined` in a live state and a hole after our tree codec, so
-   * anything that is not explicitly a leaf is skipped. A leaf's identity
-   * is the device ID we put in its basic credential at key-package time.
-   * ts-mls has getGroupMembers for this but does not export it.
+   * indices are leaves and odd indices are parents, so a leaf's index is
+   * its array index divided by two. A blank node is `undefined` in a live
+   * state and a hole after our tree codec, so anything that is not
+   * explicitly a leaf is skipped. A leaf's identity is the device ID we
+   * put in its basic credential at key-package time. ts-mls has
+   * getGroupMembers for this but it does not return leaf indexes.
    */
-  memberIdentities(state: GroupState): string[] {
+  memberLeaves(state: GroupState): MemberLeaf[] {
     const tree = (state as { ratchetTree?: unknown[] }).ratchetTree ?? [];
     const decoder = new TextDecoder();
-    const out: string[] = [];
-    for (const node of tree) {
-      const n = node as
+    const out: MemberLeaf[] = [];
+    for (let i = 0; i < tree.length; i += 2) {
+      const n = tree[i] as
         | { nodeType?: string; leaf?: { credential?: { identity?: Uint8Array } } }
         | undefined;
       if (n?.nodeType !== "leaf") continue;
       const identity = n.leaf?.credential?.identity;
-      if (identity) out.push(decoder.decode(identity));
+      if (identity) out.push({ leafIndex: i / 2, identity: decoder.decode(identity) });
     }
     return out;
+  }
+
+  memberIdentities(state: GroupState): string[] {
+    return this.memberLeaves(state).map((l) => l.identity);
+  }
+
+  ownLeafIndex(state: GroupState): number {
+    return (state as { privatePath: { leafIndex: number } }).privatePath.leafIndex;
+  }
+
+  /**
+   * ts-mls keeps only the private signature key in the state, and its
+   * Signature interface cannot derive the public half. So rather than
+   * compare keys, sign a random probe with our private key and verify it
+   * against the public key in the leaf at our index: it verifies only if
+   * that leaf is still ours.
+   */
+  async stillMember(state: GroupState): Promise<boolean> {
+    const s = state as {
+      groupActiveState?: { kind: string };
+      ratchetTree: unknown[];
+      signaturePrivateKey: Uint8Array;
+    };
+    if (s.groupActiveState?.kind === "removedFromGroup") return false;
+
+    const node = s.ratchetTree[this.ownLeafIndex(state) * 2] as
+      | { nodeType?: string; leaf?: { signaturePublicKey?: Uint8Array } }
+      | undefined;
+    const publicKey = node?.nodeType === "leaf" ? node.leaf?.signaturePublicKey : undefined;
+    if (!publicKey) return false;
+
+    const sig = this.#require().signature;
+    const probe = crypto.getRandomValues(new Uint8Array(32));
+    const signature = await sig.sign(s.signaturePrivateKey, probe);
+    return sig.verify(publicKey, probe, signature);
+  }
+
+  async removeMembers(state: GroupState, leafIndexes: number[]): Promise<CommitResult> {
+    // Shape observed in Node (decisions.md, "External commit works").
+    const proposals: Proposal[] = leafIndexes.map((removed) => ({
+      proposalType: "remove",
+      remove: { removed },
+    }));
+
+    const result = await createCommit(
+      { state: state as never, cipherSuite: this.#require() },
+      { extraProposals: proposals },
+    );
+    // No welcome: nobody is joining. The tree is not needed either.
+    return {
+      state: result.newState,
+      commit: encodeCommit(result.commit),
+      wipeSpent: spentWiper(result.consumed),
+    };
   }
 
   async addMembers(state: GroupState, keyPackages: WireMessage[]): Promise<CommitResult> {
@@ -360,14 +433,9 @@ export class TsMlsProvider implements MlsProvider {
       { extraProposals: proposals },
     );
 
-    // ts-mls hands back the key material it just used so the caller can
-    // destroy it. Skipping this leaves spent keys sitting in memory,
-    // which quietly weakens forward secrecy: the whole point is that a
-    // device compromised later cannot read what was sent earlier.
-    result.consumed.forEach(zeroOutUint8Array);
-
     return {
       state: result.newState,
+      wipeSpent: spentWiper(result.consumed),
       commit: encodeCommit(result.commit),
       welcome: result.welcome
         ? encodeMlsMessage({

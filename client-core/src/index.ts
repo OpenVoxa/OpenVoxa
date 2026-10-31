@@ -29,13 +29,14 @@ export type {
   DecryptResult,
   GroupState,
   KeyPair,
+  MemberLeaf,
   MlsProvider,
   WireMessage,
 } from "./mls/provider.js";
 
 export { TsMlsProvider } from "./mls/tsmls.js";
 export { Identity } from "./identity.js";
-export { Groups } from "./groups.js";
+export { Groups, RemovedFromGroup } from "./groups.js";
 export { storage } from "./storage.js";
 export {
   encryptFile,
@@ -45,7 +46,7 @@ export {
 } from "./attachments.js";
 export type { Envelope, EncryptedFile, FileKey } from "./attachments.js";
 export type { ApiCall, IdentityStatus } from "./identity.js";
-export type { AddResult, GroupStatus, OpenResult } from "./groups.js";
+export type { AddResult, GroupStatus, OpenResult, ReconcileResult } from "./groups.js";
 export type { StoredDevice, StoredKeyPair } from "./storage.js";
 
 export const VERSION = "0.1.0";

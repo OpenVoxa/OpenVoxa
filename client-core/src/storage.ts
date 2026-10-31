@@ -172,6 +172,10 @@ export const storage = {
     await run(STORE_GROUPS, "readwrite", (s) => s.put(state, channelId));
   },
 
+  async deleteGroup(channelId: string): Promise<void> {
+    await run(STORE_GROUPS, "readwrite", (s) => s.delete(channelId));
+  },
+
   /**
    * Destroy everything.
    *

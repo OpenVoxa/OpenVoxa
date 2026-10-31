@@ -41,6 +41,21 @@ export interface CommitResult {
   readonly welcome?: WireMessage;
   /** The group's ratchet tree, which a joiner needs alongside a welcome. */
   readonly ratchetTree?: unknown;
+  /**
+   * Destroy the key material this commit used up. Call it only once the
+   * server has accepted the commit: that material belongs to the epoch
+   * the commit was built on, and a commit that loses the epoch race is
+   * discarded and that same epoch is used again to process the winner.
+   */
+  wipeSpent(): void;
+}
+
+/** One occupied leaf of the ratchet tree. */
+export interface MemberLeaf {
+  /** The leaf's index, which is what a remove proposal names. */
+  readonly leafIndex: number;
+  /** The device ID carried in the leaf's credential. */
+  readonly identity: string;
 }
 
 export interface DecryptResult {
@@ -77,8 +92,39 @@ export interface MlsProvider {
    */
   memberIdentities(state: GroupState): string[];
 
+  /**
+   * Every occupied leaf with its index. A device can briefly hold two
+   * leaves (after rejoining from a GroupInfo), so identities are not
+   * unique here.
+   */
+  memberLeaves(state: GroupState): MemberLeaf[];
+
+  /** This device's own leaf index in the group. */
+  ownLeafIndex(state: GroupState): number;
+
+  /**
+   * Whether this device is still a member: not marked as removed, and
+   * the leaf at its own index still carries its own signature key.
+   *
+   * The second half matters because of a ts-mls quirk: when one commit
+   * removes a device and adds another into the freed leaf, the removed
+   * device is not told it was removed and takes the newcomer's leaf for
+   * its own. See docs/decisions.md, "Removes and adds go in separate
+   * commits".
+   */
+  stillMember(state: GroupState): Promise<boolean>;
+
   /** Add members by their published key packages and produce a commit. */
   addMembers(state: GroupState, keyPackages: WireMessage[]): Promise<CommitResult>;
+
+  /**
+   * Remove leaves by index and produce a commit.
+   *
+   * The indexes must be read from this same state: a stale index either
+   * fails (blank leaf) or names whoever now occupies it. A device cannot
+   * remove its own leaf.
+   */
+  removeMembers(state: GroupState, leafIndexes: number[]): Promise<CommitResult>;
 
   /** Join a group from a welcome message. */
   joinGroup(

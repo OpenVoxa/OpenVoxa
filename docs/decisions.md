@@ -829,6 +829,37 @@ through `encodeGroupState` as the browser does:
   removing the wrong device - provided the index is looked up in the
   same state the commit is built on.
 
+**The own-leaf check is a signature probe.** ts-mls keeps only the
+private signature key in group state and its `Signature` interface
+cannot derive the public half, so the client signs 32 random bytes with
+its private key and verifies them against the public key in the leaf at
+its own index (`privatePath.leafIndex`). Proven in Node 2026-10-31: in a
+combined remove + add commit the removed device reports `active` and its
+leaf holds the newcomer, and the probe fails as it should.
+
+**Spent commit keys are wiped only after the server accepts.**
+`createCommit` returns `consumed` arrays to zero, but they are shared
+with the state the commit was built on. A commit that loses the epoch
+race is discarded and that same state processes the winner; if the keys
+were already zeroed this fails with "Could not verify confirmation tag"
+and the device is stuck. Found 2026-10-31 by a Node race test of
+reconcile; the add path had the bug since step 9 but no real race had
+hit it. `CommitResult.wipeSpent()` is called after the commit is
+accepted and persisted. Application messages are not retried, so they
+still wipe immediately.
+
+**Group operations are serialised per channel.** Every operation reads
+state, awaits, and writes new state, so a background reconcile
+interleaved with a send would let one silently overwrite the other.
+`Groups` queues open, catchUp, addMembers, reconcile, encrypt and
+decrypt per channel; private helpers do not queue, so queued operations
+can call them.
+
+**Only a device removes its own duplicate leaves.** After rejoining from
+a GroupInfo a device can hold two leaves. Another member cannot tell
+which is live, and removing the wrong one would kick the device out, so
+reconcile removes duplicates of its own device ID only.
+
 ## Build order
 
 1. ✅ Server skeleton, auth, one text channel
@@ -877,7 +908,12 @@ through `encodeGroupState` as the browser does:
      allowed list correct, staff refused the list, claim for staff
      refused, claim without channel refused, commit with a welcome to
      staff refused, existing channel and "Add everyone" unaffected
-   - ⬜ Client reconciliation, triggers, join/leave notices
+   - 🔶 Client: `groups.reconcile(channelId)` built (removals commit,
+     then additions commit, own-leaf check after every commit, removed
+     device discards its state and rejoins from a welcome). Passed a Node
+     run against a fake server incl. a real epoch race, 2026-10-31.
+     Awaiting the browser test on Docker
+   - ⬜ Triggers, join/leave notices
    - ⬜ External join and stuck-group reset
 12. ⬜ Custom permission groups replacing the fixed roles
 13. ⬜ The real client: `client-web`, `client-desktop`
