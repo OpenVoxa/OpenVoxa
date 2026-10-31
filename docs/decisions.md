@@ -644,8 +644,10 @@ the Dockerfile's Go version at or above the directive.
      at rest, plaintext channels unchanged)
    - ✅ Two-party test: welcome path and forward-secrecy boundary on a
      real second device (ryan + staff, 2026-10-30)
-   - 🟨 Encrypted attachments: implemented (client-side AES-GCM, key in
-     the MLS message), awaiting a two-party test on Docker
+   - ✅ Encrypted attachments: client-side AES-GCM, key in the MLS
+     message. Verified on Docker 2026-10-30 (ryan + staff): image, mp3
+     and PDF readable by the other member; stored blob is opaque data;
+     server row shows `encrypted` / octet-stream
 10. ⬜ Media encryption keyed off the MLS exporter secret
 11. ⬜ The real client: `client-web`, `client-desktop`
 
