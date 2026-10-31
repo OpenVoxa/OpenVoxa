@@ -912,7 +912,10 @@ reconcile removes duplicates of its own device ID only.
      then additions commit, own-leaf check after every commit, removed
      device discards its state and rejoins from a welcome). Passed a Node
      run against a fake server incl. a real epoch race, 2026-10-31.
-     Awaiting the browser test on Docker
+     Verified on Docker 2026-10-31 (ryan + staff, `mods-only-test`, staff
+     toggled user/moderator): nothing added without access; staff added
+     (epoch 1), removed (2), re-added (3) while offline; staff then joined
+     from the newest welcome at epoch 3 and messages flowed both ways
    - ⬜ Triggers, join/leave notices
    - ⬜ External join and stuck-group reset
 12. ⬜ Custom permission groups replacing the fixed roles
