@@ -113,7 +113,7 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
 
 ## Current state (update every session)
 
-_Last updated: 2026-10-31, step 11 complete; multi-party testing done. Next: step 12._
+_Last updated: 2026-10-31, step 12 (permission groups) built; awaiting Docker test._
 
 - Build-order step 9 (MLS for text) is functionally working on Docker:
   messages in an encrypted channel are ciphertext in Postgres (only the
@@ -135,6 +135,8 @@ _Last updated: 2026-10-31, step 11 complete; multi-party testing done. Next: ste
   automatically, with every join/leave announced (decisions.md
   Encryption + Known tensions). Custom permission groups replace the
   fixed roles later.
+- Permission checks: `requirePerm(perm.X, ...)` / `requireStaff`;
+  `Session.Perms` + `Session.Rank`. No roles left in Go code.
 - Remaining, in order:
   1. Automatic membership (step 11): server side done and verified
      (`access.go`, `GET /channels/{id}/mls/allowed-devices`, welcome
@@ -167,7 +169,16 @@ _Last updated: 2026-10-31, step 11 complete; multi-party testing done. Next: ste
      rejoins), banned users staying in calls (LiveKit RemoveParticipant +
      old media keys retired after 10 s). Cosmetic: a kicked client says
      "left voice", not "removed by the server".
-  3. Custom permission groups (step 12).
+  3. Custom permission groups (step 12): BUILT 2026-10-31, not yet
+     verified on Docker. Migration 0012 converts roles to groups
+     (Everyone, Member, Moderator, Administrator); switches decide what,
+     rank decides whom; channels carry an allow-list (decisions.md
+     "Permission groups"). API: `/groups`, `/users/{id}/groups/{group}`,
+     `PUT /channels/{id}/access`; event `perms_changed` replaces
+     `role_changed`. chat.html console helpers: `showGroups()`,
+     `showUsers()`, `newGroup()`, `editGroup()`, `deleteGroup()`,
+     `addToGroup()`, `removeFromGroup()`, `mkChannel()`, `setAccess()`.
+     No settings UI yet (real client).
   4. Opt-in history sharing (Ryan wants it; see decisions.md Open items).
   5. Local storage encryption (blocked on recovery keys).
 - Other open items (revoked-device removal, recovery keys, etc.) live in

@@ -75,7 +75,7 @@ over.
 | Moderation | Message removal by author or moderator; reports verified server-side; bans that revoke sessions and live connections. Purging a banned user's history is administrator-only and separate from the ban itself. |
 | Markdown | Hand-rolled minimal renderer rather than a library: bold, italic, strikethrough, inline and fenced code, blockquote, autolinks. Small enough to audit, and avoids trusting a dependency with untrusted input. |
 | TLS | Required in practice. Caddy provided but optional; three deployment paths documented. |
-| Permissions | Admin-defined groups, each with its own permissions, assigned to channels (Discord roles / TeamSpeak server groups). Replaces the fixed four roles later; the fixed roles stay until then. Decided by Ryan, 2026-10-30. |
+| Permissions | Admin-defined groups, each with its own permission switches, assigned to channels (Discord roles / TeamSpeak server groups). Replaced the fixed four roles in build-order step 12. Decided by Ryan, 2026-10-30; model settled 2026-10-31, see "Permission groups" below. |
 | Encrypted channel membership | Follows channel access automatically. Nobody adds people to encryption groups by hand; every join is announced to the channel: per person by default, per device as a client option (Ryan, 2026-10-31). Decided by Ryan, 2026-10-30; see Encryption. |
 
 ### How reporting works under encryption
@@ -376,8 +376,8 @@ Ryan, 2026-10-31:
   could claim any other's packages, draining the single-use pool and
   forcing the weaker last-resort package on them.
 
-The rule lives in one file, `server/internal/httpapi/access.go`: a Go
-form for the caller and an SQL form for everyone else, used by the
+The rule lives in one file, `server/internal/httpapi/access.go`: one SQL
+form (since step 12) for the caller and everyone else, used by the
 websocket, voice tokens, every MLS endpoint, and
 `GET /channels/{id}/mls/allowed-devices`. That endpoint lists each
 non-revoked device of each permitted account. The server cannot say who
@@ -385,9 +385,9 @@ is missing from a group, since it cannot read commits; the client
 compares the list with its own ratchet tree.
 
 Access is answered by one server-side question, "may this account view
-this channel?", which today is the role check and later is the custom
-groups check. Membership is built against that question, so custom groups
-change its answer without touching the encryption code.
+this channel?", which since step 12 is the permission-group allow-list.
+Membership is built against that question, so custom groups changed its
+answer without touching the encryption code.
 
 Every device joining or leaving is shown in the channel ("staff added a
 device", "ryan's laptop was removed"). That is the mitigation for the
@@ -505,9 +505,9 @@ amount; scaling bounds overshoot to 25% of the stated value.
 channels store UTF-8 there today; encrypted channels will store MLS
 ciphertext in the same column. Enabling encryption needs no migration.
 
-**Server-to-client events never grant anything.** `role_changed` updates
-what a client displays; the server re-reads the role from the database on
-every request regardless. A forged event changes what a client draws and
+**Server-to-client events never grant anything.** `perms_changed` (was
+`role_changed`) makes a client refetch what it displays; the server
+re-reads permissions from the database on every request regardless. A forged event changes what a client draws and
 nothing else.
 
 **The SSRF check belongs in `Dialer.Control`, not `DialContext`.**
@@ -845,7 +845,7 @@ ahead of its own (capped at 8, plus jitter). The lowest leaf goes first;
 later members catch up on its commit and find nothing to do. Nothing
 depends on this for correctness: the epoch compare-and-swap still
 prevents a fork. Hints, 2026-10-31: the group was opened, a commit
-landed (`group_advanced`, and the 5 s voice poll), `role_changed`,
+landed (`group_advanced`, and the 5 s voice poll), `perms_changed`,
 `user_purged`, and a new `access_changed` event the server sends on ban,
 unban, device revoke and key package publish. Publish rather than
 device registration, because a device is not addable until it has
@@ -1004,6 +1004,60 @@ a GroupInfo a device can hold two leaves. Another member cannot tell
 which is live, and removing the wrong one would kick the device out, so
 reconcile removes duplicates of its own device ID only.
 
+## Permission groups
+
+Build-order step 12, decided by Ryan 2026-10-31.
+
+**Switches decide what you can do; rank decides whom you can do it to.**
+A group carries permission switches (`perm.All`: administrator,
+manage_groups, manage_channels, delete_messages, view_reports, ban,
+force_ptt). An account holds the union of its groups' switches. Groups
+are ranked by `position`, and an account's rank is its highest group's.
+Rank grants nothing on its own: Member and Everyone carry no switches,
+so an ordinary account cannot ban a guest whatever the order. Rank only
+limits targets: a moderator with ban can ban members and guests, not
+another moderator. Ryan's concern was keeping a clear line between
+standard and power-user accounts; that line is "holds any switch", and
+the account list is shown to anyone over it.
+
+**Channels carry an allow-list, no deny rules.** Each channel lists the
+groups that may view it and, of those, which may post (and speak, in
+voice). Everyone on the list makes a channel public; an empty list
+leaves it to administrators, who see every channel. Chosen over
+Discord-style allow/deny overrides because there is never a precedence
+question to answer.
+
+**Groups stack.** A moderator is in Member and Moderator, so taking
+Moderator away leaves an ordinary member, and a channel only needs its
+lowest qualifying group on the list.
+
+**Managing groups is bounded twice.** With manage_groups you may only
+touch groups below your rank and accounts below your rank (never your
+own), and only hand out, add or remove switches you hold yourself. So
+manage_groups cannot mint an administrator, and a group manager without
+ban cannot give ban away. For parity with the old roles you may put
+someone in a group at your own position (an administrator can make
+another administrator); neither can then undo the other.
+
+**Everyone is built in.** Every account is implicitly in it (the
+`effective_groups` view). Its permissions can be edited; its name,
+position (0) and membership cannot. It replaced the guest role.
+
+**The upgrade changed nothing visible.** Migration 0012 converted the
+roles: Member (auto-assigned to new accounts), Moderator
+(delete_messages, view_reports, ban, force_ptt), Administrator
+(administrator). Channel minimums became allow-lists. `users.role` and
+`channels.min_role_*` were dropped; `roles` and `role_changes` stay as
+history, and `perm_group_changes` is the new audit log.
+
+**Group-wide changes sweep instead of iterating accounts.** Editing or
+deleting a group, or replacing a channel's allow-list, can move many
+accounts at once. The server sends `perms_changed` with no user (every
+client refetches `/me` and reconciles), re-checks every open socket,
+and asks LiveKit who is in each voice room (`ListParticipants`) rather
+than checking every account against every room. A change to one
+account's groups uses the per-account path, as a role change did.
+
 ## Build order
 
 1. ✅ Server skeleton, auth, one text channel
@@ -1089,7 +1143,9 @@ reconcile removes duplicates of its own device ID only.
    - ✅ "Forget this device" revokes it on the server first. Before, the
      device stayed active and members kept re-adding a device nobody held
      keys for (found in the step 8 test; old ones revoked by hand)
-12. ⬜ Custom permission groups replacing the fixed roles
+12. 🔶 Custom permission groups replacing the fixed roles. Built
+    2026-10-31 (migration 0012, `groups.go`, `perm`); checked against a
+    local Postgres and a headless browser, not yet on Docker
 13. ⬜ The real client: `client-web`, `client-desktop`
 
 ## Open items

@@ -43,7 +43,7 @@ If this project ever has a monetization strategy, something has gone wrong. Plea
 - **Accounts** with argon2id password hashing and revocable server-side sessions
 - **Text channels** over WebSocket, with history that persists across reconnects
 - **Voice channels** via a self-hosted LiveKit SFU, tested on desktop and iOS Safari
-- **Four roles** — Administrator, Moderator, User, Guest — enforced per channel, separately for viewing and for posting
+- **Permission groups** — admin-defined groups with permission switches and a rank order; each channel lists which groups may view and which may post. Starts as Administrator, Moderator, Member and Everyone
 - **Rate limiting** on authentication, per IP and per account
 - **Rich text**: markdown, link previews with SSRF-hardened unfurling, file attachments with inline image, audio and video playback, and GIF search that never puts your users in front of a third party
 - **Moderation**: message removal, reports verified against the server's own copy, and bans that cut off live connections rather than waiting for a token to expire
