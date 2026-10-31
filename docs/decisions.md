@@ -1005,7 +1005,7 @@ reconcile removes duplicates of its own device ID only.
    - ✅ Two-party call on Docker (ryan + staff, 2026-10-30): a device
      outside the group is refused; adding it rotates the key (epoch 1);
      audio and screen share both ways, simultaneous streams fine
-11. 🔶 Automatic group membership from channel access: member
+11. ✅ Automatic group membership from channel access: member
     reconciliation, join and leave notices, then external join.
     Built against the current roles.
    - ✅ ts-mls external commit and removal behaviour proven in Node
@@ -1041,8 +1041,17 @@ reconcile removes duplicates of its own device ID only.
      reconnecting, credited to staff
    - ✅ "Add everyone" buttons and public `groups.addMembers` removed
      (2026-10-31)
-   - 🔶 External join and stuck-group reset: built, proven against the
-     real server in Node (2026-10-31); not yet tested on Docker
+   - ✅ External join and stuck-group reset. Verified on Docker
+     2026-10-31 (ryan + staff): a new staff device joined an empty voice
+     call from the group info; with staff demoted as the only member,
+     ryan joined `stuck-test` from the group info and removed staff
+     automatically; with the group info deleted, staff replaced
+     `ext-test` (generation 2), ryan, connected throughout, saw
+     "replaced; rejoining" and joined on his own; a device returning with
+     the previous group's state rejoined and said so; messages both ways
+   - ✅ "Forget this device" revokes it on the server first. Before, the
+     device stayed active and members kept re-adding a device nobody held
+     keys for (found in the step 8 test; old ones revoked by hand)
 12. ⬜ Custom permission groups replacing the fixed roles
 13. ⬜ The real client: `client-web`, `client-desktop`
 
