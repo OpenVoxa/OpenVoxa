@@ -673,6 +673,118 @@ async function inviteEveryone(channelId = currentChannel) {
   }
 }
 
+// ------------------------------------------------- automatic membership
+//
+// Membership follows channel access (decisions.md, Encryption). The
+// server only says who belongs; this device's client commits the
+// difference, in the background, whenever there is a hint that the
+// group may be out of date. client-core coalesces the hints and staggers
+// members so only one of them normally does the work.
+
+/** Removed from a group: a normal event, not an error. */
+function isRemoved(err) {
+  return err instanceof OpenVoxaCore.RemovedFromGroup || err?.name === "RemovedFromGroup";
+}
+
+/** Ask for a background reconcile of every group this page has open. */
+function reconcileOpenGroups() {
+  if (!session) return;
+  if (currentChannelEncrypted && currentChannel && session.groups.isMember(currentChannel)) {
+    session.groups.reconcileSoon(currentChannel);
+  }
+  if (voiceChannelId && session.groups.isMember(voiceChannelId)) {
+    session.groups.reconcileSoon(voiceChannelId);
+  }
+}
+
+const short = (id) => esc(String(id).slice(0, 8));
+
+// Skipped devices are reported again on every run until they publish key
+// packages. Only say so when the list changes.
+const lastSkipped = new Map();
+
+function onAutoReconcile(ev) {
+  const where = ev.channelId === voiceChannelId ? "voice" : "channel";
+
+  if (ev.kind === "removed") return onRemovedFromGroup(ev.channelId);
+  if (ev.kind === "error") {
+    return line("err", `${where} membership: ${esc(ev.error?.message || String(ev.error))}`);
+  }
+
+  const r = ev.result;
+  if (r.removed.length) {
+    line("sys", `${where} encryption group: removed ${r.removed.length} device(s) ` +
+      `that lost access (${r.removed.map(short).join(", ")}); epoch ${r.epoch}`);
+  }
+  if (r.added.length) {
+    line("sys", `${where} encryption group: added ${r.added.length} device(s) ` +
+      `(${r.added.map(short).join(", ")}); epoch ${r.epoch}`);
+  }
+  const skipped = r.skipped.slice().sort().join(",");
+  if (skipped !== (lastSkipped.get(ev.channelId) || "")) {
+    lastSkipped.set(ev.channelId, skipped);
+    if (r.skipped.length) {
+      line("sys", `${where} encryption group: ${r.skipped.length} device(s) could not be ` +
+        `added yet, no key packages left (${r.skipped.map(short).join(", ")})`);
+    }
+  }
+
+  if (ev.channelId === currentChannel && (r.removed.length || r.added.length)) {
+    cryptoStatus(`encrypted: ready (epoch ${r.epoch})`);
+  }
+  if (ev.channelId === voiceChannelId && (r.removed.length || r.added.length)) {
+    syncVoiceKey().catch((e) => {
+      if (isRemoved(e)) onRemovedFromGroup(voiceChannelId);
+      else line("err", `voice key: ${esc(e.message)}`);
+    });
+  }
+}
+
+/**
+ * This device was taken out of a group, almost always because it lost
+ * access. Its state is already gone. In the text channel it waits to be
+ * added back (a welcome brings it in on the next group_advanced); in a
+ * call it has to leave, because it can no longer derive the media key.
+ */
+function onRemovedFromGroup(channelId) {
+  if (channelId === voiceChannelId) {
+    line("sys", "this device was removed from the voice channel's encryption group; leaving the call");
+    room?.disconnect();
+    return;
+  }
+  if (channelId === currentChannel) {
+    line("sys", "this device was removed from this channel's encryption group");
+    cryptoStatus("removed from the encryption group; will rejoin automatically if added back");
+  }
+}
+
+/**
+ * A commit landed in the text channel. A member applies it; a device
+ * still waiting checks whether it was the one just added.
+ */
+async function onGroupAdvanced() {
+  const channelId = currentChannel;
+  if (!session || !currentChannelEncrypted) return;
+
+  if (!session.groups.isMember(channelId)) {
+    const ready = await openGroup(channelId);
+    if (ready) line("sys", "this device was added to the channel's encryption group");
+    if ($("invite")) $("invite").hidden = !ready;
+    if (ready) session.groups.reconcileSoon(channelId);
+    return;
+  }
+
+  try {
+    const epoch = await session.groups.catchUp(channelId);
+    line("sys", `group advanced to epoch ${epoch}`);
+    cryptoStatus(`encrypted: ready (epoch ${epoch})`);
+    session.groups.reconcileSoon(channelId);
+  } catch (e) {
+    if (isRemoved(e)) return onRemovedFromGroup(channelId);
+    throw e;
+  }
+}
+
 // ------------------------------------------------------- device identity
 //
 // Runs once after sign-in. Creates this browser's cryptographic identity
@@ -692,6 +804,7 @@ async function setUpIdentity() {
       `${navigator.platform || "browser"} (debug client)`,
     );
     const status = session.status;
+    session.groups.onAuto(onAutoReconcile);
 
     $("idStatus").textContent =
       `device ${status.deviceId.slice(0, 8)} - ` +
@@ -1390,6 +1503,7 @@ async function connect() {
   if (currentChannelEncrypted) {
     const ready = await openGroup(channelID);
     if ($("invite")) $("invite").hidden = !ready;
+    if (ready) session.groups.reconcileSoon(channelID);
     if (!ready) {
       // Still connect: the channel list and membership changes arrive
       // over the same socket, so a device waiting for an invitation
@@ -1458,6 +1572,10 @@ async function connect() {
       line("err", esc(frame.error));
     } else if (frame.type === "user_purged") {
       onUserPurged(frame.user_id);
+      reconcileOpenGroups();
+    } else if (frame.type === "access_changed") {
+      // A ban, unban, device revoke, or a device publishing key packages.
+      reconcileOpenGroups();
     } else if (frame.type === "channel_purged") {
       onChannelPurged(frame.channel_id, frame.before);
     } else if (frame.type === "message_deleted") {
@@ -1476,10 +1594,8 @@ async function connect() {
     } else if (frame.type === "group_advanced") {
       // Someone changed the membership. Apply their commit now rather
       // than discovering it when the next message fails to decrypt.
-      if (frame.channel_id === currentChannel && session) {
-        session.groups.catchUp(currentChannel)
-          .then((epoch) => line("sys", `group advanced to epoch ${epoch}`))
-          .catch((e) => line("err", esc(e.message)));
+      if (frame.channel_id === currentChannel) {
+        onGroupAdvanced().catch((e) => line("err", esc(e.message)));
       }
     } else if (frame.type === "role_changed") {
       if (frame.user_id === myUserID) {
@@ -1493,6 +1609,8 @@ async function connect() {
         line("sys", `your role is now ${esc(frame.role)}`);
         loadChannels().catch(() => {});
       }
+      // Anyone's role moving can change who belongs in a group.
+      reconcileOpenGroups();
     }
   };
 }
@@ -1895,6 +2013,9 @@ let voiceWorker = null;
 let voicePoll = null;
 let voiceLastError = 0;
 
+/** How long a device not yet in the voice group waits to be added. */
+const VOICE_WAIT_MS = 60000;
+
 // Every group operation on the voice channel goes through this chain, so
 // a poll, a join event and an "add everyone" never run against the same
 // group state at once (the later save would discard the earlier one).
@@ -1955,11 +2076,27 @@ async function startVoiceCrypto(channelId) {
     return false;
   }
 
-  const result = await session.groups.open(channelId);
+  let result = await session.groups.open(channelId);
+
+  // Someone already in the call adds this device on their next poll
+  // (automatic membership), so wait for the welcome rather than failing.
+  // Only works while a member is in the call; with nobody there, joining
+  // needs the external-join path (build-order step 11, still to come).
+  if (result.status === "awaiting_invite") {
+    voiceCrypto("waiting to be added to the voice encryption group by someone in the call...");
+    line("sys", "waiting for someone in the call to add this device (up to a minute)");
+    const until = Date.now() + VOICE_WAIT_MS;
+    while (result.status === "awaiting_invite" && Date.now() < until) {
+      await new Promise((r) => setTimeout(r, 3000));
+      result = await session.groups.open(channelId);
+    }
+  }
+
   if (!session.groups.isMember(channelId)) {
+    voiceCrypto("");
     line("err", esc(result.status === "awaiting_invite"
-      ? "this device is not in this voice channel's encryption group yet. " +
-        "Ask someone in the call to click \"Add everyone to voice\"."
+      ? "nobody in the call added this device. Someone already in this voice " +
+        "channel's group has to be in the call for a new device to join."
       : result.detail || "could not open the voice channel's encryption group"));
     return false;
   }
@@ -1979,8 +2116,17 @@ async function startVoiceCrypto(channelId) {
   // Commit notifications only reach the text channel this page is
   // connected to, so the voice group is also polled while in a call.
   // Cheap: an empty handshake list when nothing changed.
-  voicePoll = setInterval(() =>
-    syncVoiceKey().catch((e) => line("err", `voice key: ${esc(e.message)}`)), 5000);
+  // The same poll drives automatic membership for the call: a device
+  // waiting to join cannot send a websocket event, so members look for
+  // it. reconcileSoon coalesces, so a slow run never stacks up.
+  session.groups.reconcileSoon(channelId);
+  voicePoll = setInterval(() => {
+    syncVoiceKey().catch((e) => {
+      if (isRemoved(e)) onRemovedFromGroup(channelId);
+      else line("err", `voice key: ${esc(e.message)}`);
+    });
+    if (session?.groups.isMember(channelId)) session.groups.reconcileSoon(channelId);
+  }, 5000);
   return true;
 }
 
@@ -2021,7 +2167,10 @@ async function joinVoice() {
       renderParticipants();
       // Whoever just joined was probably just added, which moved the
       // group to a new epoch. Pick up the new key now.
-      syncVoiceKey().catch((e) => line("err", `voice key: ${esc(e.message)}`));
+      syncVoiceKey().catch((e) => {
+        if (isRemoved(e)) onRemovedFromGroup(voiceChannelId);
+        else line("err", `voice key: ${esc(e.message)}`);
+      });
     })
     .on(LivekitClient.RoomEvent.ParticipantEncryptionStatusChanged, renderParticipants)
     .on(LivekitClient.RoomEvent.EncryptionError, (err, participant) => {

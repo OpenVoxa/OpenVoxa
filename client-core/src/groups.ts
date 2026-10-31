@@ -85,6 +85,39 @@ export interface ReconcileResult {
 }
 
 /**
+ * What a background reconcile reports. See Groups.reconcileSoon.
+ *
+ * reconciled: a run finished; result says what changed (often nothing).
+ * removed: this device turned out not to be in the group any more. Its
+ *   state is gone; opening the channel again rejoins if re-added.
+ * error: the run failed for a reason worth showing.
+ *
+ * A run where this device may no longer view the channel reports
+ * nothing: it is not a member that could commit anyway, and the server
+ * tells it about the lost access separately.
+ */
+export type AutoEvent =
+  | { kind: "reconciled"; channelId: string; result: ReconcileResult }
+  | { kind: "removed"; channelId: string }
+  | { kind: "error"; channelId: string; error: unknown };
+
+/** Wait after the first trigger, so a burst of events costs one run. */
+const RECONCILE_DEBOUNCE_MS = 300;
+
+/** Extra wait per member ranked ahead of this device; see reconcileSoon. */
+const RECONCILE_STAGGER_MS = 1500;
+
+/** Rank beyond which the wait stops growing. */
+const RECONCILE_MAX_RANK = 8;
+
+/** Random spread, so devices at the same computed wait do not collide. */
+const RECONCILE_JITTER_MS = 400;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
  * This device is no longer in the group. Its local state has been
  * discarded; opening the channel again joins afresh if a welcome is
  * waiting.
@@ -173,6 +206,14 @@ export class Groups {
 
   /** Tail of each channel's operation queue; see #serial. */
   readonly #queues = new Map<string, Promise<unknown>>();
+
+  /** Channels with a background reconcile scheduled or running. */
+  readonly #autoBusy = new Set<string>();
+
+  /** Channels that were triggered again while their run was busy. */
+  readonly #autoAgain = new Set<string>();
+
+  readonly #autoListeners = new Set<(event: AutoEvent) => void>();
 
   constructor(mls: MlsProvider, call: ApiCall, deviceId: string) {
     this.#mls = mls;
@@ -552,6 +593,97 @@ export class Groups {
         skipped,
       };
     });
+  }
+
+  /**
+   * Hear about background reconciles. Returns a function that stops it.
+   */
+  onAuto(listener: (event: AutoEvent) => void): () => void {
+    this.#autoListeners.add(listener);
+    return () => this.#autoListeners.delete(listener);
+  }
+
+  /**
+   * Reconcile a channel's group in the background, soon.
+   *
+   * Called on every hint that membership may be out of date: the group
+   * was opened, someone committed, a role changed, an account was
+   * banned, a device was revoked or published key packages. Hints are
+   * cheap to give and often redundant, so this never throws and never
+   * runs twice at once for a channel: a trigger while a run is pending
+   * or in progress just asks for one more run after it.
+   *
+   * Every online member hears the same events, and if they all
+   * reconciled at once each would claim a key package for the same new
+   * device. Only one commit can win, and the rest of those single-use
+   * packages would be burned for nothing. So members wait in turn, by
+   * their position in the ratchet tree: the lowest leaf goes first, the
+   * next waits a little, and by the time a later member runs, it catches
+   * up on the first one's commit and finds nothing left to do. If the
+   * first is offline the second simply goes a moment later. Nothing
+   * depends on this for correctness - the epoch compare-and-swap still
+   * prevents a fork - it only saves key packages and wasted commits.
+   */
+  reconcileSoon(channelId: string): void {
+    if (this.#autoBusy.has(channelId)) {
+      this.#autoAgain.add(channelId);
+      return;
+    }
+    this.#autoBusy.add(channelId);
+
+    void this.#autoRun(channelId).finally(() => {
+      this.#autoBusy.delete(channelId);
+      if (this.#autoAgain.delete(channelId)) this.reconcileSoon(channelId);
+    });
+  }
+
+  async #autoRun(channelId: string): Promise<void> {
+    await sleep(RECONCILE_DEBOUNCE_MS);
+
+    // Not a member: there is nothing to commit from. Joining is the
+    // caller's business (open picks up a welcome).
+    if (!this.#states.has(channelId)) return;
+
+    await sleep(this.#staggerFor(channelId));
+    if (!this.#states.has(channelId)) return;
+
+    try {
+      const result = await this.reconcile(channelId);
+      this.#emit({ kind: "reconciled", channelId, result });
+    } catch (err) {
+      if (err instanceof RemovedFromGroup) {
+        this.#emit({ kind: "removed", channelId });
+        return;
+      }
+      // This device lost access between the trigger and the run. The
+      // server refuses the allowed list, and another member's reconcile
+      // removes this device.
+      const status = (err as { status?: unknown } | null)?.status;
+      if (status === 403 || status === 404) return;
+      this.#emit({ kind: "error", channelId, error: err });
+    }
+  }
+
+  /** How long this device waits its turn; see reconcileSoon. */
+  #staggerFor(channelId: string): number {
+    const state = this.#states.get(channelId);
+    if (!state) return 0;
+    const own = this.#mls.ownLeafIndex(state);
+    const ahead = this.#mls.memberLeaves(state).filter((l) => l.leafIndex < own).length;
+    return (
+      Math.min(ahead, RECONCILE_MAX_RANK) * RECONCILE_STAGGER_MS +
+      Math.floor(Math.random() * RECONCILE_JITTER_MS)
+    );
+  }
+
+  #emit(event: AutoEvent): void {
+    for (const listener of this.#autoListeners) {
+      try {
+        listener(event);
+      } catch {
+        // A broken listener must not stop the others hearing about it.
+      }
+    }
   }
 
   /**
