@@ -366,6 +366,12 @@ func (a *API) writeKeyPackageCount(w http.ResponseWriter, r *http.Request, devic
 const maxClaimExclusions = 10000
 
 type claimRequest struct {
+	// The channel whose group the packages are for. Required: both the
+	// caller and the target must be able to view it. Without this any
+	// account could claim any other account's packages, draining the
+	// single-use pool and forcing the weaker last-resort package on them.
+	ChannelID string `json:"channel_id"`
+
 	// Devices the caller already has in the group. Their packages are
 	// left unclaimed, because claiming consumes them: adding someone
 	// twice would otherwise burn a single-use package per click and
@@ -405,9 +411,29 @@ func (a *API) claimKeyPackages(w http.ResponseWriter, r *http.Request) {
 	session := sessionFrom(r.Context())
 	targetUser := r.PathValue("id")
 
-	// The body is optional so a bare POST still claims for every device.
 	var req claimRequest
-	if r.ContentLength != 0 && !decodeJSON(w, r, &req) {
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if !uuidPattern.MatchString(req.ChannelID) {
+		writeError(w, http.StatusBadRequest, "channel_id is required")
+		return
+	}
+
+	// The caller must be in a position to add people to this channel,
+	// and the target must belong there. Either failing is a refusal
+	// before anything is consumed.
+	if _, ok := a.requireChannelAccess(w, r, req.ChannelID); !ok {
+		return
+	}
+	allowed, err := a.userCanView(r.Context(), targetUser, req.ChannelID)
+	if err != nil {
+		slog.Error("checking claim target access", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not claim key packages")
+		return
+	}
+	if !allowed {
+		writeError(w, http.StatusForbidden, "that user does not have access to this channel")
 		return
 	}
 	if len(req.ExcludeDeviceIDs) > maxClaimExclusions {

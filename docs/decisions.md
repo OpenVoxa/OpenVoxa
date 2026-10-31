@@ -361,7 +361,28 @@ the server's role is to say who *should* be in, and clients do the rest:
    compare-and-swap as any other.
 
 The server still checks access before accepting any commit or welcome,
-so a client cannot add someone the permissions do not allow.
+so a client cannot add someone the permissions do not allow. Decided by
+Ryan, 2026-10-31:
+
+- **Committing needs view access, not post.** Commits change membership
+  and keys, not content, and every member may need to make one. A
+  view-only account (a read-only channel, a listen-only voice user) is a
+  member like any other.
+- **Banned and deleted accounts are not allowed.** Their devices drop off
+  the allowed list, so reconciliation removes them. When a temporary ban
+  ends they are added back, with no history from while they were out.
+- **Key packages are claimed for a channel.** The claim names a channel
+  both the caller and the target may view. Before this, any account
+  could claim any other's packages, draining the single-use pool and
+  forcing the weaker last-resort package on them.
+
+The rule lives in one file, `server/internal/httpapi/access.go`: a Go
+form for the caller and an SQL form for everyone else, used by the
+websocket, voice tokens, every MLS endpoint, and
+`GET /channels/{id}/mls/allowed-devices`. That endpoint lists each
+non-revoked device of each permitted account. The server cannot say who
+is missing from a group, since it cannot read commits; the client
+compares the list with its own ratchet tree.
 
 Access is answered by one server-side question, "may this account view
 this channel?", which today is the role check and later is the custom
@@ -914,10 +935,9 @@ through `encodeGroupState` as the browser does:
       member's identity. MLS gives per-sender keys for text; per-sender
       media keys (exporter context including the leaf) would close this
       at the cost of one key per participant.
-- [ ] The commit endpoint does not yet check that each welcome's
-      recipient device belongs to a user with access to the channel. The
-      membership decision says the server enforces this; it must before
-      reconciliation ships (step 11).
+- [x] The commit endpoint checks that each welcome's recipient device
+      belongs to an account with access to the channel (step 11, server
+      side). The whole commit is refused if one does not.
 - [ ] Group membership is still manual in the debug page ("Add
       everyone", "Add everyone to voice"). Policy decided (membership
       follows access, see Encryption); build-order step 11.
