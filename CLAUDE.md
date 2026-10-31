@@ -106,7 +106,7 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
 
 ## Current state (update every session)
 
-_Last updated: 2026-10-30, after commit `6e20d9b` (encrypted attachments uncommitted)._
+_Last updated: 2026-10-30, after the encrypted-attachments verification._
 
 - Build-order step 9 (MLS for text) is functionally working on Docker:
   messages in an encrypted channel are ciphertext in Postgres (only the
@@ -116,21 +116,20 @@ _Last updated: 2026-10-30, after commit `6e20d9b` (encrypted attachments uncommi
 - Done: device identity + key packages; group create/join/catch-up;
   epoch-ordered commits with rebase; encrypted text end to end; own sent
   plaintext kept locally (MLS senders can't decrypt their own messages).
-- Encrypted attachments implemented (not yet tested on Docker): per-file
-  AES-256-GCM in `client-core/src/attachments.ts`, key carried in a JSON
-  envelope inside the MLS message; server stores ciphertext as
-  `encrypted` / octet-stream regardless of what the client sends. Link
-  previews skipped and GIFs refused in encrypted channels (both would
-  show content to the server). Encryption is not "done" until a
-  two-party attachment test passes.
+- Encrypted attachments verified on Docker: per-file AES-256-GCM in
+  `client-core/src/attachments.ts`, key carried in a JSON envelope inside
+  the MLS message; server stores ciphertext as `encrypted` / octet-stream
+  regardless of what the client sends. Link previews skipped in encrypted
+  channels. Giphy GIFs stay unencrypted there by Ryan's decision (public
+  content); user-uploaded .gif files are encrypted.
+- Local plaintext archive (IndexedDB) so messages survive reloads: MLS
+  keys are single-use. Inbound messages are processed through one queue.
+- Blob storage on Docker is a bind mount: `/mnt/openvoxa-blobs`.
 - Remaining, in order:
-  1. Two-party test of encrypted attachments (image preview, non-image
-     download, check `blobs` dir holds ciphertext, filename is
-     `encrypted` in Postgres).
-  2. "Add everyone" should skip devices already in the group.
-  3. Media keys from the MLS exporter secret (build-order step 10).
-  4. Multi-party testing.
-  5. Opt-in history sharing (Ryan wants it; see decisions.md Open items).
-  6. Local storage encryption (blocked on recovery keys).
+  1. "Add everyone" should skip devices already in the group.
+  2. Media keys from the MLS exporter secret (build-order step 10).
+  3. Multi-party testing.
+  4. Opt-in history sharing (Ryan wants it; see decisions.md Open items).
+  5. Local storage encryption (blocked on recovery keys).
 - Other open items (revoked-device removal, recovery keys, etc.) live in
   decisions.md "Open items" — check there before proposing new work.
