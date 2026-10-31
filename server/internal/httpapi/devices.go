@@ -360,6 +360,32 @@ func (a *API) writeKeyPackageCount(w http.ResponseWriter, r *http.Request, devic
 	writeJSON(w, http.StatusOK, out)
 }
 
+// maxClaimExclusions bounds the exclude list. A group is far smaller than
+// this; the cap only stops the request being used to make the server do
+// unbounded work.
+const maxClaimExclusions = 10000
+
+type claimRequest struct {
+	// Devices the caller already has in the group. Their packages are
+	// left unclaimed, because claiming consumes them: adding someone
+	// twice would otherwise burn a single-use package per click and
+	// drain the pool towards the weaker last-resort package.
+	//
+	// This is a hint from the client, read from its own copy of the
+	// ratchet tree. The server cannot check it (it never parses MLS),
+	// and does not need to: the worst a wrong list can do is make the
+	// caller skip a device or claim a package it then does not use.
+	ExcludeDeviceIDs []string `json:"exclude_device_ids"`
+}
+
+type claimResponse struct {
+	Packages []claimedPackage `json:"packages"`
+	// Which of the target user's devices were skipped because the
+	// caller said they are already in the group. Lets the client tell
+	// "already a member" apart from "has no device".
+	AlreadyInGroup []string `json:"already_in_group"`
+}
+
 type claimedPackage struct {
 	DeviceID     string `json:"device_id"`
 	Label        string `json:"label"`
@@ -378,6 +404,20 @@ type claimedPackage struct {
 func (a *API) claimKeyPackages(w http.ResponseWriter, r *http.Request) {
 	session := sessionFrom(r.Context())
 	targetUser := r.PathValue("id")
+
+	// The body is optional so a bare POST still claims for every device.
+	var req claimRequest
+	if r.ContentLength != 0 && !decodeJSON(w, r, &req) {
+		return
+	}
+	if len(req.ExcludeDeviceIDs) > maxClaimExclusions {
+		writeError(w, http.StatusBadRequest, "too many excluded devices")
+		return
+	}
+	exclude := make(map[string]bool, len(req.ExcludeDeviceIDs))
+	for _, id := range req.ExcludeDeviceIDs {
+		exclude[id] = true
+	}
 
 	rows, err := a.pool.Query(r.Context(),
 		`SELECT id, label FROM devices
@@ -414,8 +454,16 @@ func (a *API) claimKeyPackages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := make([]claimedPackage, 0, len(devices))
+	alreadyIn := make([]string, 0)
 
 	for _, d := range devices {
+		// Checked before the UPDATE, so nothing is consumed for a device
+		// that is already in the group.
+		if exclude[d.id] {
+			alreadyIn = append(alreadyIn, d.id)
+			continue
+		}
+
 		var raw []byte
 		var wasLastResort bool
 
@@ -469,11 +517,13 @@ func (a *API) claimKeyPackages(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	if len(out) == 0 {
+	// Every device already in the group is a normal outcome, not a
+	// failure: answer with nothing to add rather than an error.
+	if len(out) == 0 && len(alreadyIn) == 0 {
 		writeError(w, http.StatusConflict,
 			"none of that user's devices have key packages available")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, claimResponse{Packages: out, AlreadyInGroup: alreadyIn})
 }

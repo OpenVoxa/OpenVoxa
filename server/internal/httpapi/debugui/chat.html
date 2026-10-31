@@ -654,7 +654,14 @@ async function inviteEveryone() {
   try {
     const r = await session.groups.addMembers(currentChannel, others);
     const list = (ids) => ids.map((id) => esc(names.get(id) || id)).join(", ");
-    line("sys", `added ${list(r.added)}; group is now at epoch ${r.epoch}`);
+    if (r.added.length) {
+      line("sys", `added ${list(r.added)}; group is now at epoch ${r.epoch}`);
+    } else {
+      line("sys", `nothing to add; group stays at epoch ${r.epoch}`);
+    }
+    if (r.alreadyMembers.length) {
+      line("sys", `already in the group: ${list(r.alreadyMembers)}`);
+    }
     if (r.skipped.length) {
       line("sys", `skipped (no device registered yet): ${list(r.skipped)}`);
     }

@@ -41,10 +41,20 @@ interface ServerGroupState {
   reason?: string;
 }
 
-/** Outcome of addMembers: who got in and who had no device to add. */
+/**
+ * Outcome of addMembers, by user ID.
+ *
+ * added: at least one of their devices joined in this commit.
+ * alreadyMembers: every device they have is already in the group.
+ * skipped: they have no device that could be added.
+ *
+ * Each user lands in exactly one list. Someone whose laptop is already
+ * in but whose new phone was just added counts as added.
+ */
 export interface AddResult {
   epoch: number;
   added: string[];
+  alreadyMembers: string[];
   skipped: string[];
 }
 
@@ -67,6 +77,16 @@ interface ClaimedPackage {
   label: string;
   package: string;
   was_last_resort: boolean;
+}
+
+interface ClaimResponse {
+  packages: ClaimedPackage[];
+  already_in_group: string[];
+}
+
+/** A claimed package plus whose it is, so results can be reported per user. */
+interface PendingAdd extends ClaimedPackage {
+  user_id: string;
 }
 
 function toBase64(bytes: Uint8Array): string {
@@ -291,43 +311,63 @@ export class Groups {
    * phone without either holding the other's keys.
    */
   async addMembers(channelId: string, userIds: string[]): Promise<AddResult> {
-    if (!this.#states.has(channelId)) {
+    const state = this.#states.get(channelId);
+    if (!state) {
       throw new Error(`groups: not a member of ${channelId}`);
     }
+
+    // Devices already in the group are excluded before claiming, not
+    // after. Claiming consumes a single-use key package, so filtering
+    // afterwards would still burn one per device on every click.
+    const members = this.#mls.memberIdentities(state);
 
     // An account that has never signed in on an MLS-capable client has
     // no device and therefore nothing to add. That is normal, not an
     // error: skip it and report it, rather than letting one idle account
     // block everyone else from being added.
-    const claimed: ClaimedPackage[] = [];
-    const added: string[] = [];
+    const pending: PendingAdd[] = [];
+    const alreadyMembers: string[] = [];
     const skipped: string[] = [];
     for (const userId of userIds) {
       try {
-        const packages = (await this.#call(
+        const res = (await this.#call(
           `/api/v1/users/${userId}/key-packages/claim`,
-          { method: "POST" },
-        )) as ClaimedPackage[];
-        if (packages.length === 0) {
+          {
+            method: "POST",
+            body: JSON.stringify({ exclude_device_ids: members }),
+          },
+        )) as ClaimResponse;
+        if (res.packages.length > 0) {
+          pending.push(...res.packages.map((p) => ({ ...p, user_id: userId })));
+        } else if (res.already_in_group.length > 0) {
+          alreadyMembers.push(userId);
+        } else {
           skipped.push(userId);
-          continue;
         }
-        claimed.push(...packages);
-        added.push(userId);
       } catch (err) {
         if (!String(err).includes("no devices registered")) throw err;
         skipped.push(userId);
       }
     }
 
-    if (claimed.length === 0) {
+    if (pending.length === 0) {
+      if (alreadyMembers.length > 0) {
+        // Nothing new to add. No commit, so the epoch does not move.
+        return { epoch: epochOf(state), added: [], alreadyMembers, skipped };
+      }
       throw new Error("groups: none of those accounts have a device to add");
     }
 
-    const keyPackages: WireMessage[] = claimed.map((c) => fromBase64(c.package));
+    const { epoch, committed } = await this.#commitWithRetry(channelId, pending);
 
-    const epoch = await this.#commitWithRetry(channelId, keyPackages, claimed);
-    return { epoch, added, skipped };
+    // Someone else's commit may have added some of these devices while
+    // we were rebasing. Report those users as already members unless
+    // another of their devices went in with our commit.
+    const added = [...new Set(committed.map((p) => p.user_id))];
+    for (const userId of new Set(pending.map((p) => p.user_id))) {
+      if (!added.includes(userId)) alreadyMembers.push(userId);
+    }
+    return { epoch, added, alreadyMembers, skipped };
   }
 
   /**
@@ -339,17 +379,28 @@ export class Groups {
    * server accepts one and rejects the other. The loser catches up,
    * rebuilds its commit on the new state, and tries again - which is why
    * the commit is constructed inside the loop rather than outside it.
+   *
+   * The device list is re-checked on every attempt: if the commit that
+   * beat us added one of the same devices, adding it again would put two
+   * leaves in the tree for one device.
    */
   async #commitWithRetry(
     channelId: string,
-    keyPackages: WireMessage[],
-    claimed: ClaimedPackage[],
-  ): Promise<number> {
+    pending: PendingAdd[],
+  ): Promise<{ epoch: number; committed: PendingAdd[] }> {
     for (let attempt = 1; attempt <= MAX_COMMIT_ATTEMPTS; attempt++) {
       const state = this.#states.get(channelId);
       if (!state) throw new Error(`groups: not a member of ${channelId}`);
 
       const builtOn = epochOf(state);
+      const members = new Set(this.#mls.memberIdentities(state));
+      const toAdd = pending.filter((p) => !members.has(p.device_id));
+      if (toAdd.length === 0) {
+        // Everyone we meant to add got in through someone else's commit.
+        return { epoch: builtOn, committed: [] };
+      }
+
+      const keyPackages: WireMessage[] = toAdd.map((c) => fromBase64(c.package));
       const commit = await this.#mls.addMembers(state, keyPackages);
 
       if (!commit.welcome) {
@@ -371,7 +422,7 @@ export class Groups {
               device_id: this.#deviceId,
               epoch: builtOn,
               commit: toBase64(commit.commit),
-              welcomes: claimed.map((c) => ({
+              welcomes: toAdd.map((c) => ({
                 device_id: c.device_id,
                 welcome: welcomeB64,
                 ratchet_tree: treeB64,
@@ -384,7 +435,7 @@ export class Groups {
         // accepted would leave this device on a branch nobody else
         // follows.
         await this.#persist(channelId, commit.state);
-        return response.epoch;
+        return { epoch: response.epoch, committed: toAdd };
       } catch (err) {
         if (!this.#isEpochConflict(err)) throw err;
 
