@@ -191,6 +191,13 @@ numbers, as Signal does) would let users confirm each other's devices
 and is the eventual stronger answer. Self-hosting limits who the operator
 is; it does not remove the operator from the trust model.
 
+External join sharpens this slightly. The GroupInfo the server stores is
+enough on its own to join, so a hostile server needs no member online to
+add a device; the announcement then appears when members next catch up,
+not at the moment of the join. Members treat an external join exactly
+like any other add: it is announced, and a device that is not on the
+channel's allowed list is removed by the next reconciliation.
+
 **Per-account login limiting can be weaponised.** Five failed attempts
 throttles an account, so someone who knows a username can lock them out
 for a few minutes. Mitigated by a short window, slow refill and an
@@ -344,13 +351,14 @@ the server's role is to say who *should* be in, and clients do the rest:
    adds the missing and removes the revoked, in the background. The
    existing commit compare-and-swap means two members doing this at once
    cannot fork the group; the loser rebases and finds nothing left to do.
-2. **External join (the fallback, not yet verified).** When no member is
-   online, a permitted device joins on its own from a GroupInfo the group
-   publishes to the server (RFC 9420 external commit). Whether ts-mls
-   1.6.2 supports this has to be established by experiment before it is
-   designed in. Until then a new member waits for any member to come
-   online, which for voice is usually immediate: you are joining a call
-   somebody is already in.
+2. **External join (the fallback).** When no member is online, a
+   permitted device joins on its own from a GroupInfo the group publishes
+   to the server (RFC 9420 external commit). Verified in Node against
+   ts-mls 1.6.2 on 2026-10-30; see Implementation notes for the shape.
+   Every commit makes the previous GroupInfo useless, so whoever commits
+   also uploads a fresh one, and the server hands it only to devices that
+   may view the channel. The joiner's commit goes through the same epoch
+   compare-and-swap as any other.
 
 The server still checks access before accepting any commit or welcome,
 so a client cannot add someone the permissions do not allow.
@@ -573,7 +581,7 @@ request and no error anywhere obvious. GIF and moderation controls are now
 attached through a helper that warns rather than throws. This disappears
 with `client-web`, where components fail independently.
 
-**Seven ts-mls API details were observed rather than documented.** Each
+**Nine ts-mls API details were observed rather than documented.** Each
 was written against the README first and was wrong. The pattern, not any
 individual case, is the useful record: this library's documentation
 describes what the functions are for, not what they return or in what
@@ -608,6 +616,15 @@ The details themselves:
   that extension was not found.
 - `joinGroup` takes the tree as an in-memory object, so transporting it
   is entirely the caller's problem.
+- `joinGroupExternal` returns a bare `PublicMessage`, not an MLSMessage,
+  so it needs wrapping (`wireformat: "mls_public_message"`) before
+  encoding, and members apply it with `processPublicMessage`, not the
+  private-message path every other commit uses.
+- `joinGroupExternal(..., resync = true)` hangs forever when the old leaf
+  is not found. It looks the old leaf up by signature public key, and a
+  fresh key package has a new one; the miss becomes leaf index -0.5 and
+  the tree walk never ends. Never pass `resync = true`. See the external
+  commit note below for the replacement.
 
 **The Docker build context is the repository root.** The server image
 bundles client-core alongside the Go binary, so the Node stage and the Go
@@ -715,6 +732,34 @@ the text channel a socket is connected to, so a call also catches up on
 its voice group when someone joins, on any decryption error, and every 5
 seconds. Cheap at this scale; a socket subscribed to several channels
 would replace it.
+
+**External commit works in ts-mls 1.6.2.** Proven in Node on
+2026-10-30 (throwaway script, not committed), with states round-tripped
+through `encodeGroupState` as the browser does:
+
+- A member calls `createGroupInfoWithExternalPub(state, [], cs)` and
+  wraps the result as `{wireformat: "mls_group_info", version: "mls10",
+  groupInfo}`. About 230 bytes; the ratchet tree travels separately in
+  our JSON codec, exactly as it does with a welcome.
+- The joiner calls `joinGroupExternal(groupInfo, publicPackage,
+  privatePackage, false, cs, tree)` and gets `{publicMessage, newState}`.
+  Existing members process the wrapped message and all three agree on
+  epoch, member list and exporter secret; messages flow every way, and
+  ordinary commits work afterwards.
+- A GroupInfo from an older epoch still lets the joiner build a commit,
+  but members refuse it ("epoch too old"). Our compare-and-swap would
+  refuse it first.
+- `createGroupInfoWithExternalPubAndRatchetTree` also works: the tree
+  rides inside the GroupInfo (about 1.2 KB for four members) and the
+  joiner passes no tree. This is the first route found that puts a tree
+  in a ts-mls message at all.
+- A device that lost its state rejoins with `resync = false`. The group
+  briefly holds two leaves with the same device ID; any member then
+  removes the one that is not the rejoiner's own leaf with an ordinary
+  remove proposal, and the rejoiner follows that commit normally.
+- Removal is `{proposalType: "remove", remove: {removed: leafIndex}}` in
+  `createCommit`'s `extraProposals`, where the leaf index is the tree
+  array index divided by two, found by matching the credential identity.
 
 ## Build order
 

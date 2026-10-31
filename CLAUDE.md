@@ -97,7 +97,7 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
 - Ratchet trees travel as tagged JSON (our own codec): watch
   `Uint8Array`, `BigInt`, and `undefined`-vs-`null` blank nodes.
 - ts-mls docs describe intent, not return shapes — **verify API shapes
-  by experiment/types, never from the README.** See the seven listed
+  by experiment/types, never from the README.** See the nine listed
   gotchas in decisions.md Implementation notes.
 - `chat.html` is one script: a throw while wiring handlers silently
   kills every handler after it. Attach new controls via the warn-not-
@@ -112,7 +112,7 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
 
 ## Current state (update every session)
 
-_Last updated: 2026-10-30, after step 10 verified and the membership decision._
+_Last updated: 2026-10-30, after step 11 step 0 (external commit proven)._
 
 - Build-order step 9 (MLS for text) is functionally working on Docker:
   messages in an encrypted channel are ciphertext in Postgres (only the
@@ -142,7 +142,9 @@ _Last updated: 2026-10-30, after step 10 verified and the membership decision._
 - Remaining, in order:
   1. Automatic membership (step 11): server reports missing/revoked
      devices per channel; online members' clients reconcile; join/leave
-     notices. Then test ts-mls external commit as the no-one-online path.
+     notices. ts-mls external commit is proven in Node (step 0 done,
+     decisions.md Implementation notes); wire it in as the
+     no-one-online path last. Never pass `resync = true` (hangs).
   2. Multi-party testing.
   3. Custom permission groups (step 12).
   4. Opt-in history sharing (Ryan wants it; see decisions.md Open items).
