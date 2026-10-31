@@ -813,6 +813,22 @@ removes a third party able to serve code that sees every decrypted frame.
 Dockerfile puts them in `debugui/`. The worker is not terminated by
 LiveKit; the client terminates it on leave.
 
+**Losing access removes you from the call, and old media keys expire.**
+Found on Docker 2026-10-31: a banned account stayed in the call and stayed
+audible. A LiveKit token only gates joining, and with `failureTolerance:
+-1` nothing ever retired the old epochs' keys, which are all a removed
+device can encrypt with. Two fixes. The server calls LiveKit's
+`RoomService.RemoveParticipant` (Twirp JSON, room-admin token, internal
+URL `OPENVOXA_LIVEKIT_API_URL`, default `http://livekit:7880`) for every
+voice channel the account can no longer view, after a ban, a role change
+or an account deletion. And each client overwrites every key slot but the
+current one with random bytes 10 seconds after a new epoch key, so frames
+under an old key stop decrypting even from a client that ignores the
+removal. A member slow to apply a commit can drop out for a moment after
+that handover. Revoking a single device does not kick, because LiveKit
+identities are accounts and the account's other device may be the one in
+the call; the key expiry covers that case.
+
 **Voice commits are polled.** `group_advanced` only reaches subscribers of
 the text channel a socket is connected to, so a call also catches up on
 its voice group when someone joins, on any decryption error, and every 5

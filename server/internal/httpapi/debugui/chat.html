@@ -2081,8 +2081,38 @@ class MlsMediaKeys extends LivekitClient.BaseKeyProvider {
     // Protected in LiveKit's TypeScript, callable from a subclass. It is
     // the only way to set a key at a chosen slot.
     this.onSetEncryptionKey(material, undefined, epoch % MEDIA_KEYRING);
+    this.currentEpoch = epoch;
+
+    // Old keys stay usable only for the handover, while members apply the
+    // commit at slightly different moments. After that every other slot is
+    // overwritten with random bytes. Otherwise a removed device, which
+    // can only ever encrypt under an old key, stayed audible to everyone
+    // (found on Docker 2026-10-31; with failureTolerance -1 nothing else
+    // ever retires a key).
+    clearTimeout(this.retireTimer);
+    this.retireTimer = setTimeout(() => {
+      if (this.currentEpoch === epoch) this.retireOldKeys(epoch).catch(() => {});
+    }, MEDIA_KEY_HANDOVER_MS);
+  }
+
+  async retireOldKeys(epoch) {
+    for (let slot = 0; slot < MEDIA_KEYRING; slot++) {
+      if (slot === epoch % MEDIA_KEYRING) continue;
+      const junk = await crypto.subtle.importKey(
+        "raw", crypto.getRandomValues(new Uint8Array(32)), "HKDF", false,
+        ["deriveBits", "deriveKey"]);
+      if (this.currentEpoch !== epoch) return; // a newer key arrived meanwhile
+      this.onSetEncryptionKey(junk, undefined, slot);
+    }
+  }
+
+  stop() {
+    clearTimeout(this.retireTimer);
   }
 }
+
+/** How long the previous epoch's media key keeps working after a change. */
+const MEDIA_KEY_HANDOVER_MS = 10000;
 
 let voiceChannelId = null;
 let voiceKeys = null;
@@ -2130,6 +2160,7 @@ function stopVoiceCrypto() {
   voicePoll = null;
   voiceWorker?.terminate(); // LiveKit leaves the worker to its owner
   voiceWorker = null;
+  voiceKeys?.stop();
   voiceKeys = null;
   voiceKeyEpoch = null;
   voiceChannelId = null;
@@ -2254,8 +2285,10 @@ async function joinVoice() {
     .on(LivekitClient.RoomEvent.ActiveSpeakersChanged, renderParticipants)
     .on(LivekitClient.RoomEvent.TrackMuted, renderParticipants)
     .on(LivekitClient.RoomEvent.TrackUnmuted, renderParticipants)
-    .on(LivekitClient.RoomEvent.Disconnected, () => {
-      line("sys", "left voice");
+    .on(LivekitClient.RoomEvent.Disconnected, (reason) => {
+      line("sys", reason === LivekitClient.DisconnectReason?.PARTICIPANT_REMOVED
+        ? "removed from the call by the server (no longer allowed in this channel)"
+        : "left voice");
       stopShare();
       stopVoiceCrypto();
       room = null; micTrack = null;
