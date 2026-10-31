@@ -71,8 +71,8 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
 - Commit/push only when asked. Never commit `.env`, keys, or
   `docker-compose.override.yml`.
 - **After EVERY push (docs-only included), give Ryan the Docker block**
-  in the same reply, without being asked. He multitasks and forgets. Also
-  give the Git-terminal `git pull` (or push commands if he is committing).
+  in the same reply, without being asked. He multitasks and forgets. No
+  Git-terminal `git pull` block: Claude edits that folder directly.
   Docker block, with the expected hash filled in:
      ```bash
      # DOCKER
@@ -181,7 +181,8 @@ _Last updated: 2026-10-31, step 12 (permission groups) built; awaiting Docker te
      No settings UI yet (real client).
      Event socket (`/ws` without channel) added after D3 on Docker:
      server-wide events reach a client with no channel open.
-     Docker: D1, D2 passed; D3 retest next (then D4 voice, D5 rank).
+     Docker: D1, D2, D3 passed (D3 on `4a670de`, no reload needed). Next
+     D4 voice, then D5 rank.
   4. Opt-in history sharing (Ryan wants it; see decisions.md Open items).
   5. Local storage encryption (blocked on recovery keys).
 - Other open items (revoked-device removal, recovery keys, etc.) live in
