@@ -867,9 +867,18 @@ through `encodeGroupState` as the browser does:
    - ✅ Two-party call on Docker (ryan + staff, 2026-10-30): a device
      outside the group is refused; adding it rotates the key (epoch 1);
      audio and screen share both ways, simultaneous streams fine
-11. ⬜ Automatic group membership from channel access: member
-    reconciliation, join and leave notices, then external join if ts-mls
-    supports it. Built against the current roles.
+11. 🔶 Automatic group membership from channel access: member
+    reconciliation, join and leave notices, then external join.
+    Built against the current roles.
+   - ✅ ts-mls external commit and removal behaviour proven in Node
+   - ✅ Server: one access rule (`access.go`), allowed-devices endpoint,
+     welcome recipients checked, key package claims scoped to a channel.
+     Verified on Docker 2026-10-31 (ryan + staff, admin-only channel):
+     allowed list correct, staff refused the list, claim for staff
+     refused, claim without channel refused, commit with a welcome to
+     staff refused, existing channel and "Add everyone" unaffected
+   - ⬜ Client reconciliation, triggers, join/leave notices
+   - ⬜ External join and stuck-group reset
 12. ⬜ Custom permission groups replacing the fixed roles
 13. ⬜ The real client: `client-web`, `client-desktop`
 

@@ -112,7 +112,7 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
 
 ## Current state (update every session)
 
-_Last updated: 2026-10-30, after step 11 step 0 (external commit proven)._
+_Last updated: 2026-10-31, after step 11 server side verified on Docker._
 
 - Build-order step 9 (MLS for text) is functionally working on Docker:
   messages in an encrypted channel are ciphertext in Postgres (only the
@@ -140,9 +140,10 @@ _Last updated: 2026-10-30, after step 11 step 0 (external commit proven)._
   Encryption + Known tensions). Custom permission groups replace the
   fixed roles later. The "Add everyone" buttons are scaffolding.
 - Remaining, in order:
-  1. Automatic membership (step 11): server reports missing/revoked
-     devices per channel; online members' clients reconcile; join/leave
-     notices. ts-mls external commit is proven in Node (step 0 done,
+  1. Automatic membership (step 11): server side done and verified
+     (`access.go`, `GET /channels/{id}/mls/allowed-devices`, welcome
+     check, channel-scoped claims; committing needs view, not post).
+     Next: client reconcile, triggers, join/leave notices. ts-mls external commit is proven in Node (step 0 done,
      decisions.md Implementation notes); wire it in as the
      no-one-online path last. Never pass `resync = true` (hangs).
      Removes and adds go in separate commits (decisions.md).
