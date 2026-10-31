@@ -1308,7 +1308,15 @@ async function call(path, options = {}) {
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
 
-  if (!res.ok) throw new Error(data?.error || res.statusText);
+  if (!res.ok) {
+    // Some refusals carry `reason` rather than `error` (an epoch
+    // conflict on commit), and statusText is empty over HTTP/2, so fall
+    // back to the status code. client-core relies on the status to spot
+    // an epoch conflict and rebase.
+    const err = new Error(data?.error || data?.reason || `HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
   return data;
 }
 
