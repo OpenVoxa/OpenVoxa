@@ -323,6 +323,29 @@ export class TsMlsProvider implements MlsProvider {
     );
   }
 
+  /**
+   * Observed from ts-mls 1.6.2: the tree is a flat array in which even
+   * indices are leaves and odd indices are parents. A blank node is
+   * `undefined` in a live state and a hole after our tree codec, so
+   * anything that is not explicitly a leaf is skipped. A leaf's identity
+   * is the device ID we put in its basic credential at key-package time.
+   * ts-mls has getGroupMembers for this but does not export it.
+   */
+  memberIdentities(state: GroupState): string[] {
+    const tree = (state as { ratchetTree?: unknown[] }).ratchetTree ?? [];
+    const decoder = new TextDecoder();
+    const out: string[] = [];
+    for (const node of tree) {
+      const n = node as
+        | { nodeType?: string; leaf?: { credential?: { identity?: Uint8Array } } }
+        | undefined;
+      if (n?.nodeType !== "leaf") continue;
+      const identity = n.leaf?.credential?.identity;
+      if (identity) out.push(decoder.decode(identity));
+    }
+    return out;
+  }
+
   async addMembers(state: GroupState, keyPackages: WireMessage[]): Promise<CommitResult> {
     const proposals: Proposal[] = keyPackages.map((raw) => {
       const decoded = decodeMlsMessage(raw, 0)?.[0];

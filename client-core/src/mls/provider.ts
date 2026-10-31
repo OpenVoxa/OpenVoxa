@@ -71,6 +71,12 @@ export interface MlsProvider {
   /** Create a new group containing only this device. */
   createGroup(groupId: string, keys: KeyPair): Promise<GroupState>;
 
+  /**
+   * The identities (device IDs) of every member currently in the group,
+   * read from this device's copy of the ratchet tree.
+   */
+  memberIdentities(state: GroupState): string[];
+
   /** Add members by their published key packages and produce a commit. */
   addMembers(state: GroupState, keyPackages: WireMessage[]): Promise<CommitResult>;
 

@@ -106,7 +106,7 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
 
 ## Current state (update every session)
 
-_Last updated: 2026-10-30, after the encrypted-attachments verification._
+_Last updated: 2026-10-30, after "Add everyone" skip-existing work._
 
 - Build-order step 9 (MLS for text) is functionally working on Docker:
   messages in an encrypted channel are ciphertext in Postgres (only the
@@ -126,7 +126,12 @@ _Last updated: 2026-10-30, after the encrypted-attachments verification._
   keys are single-use. Inbound messages are processed through one queue.
 - Blob storage on Docker is a bind mount: `/mnt/openvoxa-blobs`.
 - Remaining, in order:
-  1. "Add everyone" should skip devices already in the group.
+  1. "Add everyone" skips devices already in the group: implemented
+     2026-10-30, awaiting Docker test. Client reads member device IDs
+     from its ratchet tree (`memberIdentities`) and sends them as
+     `exclude_device_ids` to the claim endpoint, so no key package is
+     consumed for them; claim now returns `{packages, already_in_group}`.
+     Rebase re-filters, so a racing commit can't double-add a device.
   2. Media keys from the MLS exporter secret (build-order step 10).
   3. Multi-party testing.
   4. Opt-in history sharing (Ryan wants it; see decisions.md Open items).
