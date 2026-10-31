@@ -370,7 +370,9 @@ export class Groups {
           `/api/v1/users/${userId}/key-packages/claim`,
           {
             method: "POST",
-            body: JSON.stringify({ exclude_device_ids: members }),
+            // The server only hands out packages for a channel both of
+            // us can view, so one account cannot drain another's pool.
+            body: JSON.stringify({ channel_id: channelId, exclude_device_ids: members }),
           },
         )) as ClaimResponse;
         if (res.packages.length > 0) {
@@ -381,7 +383,12 @@ export class Groups {
           skipped.push(userId);
         }
       } catch (err) {
-        if (!String(err).includes("no devices registered")) throw err;
+        // No device, or no access to this channel: nothing to add for
+        // this account, which should not stop the others being added.
+        const msg = String(err);
+        if (!msg.includes("no devices registered") && !msg.includes("does not have access")) {
+          throw err;
+        }
         skipped.push(userId);
       }
     }

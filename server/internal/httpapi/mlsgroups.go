@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-
-	"github.com/openvoxa/openvoxa/server/internal/perm"
 )
 
 const (
@@ -38,50 +36,22 @@ type mlsGroupState struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// requireChannelAccess checks the caller may read a channel and returns
-// whether they may also write to it.
+// requireChannelAccess checks the caller may view a channel and returns
+// whether they may also post in it. The rule itself lives in access.go.
 func (a *API) requireChannelAccess(
 	w http.ResponseWriter, r *http.Request, channelID string,
 ) (canPost bool, ok bool) {
-	session := sessionFrom(r.Context())
-
-	role, err := perm.Parse(session.Role)
-	if err != nil {
-		slog.Error("session carries an unknown role", "role", session.Role)
-		writeError(w, http.StatusInternalServerError, "could not check permissions")
-		return false, false
-	}
-
-	var minView, minPost string
-	err = a.pool.QueryRow(r.Context(),
-		`SELECT min_role_view, min_role_post FROM channels WHERE id = $1`,
-		channelID,
-	).Scan(&minView, &minPost)
-
+	p, err := a.channelPermsFor(r.Context(), sessionFrom(r.Context()).Role, channelID)
 	switch {
-	case errors.Is(err, pgx.ErrNoRows):
+	case errors.Is(err, errChannelNotFound):
 		writeError(w, http.StatusNotFound, "channel not found")
 		return false, false
 	case err != nil:
-		slog.Error("looking up channel", "err", err)
+		slog.Error("checking channel access", "err", err, "channel_id", channelID)
 		writeError(w, http.StatusInternalServerError, "could not check permissions")
 		return false, false
 	}
-
-	viewRole, err := perm.Parse(minView)
-	if err != nil || !perm.AtLeast(role, viewRole) {
-		writeError(w, http.StatusNotFound, "channel not found")
-		return false, false
-	}
-
-	postRole, err := perm.Parse(minPost)
-	if err != nil {
-		slog.Error("channel has an unknown min_role_post", "channel_id", channelID)
-		writeError(w, http.StatusInternalServerError, "could not check permissions")
-		return false, false
-	}
-
-	return perm.AtLeast(role, postRole), true
+	return p.CanPost, true
 }
 
 // ownDevice resolves the caller's device, verifying it belongs to them.
@@ -149,6 +119,10 @@ type createGroupRequest struct {
 // first-come-first-served, and the unique primary key makes a race
 // resolve to one winner: a second caller gets a conflict and joins the
 // existing group instead of starting a rival one.
+//
+// Viewing the channel is enough. Group membership follows view access
+// (docs/decisions.md, Encryption), so a view-only account is a member
+// like any other and may be the first one there.
 func (a *API) createGroup(w http.ResponseWriter, r *http.Request) {
 	channelID := r.PathValue("id")
 
@@ -157,12 +131,7 @@ func (a *API) createGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	canPost, ok := a.requireChannelAccess(w, r, channelID)
-	if !ok {
-		return
-	}
-	if !canPost {
-		writeError(w, http.StatusForbidden, "you cannot post in this channel")
+	if _, ok := a.requireChannelAccess(w, r, channelID); !ok {
 		return
 	}
 	if !a.ownDevice(w, r, req.DeviceID) {
@@ -222,6 +191,11 @@ type commitResponse struct {
 //
 // The blobs are opaque. The server cannot read the commit, cannot verify
 // the epoch inside it, and does not try.
+//
+// Viewing the channel is enough to commit: commits change membership and
+// keys, not content, and every member may need to make one (reconciling,
+// joining from a GroupInfo). What a commit may NOT do is bring in someone
+// without access, and that is checked on the welcomes below.
 func (a *API) submitCommit(w http.ResponseWriter, r *http.Request) {
 	channelID := r.PathValue("id")
 
@@ -230,12 +204,7 @@ func (a *API) submitCommit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	canPost, ok := a.requireChannelAccess(w, r, channelID)
-	if !ok {
-		return
-	}
-	if !canPost {
-		writeError(w, http.StatusForbidden, "you cannot post in this channel")
+	if _, ok := a.requireChannelAccess(w, r, channelID); !ok {
 		return
 	}
 	if !a.ownDevice(w, r, req.DeviceID) {
@@ -273,6 +242,37 @@ func (a *API) submitCommit(w http.ResponseWriter, r *http.Request) {
 		welcomes = append(welcomes, decodedWelcome{
 			deviceID: env.DeviceID, welcome: welcome, tree: tree,
 		})
+	}
+
+	// Every welcome must go to a device that belongs in this channel's
+	// group by the same rule the allowed-devices list uses. The server
+	// cannot see who the commit itself adds (it is encrypted), but an
+	// added device that gets no welcome cannot join, so refusing the
+	// welcome is what enforces access. The whole commit is refused,
+	// not just the welcome: accepting it would leave the group holding a
+	// member who can never join, and the client would not know.
+	if len(welcomes) > 0 {
+		ids := make([]string, 0, len(welcomes))
+		for _, env := range welcomes {
+			ids = append(ids, env.deviceID)
+		}
+		allowed, err := a.allowedDevices(r.Context(), channelID, ids)
+		if err != nil {
+			slog.Error("checking welcome recipients", "err", err)
+			writeError(w, http.StatusInternalServerError, "could not submit the commit")
+			return
+		}
+		ok := make(map[string]bool, len(allowed))
+		for _, d := range allowed {
+			ok[d.DeviceID] = true
+		}
+		for _, id := range ids {
+			if !ok[id] {
+				writeError(w, http.StatusForbidden,
+					"a welcome is addressed to a device without access to this channel")
+				return
+			}
+		}
 	}
 
 	tx, err := a.pool.Begin(r.Context())
@@ -364,6 +364,31 @@ func (a *API) submitCommit(w http.ResponseWriter, r *http.Request) {
 		"channel_id", channelID, "epoch", newEpoch, "welcomes", len(welcomes))
 
 	writeJSON(w, http.StatusOK, commitResponse{Epoch: newEpoch})
+}
+
+// listAllowedDevices returns every device that belongs in this channel's
+// encryption group: each non-revoked device of each account that may view
+// the channel.
+//
+// The server does not know who is actually in the group - commits are
+// opaque - so it does not report "missing" or "revoked" itself. A member's
+// client compares this list against its own ratchet tree and adds or
+// removes the difference (build-order step 11).
+func (a *API) listAllowedDevices(w http.ResponseWriter, r *http.Request) {
+	channelID := r.PathValue("id")
+
+	if _, ok := a.requireChannelAccess(w, r, channelID); !ok {
+		return
+	}
+
+	devices, err := a.allowedDevices(r.Context(), channelID, nil)
+	if err != nil {
+		slog.Error("listing allowed devices", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not list devices")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, devices)
 }
 
 type handshakeEntry struct {

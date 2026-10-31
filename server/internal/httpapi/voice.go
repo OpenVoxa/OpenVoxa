@@ -9,10 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/livekit/protocol/auth"
-
-	"github.com/openvoxa/openvoxa/server/internal/perm"
 )
 
 // voiceTokenTTL is how long a minted token may be used to join. It bounds
@@ -49,55 +46,23 @@ func (a *API) voiceToken(w http.ResponseWriter, r *http.Request) {
 	session := sessionFrom(r.Context())
 	channelID := r.PathValue("id")
 
-	var kind, minView, minPost string
-	var forcePTT bool
-
-	err := a.pool.QueryRow(r.Context(),
-		`SELECT kind, min_role_view, min_role_post, force_ptt
-		   FROM channels WHERE id = $1`,
-		channelID,
-	).Scan(&kind, &minView, &minPost, &forcePTT)
-
+	p, err := a.channelPermsFor(r.Context(), session.Role, channelID)
 	switch {
-	case errors.Is(err, pgx.ErrNoRows):
-		writeError(w, http.StatusNotFound, "channel not found")
-		return
-	case err != nil:
-		slog.Error("looking up voice channel", "err", err)
-		writeError(w, http.StatusInternalServerError, "could not join channel")
-		return
-	case kind != "voice":
-		writeError(w, http.StatusBadRequest, "not a voice channel")
-		return
-	}
-
-	role, err := perm.Parse(session.Role)
-	if err != nil {
-		slog.Error("session carries an unknown role", "role", session.Role)
-		writeError(w, http.StatusInternalServerError, "could not join channel")
-		return
-	}
-
-	viewRole, err := perm.Parse(minView)
-	if err != nil {
-		slog.Error("channel has an unknown min_role_view", "channel_id", channelID)
-		writeError(w, http.StatusInternalServerError, "could not join channel")
-		return
-	}
-	if !perm.AtLeast(role, viewRole) {
+	case errors.Is(err, errChannelNotFound):
 		// Consistent with text channels: something you cannot access is
 		// not confirmed to exist.
 		writeError(w, http.StatusNotFound, "channel not found")
 		return
-	}
-
-	postRole, err := perm.Parse(minPost)
-	if err != nil {
-		slog.Error("channel has an unknown min_role_post", "channel_id", channelID)
+	case err != nil:
+		slog.Error("checking channel access", "err", err, "channel_id", channelID)
 		writeError(w, http.StatusInternalServerError, "could not join channel")
 		return
+	case p.Kind != "voice":
+		writeError(w, http.StatusBadRequest, "not a voice channel")
+		return
 	}
-	canPublish := perm.AtLeast(role, postRole)
+	canPublish := p.CanPost
+	forcePTT := p.ForcePTT
 	canSubscribe := true
 
 	grant := &auth.VideoGrant{

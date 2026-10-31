@@ -16,10 +16,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/coder/websocket"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/openvoxa/openvoxa/server/internal/hub"
-	"github.com/openvoxa/openvoxa/server/internal/perm"
 )
 
 const (
@@ -177,51 +175,22 @@ func (a *API) websocket(w http.ResponseWriter, r *http.Request) {
 	// Confirm the channel exists, is a text channel, and that this caller
 	// may view it. The permission check happens before the upgrade so a
 	// refusal is a plain HTTP error the client can read.
-	var kind, minView, minPost string
-	err := a.pool.QueryRow(r.Context(),
-		`SELECT kind, min_role_view, min_role_post FROM channels WHERE id = $1`,
-		channelID,
-	).Scan(&kind, &minView, &minPost)
+	p, err := a.channelPermsFor(r.Context(), session.Role, channelID)
 	switch {
-	case errors.Is(err, pgx.ErrNoRows):
-		writeError(w, http.StatusNotFound, "channel not found")
-		return
-	case err != nil:
-		slog.Error("looking up channel", "err", err)
-		writeError(w, http.StatusInternalServerError, "could not open channel")
-		return
-	case kind != "text":
-		writeError(w, http.StatusBadRequest, "not a text channel")
-		return
-	}
-
-	role, err := perm.Parse(session.Role)
-	if err != nil {
-		slog.Error("session carries an unknown role", "role", session.Role)
-		writeError(w, http.StatusInternalServerError, "could not open channel")
-		return
-	}
-
-	viewRole, err := perm.Parse(minView)
-	if err != nil {
-		slog.Error("channel has an unknown min_role_view", "channel_id", channelID)
-		writeError(w, http.StatusInternalServerError, "could not open channel")
-		return
-	}
-	if !perm.AtLeast(role, viewRole) {
+	case errors.Is(err, errChannelNotFound):
 		// 404 rather than 403: a channel you cannot see should not be
 		// confirmed to exist.
 		writeError(w, http.StatusNotFound, "channel not found")
 		return
-	}
-
-	postRole, err := perm.Parse(minPost)
-	if err != nil {
-		slog.Error("channel has an unknown min_role_post", "channel_id", channelID)
+	case err != nil:
+		slog.Error("checking channel access", "err", err, "channel_id", channelID)
 		writeError(w, http.StatusInternalServerError, "could not open channel")
 		return
+	case p.Kind != "text":
+		writeError(w, http.StatusBadRequest, "not a text channel")
+		return
 	}
-	canPost := perm.AtLeast(role, postRole)
+	canPost := p.CanPost
 
 	// OriginPatterns is empty, so coder/websocket enforces same-origin. The
 	// desktop client will need an explicit allowance here later; leaving it
