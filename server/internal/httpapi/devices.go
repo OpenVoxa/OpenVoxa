@@ -185,6 +185,9 @@ func (a *API) revokeDevice(w http.ResponseWriter, r *http.Request) {
 		slog.Error("clearing key packages for revoked device", "err", err)
 	}
 
+	// Members remove the device from every group it was in.
+	a.NotifyAccessChanged()
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -313,6 +316,11 @@ func (a *API) publishKeyPackages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not publish key packages")
 		return
 	}
+
+	// A device becomes addable once it has packages: a new device right
+	// after registering, or one that ran dry and was skipped. Members
+	// reconcile and pick it up.
+	a.NotifyAccessChanged()
 
 	a.writeKeyPackageCount(w, r, deviceID)
 }
