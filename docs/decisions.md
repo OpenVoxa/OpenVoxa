@@ -935,9 +935,15 @@ reconcile removes duplicates of its own device ID only.
      toggled user/moderator): nothing added without access; staff added
      (epoch 1), removed (2), re-added (3) while offline; staff then joined
      from the newest welcome at epoch 3 and messages flowed both ways
-   - 🔶 Triggers built 2026-10-31 (`reconcileSoon`, `access_changed`,
-     demotion closes lost sockets, chat.html handles `RemovedFromGroup`
-     and joins on `group_advanced` while waiting); not yet verified
+   - ✅ Triggers (`reconcileSoon`, `access_changed`, demotion closes
+     lost sockets, chat.html handles `RemovedFromGroup` and joins on
+     `group_advanced` while waiting). Verified on Docker 2026-10-31
+     (ryan + staff, `mods-only-test`): demote closed staff's socket and
+     ryan removed it automatically (epoch 4); promote re-added it (5);
+     staff revoking its own device while connected showed the removal as
+     a normal event and ryan removed it (6); the new device was added
+     automatically after publishing key packages (7). One commit per
+     change, both sides in sync, messages both ways
    - ⬜ Join/leave notices
    - ⬜ External join and stuck-group reset
 12. ⬜ Custom permission groups replacing the fixed roles
