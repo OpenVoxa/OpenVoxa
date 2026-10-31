@@ -103,10 +103,13 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
   `go build` (embed). Don't let `go mod tidy` raise the `go` directive
   above the Dockerfile's base image.
 - Permission revocation must explicitly reach live WebSockets.
+- LiveKit is self-hosted from `debugui/` and pinned exactly in
+  client-core/package.json: the E2EE worker must be same-origin and the
+  same build as the main library. Never point it back at a CDN tag.
 
 ## Current state (update every session)
 
-_Last updated: 2026-10-30, after "Add everyone" skip-existing work._
+_Last updated: 2026-10-30, after media encryption (step 10) build._
 
 - Build-order step 9 (MLS for text) is functionally working on Docker:
   messages in an encrypted channel are ciphertext in Postgres (only the
@@ -133,7 +136,11 @@ _Last updated: 2026-10-30, after "Add everyone" skip-existing work._
      `exclude_device_ids` to the claim endpoint, so no key package is
      consumed for them; claim now returns `{packages, already_in_group}`.
      Rebase re-filters, so a racing commit can't double-add a device.
-  2. Media keys from the MLS exporter secret (build-order step 10).
+  2. Media keys from the MLS exporter secret (build-order step 10):
+     implemented 2026-10-30, awaiting a Docker call test. Voice channels
+     get their own MLS group; `groups.mediaKey()` feeds LiveKit E2EE at
+     key slot epoch mod 16. LiveKit 2.23.0 is now served from our origin
+     (copied by build.mjs, embedded via the Dockerfile), not jsdelivr.
   3. Multi-party testing.
   4. Opt-in history sharing (Ryan wants it; see decisions.md Open items).
   5. Local storage encryption (blocked on recovery keys).
