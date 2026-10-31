@@ -172,6 +172,15 @@ func (a *API) websocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// No channel: an event socket. It carries only server-wide events
+	// (perms_changed, channel_changed, access_changed, ...), so a client
+	// hears about a change to its access while no channel is open,
+	// including right after losing the one it had.
+	if channelID == "" {
+		a.eventSocket(w, r, session)
+		return
+	}
+
 	// Confirm the channel exists, is a text channel, and that this caller
 	// may view it. The permission check happens before the upgrade so a
 	// refusal is a plain HTTP error the client can read.
@@ -211,40 +220,7 @@ func (a *API) websocket(w http.ResponseWriter, r *http.Request) {
 	a.hub.Subscribe(channelID, client)
 	defer a.hub.Unsubscribe(channelID, client)
 
-	// Writer goroutine. Everything the client receives goes through here,
-	// so there is exactly one writer and no need to lock the connection.
-	go func() {
-		ticker := time.NewTicker(pingInterval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case payload, open := <-client.Send:
-				if !open {
-					// The hub closed this connection, which happens when
-					// the account is banned or deleted. Cancelling
-					// unblocks the read loop below so the handler returns
-					// and the socket is actually closed, rather than
-					// sitting there still accepting messages.
-					cancel()
-					return
-				}
-				if err := conn.Write(ctx, websocket.MessageText, payload); err != nil {
-					cancel()
-					return
-				}
-			case <-ticker.C:
-				// Detects connections that died without a close frame,
-				// which is most of them in practice.
-				if err := conn.Ping(ctx); err != nil {
-					cancel()
-					return
-				}
-			}
-		}
-	}()
+	go writePump(ctx, cancel, conn, client)
 
 	if err := a.sendHistory(ctx, client, channelID, canPost); err != nil {
 		slog.Error("loading history", "err", err)
@@ -472,5 +448,67 @@ func sendFrame(ctx context.Context, client *hub.Client, v any) {
 	case <-ctx.Done():
 	default:
 		slog.Warn("dropping frame for stalled client")
+	}
+}
+
+// Writer goroutine. Everything the client receives goes through here,
+// so there is exactly one writer and no need to lock the connection.
+func writePump(ctx context.Context, cancel context.CancelFunc, conn *websocket.Conn, client *hub.Client) {
+	ticker := time.NewTicker(pingInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case payload, open := <-client.Send:
+			if !open {
+				// The hub closed this connection, which happens when
+				// the account is banned or deleted. Cancelling
+				// unblocks the read loop below so the handler returns
+				// and the socket is actually closed, rather than
+				// sitting there still accepting messages.
+				cancel()
+				return
+			}
+			if err := conn.Write(ctx, websocket.MessageText, payload); err != nil {
+				cancel()
+				return
+			}
+		case <-ticker.C:
+			// Detects connections that died without a close frame,
+			// which is most of them in practice.
+			if err := conn.Ping(ctx); err != nil {
+				cancel()
+				return
+			}
+		}
+	}
+}
+
+// eventSocket serves a websocket with no channel: server-wide events
+// only. Nothing the client sends is acted on.
+func (a *API) eventSocket(w http.ResponseWriter, r *http.Request, session Session) {
+	conn, err := websocket.Accept(w, r, nil)
+	if err != nil {
+		slog.Warn("websocket upgrade failed", "err", err)
+		return
+	}
+	defer conn.CloseNow()
+	conn.SetReadLimit(1024)
+
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	client := hub.NewClient(session.UserID)
+	a.hub.SubscribeEvents(client)
+	defer a.hub.Unsubscribe("", client)
+
+	go writePump(ctx, cancel, conn, client)
+
+	for {
+		if _, _, err := conn.Read(ctx); err != nil {
+			return
+		}
 	}
 }

@@ -1642,6 +1642,10 @@ async function authenticate(path) {
     await loadChannels();
     await loadGifConfig();
     await setUpIdentity();
+    // A fresh event socket for this account (a second Log in on the same
+    // page may be a different account).
+    if (eventSocket) { const old = eventSocket; eventSocket = null; eventsOpen = false; old.close(); }
+    openEvents();
   } catch (err) {
     line("err", `auth failed: ${esc(err.message)}`);
   }
@@ -1710,6 +1714,7 @@ async function connect() {
   url.searchParams.set("channel", channelID);
 
   socket = new WebSocket(url);
+  const thisSocket = socket;
 
   socket.onopen = () => {
     $("status").textContent = "connected";
@@ -1723,6 +1728,9 @@ async function connect() {
   };
 
   socket.onclose = () => {
+    // A socket the server closed (lost access) must not keep Connect
+    // disabled; one replaced by a newer connect is left alone.
+    if (socket === thisSocket) socket = null;
     releaseNotices();
     awaitingEcho.length = 0;
     $("status").textContent = "disconnected";
@@ -1740,6 +1748,56 @@ async function connect() {
 
   socket.onmessage = (event) => {
     const frame = JSON.parse(event.data);
+    // Server-wide events reach every socket; the event socket handles
+    // them while it is up, so they are not handled twice.
+    if (eventsOpen && GLOBAL_EVENTS.has(frame.type)) return;
+    onFrame(frame);
+  };
+}
+
+// Server-wide event types (emitAll on the server).
+const GLOBAL_EVENTS = new Set([
+  "user_purged", "access_changed", "channel_changed", "channel_deleted",
+  "perms_changed",
+]);
+
+// The event socket: no channel, server-wide events only. Open from login
+// to page close, so a change to this account's access arrives even with
+// no channel open or right after losing the one it had.
+let eventSocket = null;
+let eventsOpen = false;
+
+async function openEvents() {
+  if (eventSocket || !token) return;
+  let ticket;
+  try {
+    ({ ticket } = await call("/api/v1/ws/ticket", { method: "POST" }));
+  } catch {
+    setTimeout(openEvents, 5000);
+    return;
+  }
+  const url = new URL("/api/v1/ws", api);
+  url.protocol = url.protocol.replace("http", "ws");
+  url.searchParams.set("ticket", ticket);
+  const ws = new WebSocket(url);
+  eventSocket = ws;
+  ws.onopen = () => { eventsOpen = true; };
+  ws.onmessage = (event) => {
+    const frame = JSON.parse(event.data);
+    if (GLOBAL_EVENTS.has(frame.type)) onFrame(frame);
+  };
+  ws.onclose = () => {
+    if (eventSocket !== ws) return;
+    eventSocket = null;
+    eventsOpen = false;
+    // Reconnect while signed in. A banned account's tickets fail, which
+    // stops this after one try per 5 s; harmless.
+    if (token) setTimeout(openEvents, 5000);
+  };
+}
+
+function onFrame(frame) {
+  {
     if (frame.type === "history") {
       logEl.innerHTML = "";
       line("sys", `${frame.messages.length} earlier message(s)`);
@@ -1804,7 +1862,7 @@ async function connect() {
       // group.
       reconcileOpenGroups();
     }
-  };
+  }
 }
 
 async function send() {

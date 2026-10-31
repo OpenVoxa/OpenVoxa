@@ -76,6 +76,16 @@ func (h *Hub) Subscribe(channelID string, c *Client) {
 	h.all[c] = struct{}{}
 }
 
+// SubscribeEvents adds c to server-wide events only, with no channel.
+// For a client's event socket, which keeps it told about permission and
+// channel changes while it has no channel open (or just lost the one it
+// had). Remove it with Unsubscribe("", c).
+func (h *Hub) SubscribeEvents(c *Client) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.all[c] = struct{}{}
+}
+
 // Unsubscribe removes c and closes its send channel. Safe to call twice.
 func (h *Hub) Unsubscribe(channelID string, c *Client) {
 	h.mu.Lock()
