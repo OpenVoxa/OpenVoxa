@@ -126,8 +126,9 @@ _Last updated: 2026-10-30, after "Add everyone" skip-existing work._
   keys are single-use. Inbound messages are processed through one queue.
 - Blob storage on Docker is a bind mount: `/mnt/openvoxa-blobs`.
 - Remaining, in order:
-  1. "Add everyone" skips devices already in the group: implemented
-     2026-10-30, awaiting Docker test. Client reads member device IDs
+  1. "Add everyone" skips devices already in the group: verified on
+     Docker 2026-10-30 (second click reports "already in", epoch
+     unchanged). Client reads member device IDs
      from its ratchet tree (`memberIdentities`) and sends them as
      `exclude_device_ids` to the claim endpoint, so no key package is
      consumed for them; claim now returns `{packages, already_in_group}`.
