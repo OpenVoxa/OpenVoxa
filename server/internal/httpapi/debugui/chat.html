@@ -380,8 +380,17 @@ function renderEncryptedAttachments(box, list, files) {
 
   for (const at of list) {
     const fk = keys.get(at.id);
+
+    // No key, and the server did not store it as ciphertext: a provider
+    // GIF, which is public content kept unencrypted on purpose.
+    if (!fk && !(at.filename === "encrypted" &&
+                 at.content_type === "application/octet-stream")) {
+      renderPlainAttachment(box, at);
+      continue;
+    }
+
     if (!fk) {
-      // Uploaded but its key is not in a message this device can read.
+      // Ciphertext whose key is in a message this device cannot read.
       const span = document.createElement("span");
       span.textContent = "[encrypted attachment]";
       box.appendChild(span);
@@ -427,6 +436,41 @@ function renderEncryptedAttachments(box, list, files) {
   }
 }
 
+// An attachment the server stored as-is: anything in a plaintext
+// channel, and provider GIFs in any channel.
+function renderPlainAttachment(box, at) {
+  // Signed by the server and already time-limited, so it works in an
+  // <img src> where an Authorization header cannot be sent.
+  const url = api + at.url;
+
+  const link = document.createElement("a");
+  link.href = url;
+  link.textContent = `${at.filename} (${fmtSize(at.size)})`;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  box.appendChild(link);
+
+  // Only preview types the server is willing to serve inline. Anything
+  // else stays a download link, which is what stops an uploaded HTML
+  // file from executing against our own origin.
+  if (/^image\//.test(at.content_type) && at.content_type !== "image/svg+xml") {
+    const img = document.createElement("img");
+    img.src = url;
+    img.alt = at.filename;
+    box.appendChild(img);
+  } else if (/^video\//.test(at.content_type)) {
+    const vid = document.createElement("video");
+    vid.src = url;
+    vid.controls = true;
+    box.appendChild(vid);
+  } else if (/^audio\//.test(at.content_type)) {
+    const aud = document.createElement("audio");
+    aud.src = url;
+    aud.controls = true;
+    box.appendChild(aud);
+  }
+}
+
 function renderAttachments(after, list, files) {
   if (!list || !list.length) return;
 
@@ -439,38 +483,7 @@ function renderAttachments(after, list, files) {
     return;
   }
 
-  for (const at of list) {
-    // Signed by the server and already time-limited, so it works in an
-    // <img src> where an Authorization header cannot be sent.
-    const url = api + at.url;
-
-    const link = document.createElement("a");
-    link.href = url;
-    link.textContent = `${at.filename} (${fmtSize(at.size)})`;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    box.appendChild(link);
-
-    // Only preview types the server is willing to serve inline. Anything
-    // else stays a download link, which is what stops an uploaded HTML
-    // file from executing against our own origin.
-    if (/^image\//.test(at.content_type) && at.content_type !== "image/svg+xml") {
-      const img = document.createElement("img");
-      img.src = url;
-      img.alt = at.filename;
-      box.appendChild(img);
-    } else if (/^video\//.test(at.content_type)) {
-      const vid = document.createElement("video");
-      vid.src = url;
-      vid.controls = true;
-      box.appendChild(vid);
-    } else if (/^audio\//.test(at.content_type)) {
-      const aud = document.createElement("audio");
-      aud.src = url;
-      aud.controls = true;
-      box.appendChild(aud);
-    }
-  }
+  for (const at of list) renderPlainAttachment(box, at);
 
   after.insertAdjacentElement("afterend", box);
   logEl.scrollTop = logEl.scrollHeight;
