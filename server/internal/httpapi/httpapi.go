@@ -191,6 +191,12 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 		withUUIDPath(api.requireAuth(api.createGroup)))
 	mux.HandleFunc("POST /api/v1/channels/{id}/mls/commit",
 		withUUIDPath(api.requireAuth(api.submitCommit)))
+	mux.HandleFunc("POST /api/v1/channels/{id}/mls/reset",
+		withUUIDPath(api.requireAuth(api.resetGroup)))
+	mux.HandleFunc("GET /api/v1/channels/{id}/mls/group-info",
+		withUUIDPath(api.requireAuth(api.getGroupInfo)))
+	mux.HandleFunc("PUT /api/v1/channels/{id}/mls/group-info",
+		withUUIDPath(api.requireAuth(api.putGroupInfo)))
 	mux.HandleFunc("GET /api/v1/channels/{id}/mls/handshakes",
 		withUUIDPath(api.requireAuth(api.listHandshakes)))
 	mux.HandleFunc("GET /api/v1/channels/{id}/mls/allowed-devices",

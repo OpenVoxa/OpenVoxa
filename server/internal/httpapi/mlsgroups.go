@@ -4,6 +4,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"log/slog"
@@ -22,6 +23,9 @@ const (
 	maxHandshakeBytes = 256 * 1024
 	maxWelcomeBytes   = 1024 * 1024
 
+	// A GroupInfo carries the ratchet tree, about 300 bytes per member.
+	maxGroupInfoBytes = 1024 * 1024
+
 	// How many members may be added in one commit. A larger add is split
 	// across several commits by the client.
 	maxWelcomesPerCommit = 50
@@ -31,10 +35,51 @@ const (
 )
 
 type mlsGroupState struct {
-	Exists bool   `json:"exists"`
-	Epoch  int64  `json:"epoch"`
+	Exists bool  `json:"exists"`
+	Epoch  int64 `json:"epoch"`
+
+	// Which group this is: bumped each time the group is replaced (see
+	// resetGroup). Clients put it in the MLS group ID.
+	Generation int64 `json:"generation"`
+
+	// The epoch of the stored GroupInfo, null if there is none. A device
+	// can join from it only while it equals Epoch.
+	GroupInfoEpoch *int64 `json:"group_info_epoch"`
+
 	Member bool   `json:"member"`
 	Reason string `json:"reason,omitempty"`
+}
+
+// decodeGroupInfo reads an optional base64 GroupInfo. Empty means none.
+func decodeGroupInfo(w http.ResponseWriter, raw string) (info []byte, ok bool) {
+	if raw == "" {
+		return nil, true
+	}
+	info, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil || len(info) == 0 || len(info) > maxGroupInfoBytes {
+		writeError(w, http.StatusBadRequest, "group_info must be base64 and at most 1 MiB")
+		return nil, false
+	}
+	return info, true
+}
+
+// currentGroup reads a channel's group row for the conflict responses,
+// so a client that lost a race learns where the group really is.
+func (a *API) currentGroup(r *http.Request, q interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}, channelID string) mlsGroupState {
+	out := mlsGroupState{Exists: true}
+	err := q.QueryRow(r.Context(),
+		`SELECT epoch, generation, group_info_epoch FROM mls_groups WHERE channel_id = $1`,
+		channelID,
+	).Scan(&out.Epoch, &out.Generation, &out.GroupInfoEpoch)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return mlsGroupState{}
+	}
+	if err != nil {
+		slog.Error("reading group state", "err", err)
+	}
+	return out
 }
 
 // requireChannelAccess checks the caller may view a channel and returns
@@ -91,8 +136,9 @@ func (a *API) groupState(w http.ResponseWriter, r *http.Request) {
 
 	var out mlsGroupState
 	err := a.pool.QueryRow(r.Context(),
-		`SELECT epoch FROM mls_groups WHERE channel_id = $1`, channelID,
-	).Scan(&out.Epoch)
+		`SELECT epoch, generation, group_info_epoch FROM mls_groups WHERE channel_id = $1`,
+		channelID,
+	).Scan(&out.Epoch, &out.Generation, &out.GroupInfoEpoch)
 
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
@@ -111,6 +157,10 @@ func (a *API) groupState(w http.ResponseWriter, r *http.Request) {
 
 type createGroupRequest struct {
 	DeviceID string `json:"device_id"`
+
+	// The new group's GroupInfo at epoch 0, so a device can join from it
+	// before anyone has committed.
+	GroupInfo string `json:"group_info"`
 }
 
 // createGroup records that a channel now has an MLS group.
@@ -132,6 +182,10 @@ func (a *API) createGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	groupInfo, ok := decodeGroupInfo(w, req.GroupInfo)
+	if !ok {
+		return
+	}
 	if _, ok := a.requireChannelAccess(w, r, channelID); !ok {
 		return
 	}
@@ -140,10 +194,11 @@ func (a *API) createGroup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tag, err := a.pool.Exec(r.Context(),
-		`INSERT INTO mls_groups (channel_id, epoch, created_by_device)
-		 VALUES ($1, 0, $2)
+		`INSERT INTO mls_groups (channel_id, epoch, created_by_device,
+		                         group_info, group_info_epoch)
+		 VALUES ($1, 0, $2, $3, CASE WHEN $3::bytea IS NULL THEN NULL ELSE 0 END)
 		 ON CONFLICT (channel_id) DO NOTHING`,
-		channelID, req.DeviceID)
+		channelID, req.DeviceID, groupInfo)
 	if err != nil {
 		slog.Error("creating group", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not create the group")
@@ -159,6 +214,235 @@ func (a *API) createGroup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, mlsGroupState{Exists: true, Epoch: 0})
 }
 
+type resetGroupRequest struct {
+	DeviceID string `json:"device_id"`
+
+	// The generation the caller saw. The reset happens only if it is
+	// still current, so two devices resetting at once make one new group.
+	Generation int64 `json:"generation"`
+
+	// The replacement group's GroupInfo at epoch 0. Required: a reset
+	// that published none would leave the next device to reset again.
+	GroupInfo string `json:"group_info"`
+}
+
+// resetGroup replaces a channel's group that no permitted device can
+// commit to (docs/decisions.md, "replaced, not rescued").
+//
+// Allowed only when external join is impossible: there is no stored
+// GroupInfo, or it is older than the epoch the server has on record.
+// While a current one exists the caller must join from it instead, which
+// loses nothing, and its own reconciliation then removes members without
+// access.
+//
+// The caller has already built the new group locally (its MLS group ID
+// names the next generation) and sends its GroupInfo. The old group's
+// handshake log and pending welcomes are deleted; devices still holding
+// its state find out from the generation and rejoin.
+func (a *API) resetGroup(w http.ResponseWriter, r *http.Request) {
+	channelID := r.PathValue("id")
+
+	var req resetGroupRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	groupInfo, ok := decodeGroupInfo(w, req.GroupInfo)
+	if !ok {
+		return
+	}
+	if groupInfo == nil {
+		writeError(w, http.StatusBadRequest, "group_info is required")
+		return
+	}
+	if _, ok := a.requireChannelAccess(w, r, channelID); !ok {
+		return
+	}
+	if !a.ownDevice(w, r, req.DeviceID) {
+		return
+	}
+
+	tx, err := a.pool.Begin(r.Context())
+	if err != nil {
+		slog.Error("starting reset", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not reset the group")
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	// Locked so a commit or another reset cannot slip in between the
+	// check and the replacement.
+	var cur mlsGroupState
+	var hasInfo bool
+	err = tx.QueryRow(r.Context(),
+		`SELECT epoch, generation, group_info_epoch, group_info IS NOT NULL
+		   FROM mls_groups WHERE channel_id = $1 FOR UPDATE`,
+		channelID,
+	).Scan(&cur.Epoch, &cur.Generation, &cur.GroupInfoEpoch, &hasInfo)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		writeError(w, http.StatusNotFound, "this channel has no group; create one")
+		return
+	case err != nil:
+		slog.Error("reading group for reset", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not reset the group")
+		return
+	}
+	cur.Exists = true
+
+	if cur.Generation != req.Generation {
+		cur.Reason = "the group was already replaced; join the new one"
+		writeJSON(w, http.StatusConflict, cur)
+		return
+	}
+	if hasInfo && cur.GroupInfoEpoch != nil && *cur.GroupInfoEpoch == cur.Epoch {
+		cur.Reason = "the group can still be joined from its group info"
+		writeJSON(w, http.StatusConflict, cur)
+		return
+	}
+
+	var newGen int64
+	if err := tx.QueryRow(r.Context(),
+		`UPDATE mls_groups
+		    SET generation = generation + 1, epoch = 0,
+		        group_info = $2, group_info_epoch = 0,
+		        created_by_device = $3, created_at = now(), updated_at = now()
+		  WHERE channel_id = $1
+		  RETURNING generation`,
+		channelID, groupInfo, req.DeviceID,
+	).Scan(&newGen); err != nil {
+		slog.Error("replacing group", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not reset the group")
+		return
+	}
+	for _, q := range []string{
+		`DELETE FROM mls_handshakes WHERE channel_id = $1`,
+		`DELETE FROM mls_welcomes WHERE channel_id = $1`,
+	} {
+		if _, err := tx.Exec(r.Context(), q, channelID); err != nil {
+			slog.Error("clearing old group", "err", err)
+			writeError(w, http.StatusInternalServerError, "could not reset the group")
+			return
+		}
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		slog.Error("committing reset", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not reset the group")
+		return
+	}
+
+	// Connected devices catch up, learn the generation moved, and rejoin.
+	a.NotifyGroupAdvanced(channelID, 0)
+
+	slog.Warn("mls group replaced",
+		"channel_id", channelID, "generation", newGen, "old_epoch", cur.Epoch,
+		"device_id", req.DeviceID)
+
+	zero := int64(0)
+	writeJSON(w, http.StatusOK, mlsGroupState{
+		Exists: true, Epoch: 0, Generation: newGen, GroupInfoEpoch: &zero,
+	})
+}
+
+type groupInfoResponse struct {
+	Generation     int64  `json:"generation"`
+	Epoch          int64  `json:"epoch"`
+	GroupInfoEpoch *int64 `json:"group_info_epoch"`
+	// Base64, or empty when no member has uploaded one.
+	GroupInfo string `json:"group_info"`
+}
+
+// getGroupInfo hands out the stored GroupInfo for an external join.
+//
+// View access is enough, the same as committing. The GroupInfo is enough
+// on its own to join, which is why it goes only to accounts the channel
+// allows; a join is still announced to every member and reconciled like
+// any other add (docs/decisions.md, Known tensions).
+func (a *API) getGroupInfo(w http.ResponseWriter, r *http.Request) {
+	channelID := r.PathValue("id")
+
+	if _, ok := a.requireChannelAccess(w, r, channelID); !ok {
+		return
+	}
+
+	var out groupInfoResponse
+	var info []byte
+	err := a.pool.QueryRow(r.Context(),
+		`SELECT generation, epoch, group_info_epoch, group_info
+		   FROM mls_groups WHERE channel_id = $1`,
+		channelID,
+	).Scan(&out.Generation, &out.Epoch, &out.GroupInfoEpoch, &info)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		writeError(w, http.StatusNotFound, "this channel has no group")
+		return
+	case err != nil:
+		slog.Error("reading group info", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not read the group info")
+		return
+	}
+	if info != nil {
+		out.GroupInfo = base64.StdEncoding.EncodeToString(info)
+	}
+
+	writeJSON(w, http.StatusOK, out)
+}
+
+type putGroupInfoRequest struct {
+	DeviceID   string `json:"device_id"`
+	Generation int64  `json:"generation"`
+	Epoch      int64  `json:"epoch"`
+	GroupInfo  string `json:"group_info"`
+}
+
+// putGroupInfo stores a GroupInfo for the current epoch without a commit.
+//
+// Every commit already carries one; this covers a group that has none
+// yet (created before external join existed) or whose upload was lost.
+// A member sends it after catching up. Refused unless it names the
+// current generation and epoch, so a slow device cannot replace a good
+// GroupInfo with a stale one.
+func (a *API) putGroupInfo(w http.ResponseWriter, r *http.Request) {
+	channelID := r.PathValue("id")
+
+	var req putGroupInfoRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	groupInfo, ok := decodeGroupInfo(w, req.GroupInfo)
+	if !ok {
+		return
+	}
+	if groupInfo == nil {
+		writeError(w, http.StatusBadRequest, "group_info is required")
+		return
+	}
+	if _, ok := a.requireChannelAccess(w, r, channelID); !ok {
+		return
+	}
+	if !a.ownDevice(w, r, req.DeviceID) {
+		return
+	}
+
+	tag, err := a.pool.Exec(r.Context(),
+		`UPDATE mls_groups
+		    SET group_info = $4, group_info_epoch = epoch
+		  WHERE channel_id = $1 AND generation = $2 AND epoch = $3`,
+		channelID, req.Generation, req.Epoch, groupInfo)
+	if err != nil {
+		slog.Error("storing group info", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not store the group info")
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		cur := a.currentGroup(r, a.pool, channelID)
+		cur.Reason = "the group has moved on; this group info is stale"
+		writeJSON(w, http.StatusConflict, cur)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 type welcomeEnvelope struct {
 	DeviceID    string `json:"device_id"`
 	Welcome     string `json:"welcome"`
@@ -172,8 +456,18 @@ type commitRequest struct {
 	// this is still current.
 	Epoch int64 `json:"epoch"`
 
+	// The group generation the commit belongs to. Checked with the
+	// epoch, so a device holding a replaced group's state cannot land a
+	// commit in the new group by having the same epoch number.
+	Generation int64 `json:"generation"`
+
 	Commit   string            `json:"commit"`
 	Welcomes []welcomeEnvelope `json:"welcomes"`
+
+	// The GroupInfo for the epoch this commit produces, so a device can
+	// join externally from it. Optional for the server; the client
+	// always sends one.
+	GroupInfo string `json:"group_info"`
 }
 
 type commitResponse struct {
@@ -209,6 +503,11 @@ func (a *API) submitCommit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !a.ownDevice(w, r, req.DeviceID) {
+		return
+	}
+
+	groupInfo, ok := decodeGroupInfo(w, req.GroupInfo)
+	if !ok {
 		return
 	}
 
@@ -286,32 +585,27 @@ func (a *API) submitCommit(w http.ResponseWriter, r *http.Request) {
 
 	// The compare-and-swap. Nothing else in the transaction matters if
 	// this does not match.
+	// The GroupInfo is replaced in the same step, so the stored one is
+	// never older than the epoch while commits carry one.
 	var newEpoch int64
 	err = tx.QueryRow(r.Context(),
 		`UPDATE mls_groups
-		    SET epoch = epoch + 1, updated_at = now()
-		  WHERE channel_id = $1 AND epoch = $2
+		    SET epoch = epoch + 1, updated_at = now(),
+		        group_info = CASE WHEN $4::bytea IS NULL THEN group_info ELSE $4 END,
+		        group_info_epoch = CASE WHEN $4::bytea IS NULL THEN group_info_epoch
+		                                ELSE epoch + 1 END
+		  WHERE channel_id = $1 AND epoch = $2 AND generation = $3
 		  RETURNING epoch`,
-		channelID, req.Epoch,
+		channelID, req.Epoch, req.Generation, groupInfo,
 	).Scan(&newEpoch)
 
 	if errors.Is(err, pgx.ErrNoRows) {
-		// Either the group does not exist, or someone else committed
-		// first. Report the current epoch either way so the client can
-		// decide whether to create, catch up, or rebase and retry.
-		var current int64
-		exists := true
-		if scanErr := tx.QueryRow(r.Context(),
-			`SELECT epoch FROM mls_groups WHERE channel_id = $1`, channelID,
-		).Scan(&current); errors.Is(scanErr, pgx.ErrNoRows) {
-			exists = false
-		}
-
-		writeJSON(w, http.StatusConflict, mlsGroupState{
-			Exists: exists,
-			Epoch:  current,
-			Reason: "the group has moved on; catch up and rebase this commit",
-		})
+		// The group does not exist, someone else committed first, or it
+		// was replaced. Report where it is so the client can decide
+		// whether to create, catch up, rejoin, or rebase and retry.
+		cur := a.currentGroup(r, tx, channelID)
+		cur.Reason = "the group has moved on; catch up and rebase this commit"
+		writeJSON(w, http.StatusConflict, cur)
 		return
 	}
 	if err != nil {
@@ -496,6 +790,22 @@ func (a *API) listHandshakes(w http.ResponseWriter, r *http.Request) {
 
 	if _, ok := a.requireChannelAccess(w, r, channelID); !ok {
 		return
+	}
+
+	// A device holding state from a replaced group must not apply the
+	// new group's log; it is told to rejoin instead.
+	if raw := r.URL.Query().Get("generation"); raw != "" {
+		gen, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || gen < 0 {
+			writeError(w, http.StatusBadRequest, "generation must be a non-negative integer")
+			return
+		}
+		cur := a.currentGroup(r, a.pool, channelID)
+		if cur.Exists && cur.Generation != gen {
+			cur.Reason = "the group was replaced; rejoin"
+			writeJSON(w, http.StatusGone, cur)
+			return
+		}
 	}
 
 	since := int64(0)
