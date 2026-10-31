@@ -351,9 +351,9 @@ the server's role is to say who *should* be in, and clients do the rest:
    adds the missing and removes the revoked, in the background. The
    existing commit compare-and-swap means two members doing this at once
    cannot fork the group; the loser rebases and finds nothing left to do.
-2. **External join (the fallback).** When no member is online, a
-   permitted device joins on its own from a GroupInfo the group publishes
-   to the server (RFC 9420 external commit). Verified in Node against
+2. **External join.** A permitted device that nobody has added joins on
+   its own from a GroupInfo the group publishes to the server (RFC 9420
+   external commit), so it does not matter whether a member is online. Verified in Node against
    ts-mls 1.6.2 on 2026-10-30; see Implementation notes for the shape.
    Every commit makes the previous GroupInfo useless, so whoever commits
    also uploads a fresh one, and the server hands it only to devices that
@@ -435,8 +435,10 @@ commit. In order:
 What a reset costs: devices see no messages from before it, which is the
 same rule as joining any encrypted channel today, and the reset is
 announced in the channel like any membership change. A hostile server
-could force one, but that gains it nothing it cannot already do by
-granting itself access (see Known tensions).
+could force one, and so could a member running a modified client (by
+committing without a GroupInfo), but neither gains anything it cannot
+already do: the server can grant itself access (see Known tensions), and
+a member can already wreck a group with garbage commits.
 
 The "Add everyone" and "Add everyone to voice" buttons that stood in for
 this in the debug page were removed on 2026-10-31, along with the public
@@ -914,6 +916,52 @@ interleaved with a send would let one silently overwrite the other.
 decrypt per channel; private helpers do not queue, so queued operations
 can call them.
 
+**External join and reset live in `groups.open`.** Built 2026-10-31.
+Opening a channel tries, in order: stored state (catch up); no group
+(create); a waiting welcome; the published GroupInfo (external join); and
+when that is missing or older than the server's epoch, a reset. It does
+not wait for an online member to add the device first: an external join
+is announced and access-checked exactly like an add, needs no key
+package, and a member's add that lands first simply wins the epoch race,
+after which the next attempt takes the welcome. Voice uses the same
+path, so a new device no longer needs someone in the call. Details:
+
+- The GroupInfo carries the ratchet tree inside it
+  (`createGroupInfoWithExternalPubAndRatchetTree`, about 430 bytes for
+  one member, 300 more per member), so the joiner needs nothing else.
+  Every commit uploads the one for the epoch it produces, in the same
+  transaction as the epoch advance, so it is never stale while clients
+  follow the protocol. A member that opens a group with no current one
+  (created before this existed) uploads it with
+  `PUT /channels/{id}/mls/group-info`, refused unless it names the
+  current epoch.
+- `mls_groups.generation` counts resets. The client puts it in the MLS
+  group ID: the bare channel ID for generation 0 (every existing group),
+  `<channel>#<n>` after that. Commits name it and the compare-and-swap
+  checks it with the epoch, because epochs restart at 0 and a device
+  still holding the old group could otherwise land a commit in the new
+  one by matching the number. Catch-up names it too; the server answers
+  410 if it moved, and the client throws `GroupReset` (a
+  `RemovedFromGroup`), drops its state and rejoins.
+- `POST /channels/{id}/mls/reset` carries the new group's GroupInfo, so
+  the replacement is joinable the moment it exists. The server locks the
+  row, refuses while a current GroupInfo exists or if the generation
+  moved, then bumps the generation, zeroes the epoch, and deletes the
+  handshake log and pending welcomes. It sends `group_advanced` (epoch 0)
+  so connected devices find out.
+- The joiner checks the GroupInfo's group ID is this channel's before
+  committing; one for another group would put a commit no member can
+  process into the log.
+- Upgrade cost, once: the first device to open a group created before
+  this, when no member of it has opened it since, resets it.
+- Proven 2026-10-31 against the real server and Postgres with separate
+  Node processes running client-core: external join with the only member
+  idle; a demoted sole member replaced by an external join and removed
+  by reconciliation; a pre-existing group given a GroupInfo by a member
+  reopening; a reset, with both old members rejoining (one learning from
+  catch-up, one from stored state); two simultaneous external joins; a
+  stale-generation commit refused (409) and catch-up told 410.
+
 **Only a device removes its own duplicate leaves.** After rejoining from
 a GroupInfo a device can hold two leaves. Another member cannot tell
 which is live, and removing the wrong one would kick the device out, so
@@ -993,7 +1041,8 @@ reconcile removes duplicates of its own device ID only.
      reconnecting, credited to staff
    - ✅ "Add everyone" buttons and public `groups.addMembers` removed
      (2026-10-31)
-   - ⬜ External join and stuck-group reset
+   - 🔶 External join and stuck-group reset: built, proven against the
+     real server in Node (2026-10-31); not yet tested on Docker
 12. ⬜ Custom permission groups replacing the fixed roles
 13. ⬜ The real client: `client-web`, `client-desktop`
 

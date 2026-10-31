@@ -113,7 +113,7 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
 
 ## Current state (update every session)
 
-_Last updated: 2026-10-31, after step 11 "Add everyone" buttons removed._
+_Last updated: 2026-10-31, after step 11 step 8 (external join + reset) built._
 
 - Build-order step 9 (MLS for text) is functionally working on Docker:
   messages in an encrypted channel are ciphertext in Postgres (only the
@@ -148,11 +148,15 @@ _Last updated: 2026-10-31, after step 11 "Add everyone" buttons removed._
      Real UI: per-person notices by default, per-device as an option,
      mod and admin panes (decisions.md, "Notices are per person").
      Step 7 done: "Add everyone" buttons and `groups.addMembers` gone.
-     Next: external join + stuck-group reset (step 8).
+     Step 8 built, NOT yet tested on Docker: `groups.open` joins from
+     the published GroupInfo when no welcome waits, and resets the group
+     when there is no current GroupInfo (migration 0011: generation,
+     group_info; `mls/reset`, `mls/group-info` GET/PUT; commits carry
+     generation + GroupInfo). Proven end to end in Node against the real
+     server. Voice no longer waits for someone in the call.
      Group ops serialised per channel; commit keys wiped only after the
-     server accepts; removes and adds in separate commits. External
-     commit proven in Node; wire it in last as the no-one-online path.
-     Never pass `resync = true` (hangs). All in decisions.md Impl. notes.
+     server accepts; removes and adds in separate commits. Never pass
+     `resync = true` (hangs). All in decisions.md Impl. notes.
   2. Multi-party testing.
   3. Custom permission groups (step 12).
   4. Opt-in history sharing (Ryan wants it; see decisions.md Open items).
