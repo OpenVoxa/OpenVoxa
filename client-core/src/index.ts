@@ -36,7 +36,7 @@ export type {
 
 export { TsMlsProvider } from "./mls/tsmls.js";
 export { Identity } from "./identity.js";
-export { Groups, RemovedFromGroup } from "./groups.js";
+export { Groups, GroupReset, RemovedFromGroup } from "./groups.js";
 export { storage } from "./storage.js";
 export {
   encryptFile,

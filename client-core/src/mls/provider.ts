@@ -126,6 +126,30 @@ export interface MlsProvider {
    */
   removeMembers(state: GroupState, leafIndexes: number[]): Promise<CommitResult>;
 
+  /**
+   * This epoch's GroupInfo, signed by this device, with the external
+   * public key and the ratchet tree inside it.
+   *
+   * Uploaded to the server after every commit so a permitted device can
+   * join when no member is online (RFC 9420 external commit). It is
+   * public data: it lets a device build a join commit, not read
+   * anything, and every commit makes it useless.
+   */
+  groupInfo(state: GroupState): Promise<WireMessage>;
+
+  /**
+   * Join from a GroupInfo with an external commit.
+   *
+   * Returns this device's new state and the commit to submit. The state
+   * is one epoch past the GroupInfo's, and is only real once the server
+   * accepts the commit. keys must be fresh: the external path never uses
+   * a published key package.
+   */
+  joinExternal(groupInfo: WireMessage, keys: KeyPair): Promise<{
+    readonly state: GroupState;
+    readonly commit: WireMessage;
+  }>;
+
   /** Join a group from a welcome message. */
   joinGroup(
     welcome: WireMessage,
@@ -139,7 +163,11 @@ export interface MlsProvider {
     readonly message: WireMessage;
   }>;
 
-  /** Decrypt an application message, or apply a handshake message. */
+  /**
+   * Decrypt an application message, or apply a handshake message.
+   * Handshakes are private messages except external joins, which MLS
+   * frames as public ones; both are accepted.
+   */
   decrypt(state: GroupState, message: WireMessage): Promise<DecryptResult>;
 
   /**

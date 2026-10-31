@@ -6,6 +6,7 @@ import {
   createApplicationMessage,
   createCommit,
   createGroup,
+  createGroupInfoWithExternalPubAndRatchetTree,
   decodeMlsMessage,
   defaultAuthenticationService,
   defaultCapabilities,
@@ -20,7 +21,9 @@ import {
   getCiphersuiteFromName,
   getCiphersuiteImpl,
   joinGroup,
+  joinGroupExternal,
   processPrivateMessage,
+  processPublicMessage,
   zeroOutUint8Array,
   type ClientConfig,
   type Credential,
@@ -270,6 +273,19 @@ export function decodeTree(bytes: Uint8Array): unknown {
 }
 
 /**
+ * The MLS group ID of a state, as text.
+ *
+ * Group IDs are chosen by us (the channel ID, plus a generation after a
+ * reset; see Groups), so they are always valid UTF-8.
+ */
+export function groupIdOf(state: unknown): string {
+  const group = state as { groupContext?: { groupId?: Uint8Array } };
+  const id = group.groupContext?.groupId;
+  if (!(id instanceof Uint8Array)) throw new Error("mls: state has no group ID");
+  return new TextDecoder().decode(id);
+}
+
+/**
  * The epoch a group state is currently at.
  *
  * Needed because the server orders commits by epoch and a client has to
@@ -448,6 +464,59 @@ export class TsMlsProvider implements MlsProvider {
     };
   }
 
+  /**
+   * The tree rides inside the GroupInfo (ratchet_tree extension), so a
+   * joiner needs nothing else. Observed in Node, 2026-10-30: this is the
+   * one ts-mls route that puts a tree inside a message, about 300 bytes
+   * per member. Welcomes still carry the tree in our JSON codec.
+   */
+  async groupInfo(state: GroupState): Promise<WireMessage> {
+    const groupInfo = await createGroupInfoWithExternalPubAndRatchetTree(
+      state as never,
+      [],
+      this.#require(),
+    );
+    return encodeMlsMessage({
+      groupInfo,
+      wireformat: "mls_group_info",
+      version: "mls10",
+    });
+  }
+
+  /**
+   * resync is always false. With true, ts-mls looks for this device's
+   * old leaf by signature key, a fresh key package never matches, and
+   * the tree walk never ends (decisions.md, ts-mls list). A device that
+   * rejoins this way briefly holds two leaves; reconcile removes the old
+   * one.
+   *
+   * joinGroupExternal returns a bare PublicMessage, so it is wrapped
+   * here; members apply it with processPublicMessage (see decrypt).
+   */
+  async joinExternal(groupInfo: WireMessage, keys: KeyPair) {
+    const decoded = decodeMlsMessage(groupInfo, 0)?.[0];
+    if (!decoded || decoded.wireformat !== "mls_group_info") {
+      throw new Error("mls: expected a group info message");
+    }
+
+    const result = await joinGroupExternal(
+      decoded.groupInfo,
+      keys.publicPackage as never,
+      keys.privatePackage as never,
+      false,
+      this.#require(),
+    );
+
+    return {
+      state: result.newState as GroupState,
+      commit: encodeMlsMessage({
+        publicMessage: result.publicMessage,
+        wireformat: "mls_public_message",
+        version: "mls10",
+      }),
+    };
+  }
+
   async joinGroup(
     welcome: WireMessage,
     keys: KeyPair,
@@ -489,6 +558,19 @@ export class TsMlsProvider implements MlsProvider {
 
   async decrypt(state: GroupState, message: WireMessage): Promise<DecryptResult> {
     const decoded = decodeMlsMessage(message, 0)?.[0];
+
+    // An external join: the only handshake MLS frames in the clear,
+    // because the joiner holds no group secrets to encrypt it with.
+    if (decoded?.wireformat === "mls_public_message") {
+      const result = await processPublicMessage(
+        state as never,
+        decoded.publicMessage,
+        emptyPskIndex,
+        this.#require(),
+      );
+      return { state: result.newState as GroupState };
+    }
+
     if (!decoded || decoded.wireformat !== "mls_private_message") {
       throw new Error("mls: expected a private message");
     }
