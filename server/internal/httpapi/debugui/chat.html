@@ -163,6 +163,9 @@
   <button id="connect" disabled>Connect</button>
   <button id="disconnect" disabled>Disconnect</button>
   <div id="cryptoStatus" class="ptt-hint"></div>
+  <label title="Show every device joining or leaving, with who committed and the epoch">
+    <input type="checkbox" id="noticeDetail"> per-device join/leave notices
+  </label>
 </fieldset>
 
 <fieldset>
@@ -764,11 +767,36 @@ function describeCommitter(change) {
   return change.by.username ? esc(change.by.username) : `device [${short(change.by.deviceId)}]`;
 }
 
+// Per person by default (decisions.md, "Notices are per person"): an
+// account's first device joining reads "staff joined", its last leaving
+// "staff left", an extra device "staff joined on a new device", and one of
+// several leaving says nothing. client-core works this out; the page only
+// words it. The per-device lines below are the opt-in detail.
+function describePerson(p) {
+  const who = p.you ? "you" : p.username ? esc(p.username) : null;
+  const ids = p.devices.map((d) => {
+    const label = d.label ? `"${esc(d.label)}" ` : "";
+    return `${label}[${short(d.deviceId)}]`;
+  }).join(", ");
+  if (p.kind === "new_device") {
+    return `${who ?? "an unknown account"} joined on a new device (${ids})`;
+  }
+  const verb = p.kind === "joined" ? "joined" : "left";
+  if (!who) return `an unknown device ${ids} ${verb}`;
+  const n = p.devices.length > 1 ? ` (${p.devices.length} devices)` : "";
+  return `${who} ${verb}${n}`;
+}
+
 function onMembershipChange(change) {
   let where;
   if (change.channelId === currentChannel && currentChannelEncrypted) where = "";
   else if (change.channelId === voiceChannelId) where = "voice: ";
   else return;
+
+  if (!$("noticeDetail")?.checked) {
+    for (const p of change.people || []) noticeLine(`${where}${describePerson(p)}`);
+    return;
+  }
 
   const by = describeCommitter(change);
   for (const d of change.joined) {

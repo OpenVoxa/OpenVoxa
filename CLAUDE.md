@@ -183,7 +183,13 @@ _Last updated: 2026-10-31, step 12 (permission groups) complete and verified on 
      server-wide events reach a client with no channel open.
      Voice keys: retired slots must not move LiveKit's current key
      index (`overwriteSlot` in chat.html, fixed `efc38c6`).
-  4. Opt-in history sharing (Ryan wants it; see decisions.md Open items).
-  5. Local storage encryption (blocked on recovery keys).
+  4. Small items before the real client (order agreed 2026-10-31):
+     per-person notices (core `MembershipChange.people`, chat.html shows
+     them by default, "per-device" checkbox for the old detail; pushed,
+     awaiting Docker test) -> kicked client says "removed by the server"
+     -> 30-day device expiry -> history sharing -> client (step 13), with
+     recovery keys built into the client.
+  5. Opt-in history sharing (Ryan wants it; see decisions.md Open items).
+  6. Local storage encryption (blocked on recovery keys).
 - Other open items (revoked-device removal, recovery keys, etc.) live in
   decisions.md "Open items" — check there before proposing new work.

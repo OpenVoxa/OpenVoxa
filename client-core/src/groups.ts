@@ -159,6 +159,7 @@ export interface DeviceInfo {
  *
  * by: the device that submitted the commit, null when not recorded.
  * self: this device made the commit.
+ * people: the same change summarised per account; see PersonChange.
  */
 export interface MembershipChange {
   channelId: string;
@@ -167,6 +168,32 @@ export interface MembershipChange {
   left: DeviceInfo[];
   by: DeviceInfo | null;
   self: boolean;
+  people: PersonChange[];
+}
+
+/**
+ * One account's part in a membership change: the notice a person sees by
+ * default (decisions.md, "Notices are per person").
+ *
+ * joined: the account had no device in the group and now has one or more.
+ * left: the account's last device left.
+ * new_device: an account already present gained another device. Never
+ *   silent, because a device slipped in under an existing account is what
+ *   the announcement exists to expose.
+ * One of several devices leaving produces nothing.
+ *
+ * A device whose owner could not be looked up is reported on its own, as
+ * joined or left with no userId, so a failed lookup can never hide it.
+ *
+ * devices: the devices that joined or left. you: the account is the one
+ * signed in on this device.
+ */
+export interface PersonChange {
+  kind: "joined" | "left" | "new_device";
+  userId?: string;
+  username?: string;
+  devices: DeviceInfo[];
+  you: boolean;
 }
 
 /** A change still holding raw device IDs; see #announce. */
@@ -176,6 +203,8 @@ interface RawChange {
   joined: string[];
   left: string[];
   by: string | null;
+  /** Every member after the commit, to tell first devices from extra ones. */
+  after: string[];
 }
 
 /** Wait after the first trigger, so a burst of events costs one run. */
@@ -989,7 +1018,62 @@ export class Groups {
       joined: [...now].filter((id) => !was.has(id)),
       left: [...was].filter((id) => !now.has(id)),
       by,
+      after,
     };
+  }
+
+  /**
+   * Summarise a change per account. Before-membership is rebuilt from the
+   * after list, since after = before + joined - left.
+   */
+  #people(raw: RawChange, info: (id: string) => DeviceInfo): PersonChange[] {
+    const joined = new Set(raw.joined);
+    const before = [...raw.after.filter((id) => !joined.has(id)), ...raw.left];
+    const count = (ids: string[]): Map<string, number> => {
+      const m = new Map<string, number>();
+      for (const id of ids) {
+        const u = info(id).userId;
+        if (u) m.set(u, (m.get(u) ?? 0) + 1);
+      }
+      return m;
+    };
+    const had = count(before);
+    const has = count(raw.after);
+    const me = info(this.#deviceId).userId;
+
+    // Group by owner, keeping first-seen order. Unknown owners each get a
+    // group of their own, keyed by device.
+    type Owned = [DeviceInfo, ...DeviceInfo[]];
+    const byOwner = (ids: string[]): Map<string, Owned> => {
+      const m = new Map<string, Owned>();
+      for (const id of ids) {
+        const d = info(id);
+        const key = d.userId ? `u:${d.userId}` : `d:${id}`;
+        const list = m.get(key);
+        if (list) list.push(d);
+        else m.set(key, [d]);
+      }
+      return m;
+    };
+    const person = (kind: PersonChange["kind"], devices: Owned): PersonChange => ({
+      kind,
+      userId: devices[0].userId,
+      username: devices[0].username,
+      devices,
+      you: me !== undefined && devices[0].userId === me,
+    });
+
+    const out: PersonChange[] = [];
+    for (const devices of byOwner(raw.joined).values()) {
+      const u = devices[0].userId;
+      out.push(person(u && (had.get(u) ?? 0) > 0 ? "new_device" : "joined", devices));
+    }
+    for (const devices of byOwner(raw.left).values()) {
+      const u = devices[0].userId;
+      if (u && (has.get(u) ?? 0) > 0) continue;
+      out.push(person("left", devices));
+    }
+    return out;
   }
 
   /**
@@ -1004,7 +1088,14 @@ export class Groups {
     if (this.#membershipListeners.size === 0) return;
 
     this.#notices = this.#notices.then(async () => {
-      const ids = [...raw.joined, ...raw.left, ...(raw.by ? [raw.by] : [])];
+      // Every member is named, not just the movers: telling "joined" from
+      // "joined on a new device" needs each account's other devices. Most
+      // are already known from the allowed list, so this rarely costs a
+      // request.
+      const ids = [
+        ...raw.joined, ...raw.left, ...raw.after, this.#deviceId,
+        ...(raw.by ? [raw.by] : []),
+      ];
       await this.#describe(raw.channelId, ids, raw.left);
       const info = (id: string): DeviceInfo => this.#names.get(id) ?? { deviceId: id };
       const change: MembershipChange = {
@@ -1014,6 +1105,7 @@ export class Groups {
         left: raw.left.map(info),
         by: raw.by ? info(raw.by) : null,
         self: raw.by === this.#deviceId,
+        people: this.#people(raw, info),
       };
       for (const listener of this.#membershipListeners) {
         try {
@@ -1038,13 +1130,17 @@ export class Groups {
     const again = new Set(fresh);
     const unknown = [...new Set(ids)].filter((id) => again.has(id) || !this.#names.has(id));
     if (unknown.length === 0) return;
-    try {
-      const found = (await this.#call(
-        `/api/v1/channels/${channelId}/mls/device-names?ids=${unknown.map(encodeURIComponent).join(",")}`,
-      )) as Array<AllowedDevice & { revoked: boolean }>;
-      for (const d of found) this.#remember(d);
-    } catch {
-      // Names are a courtesy; the device ID is the announcement.
+    // The server takes at most 100 IDs per request (maxDeviceLookup).
+    for (let i = 0; i < unknown.length; i += 100) {
+      const batch = unknown.slice(i, i + 100);
+      try {
+        const found = (await this.#call(
+          `/api/v1/channels/${channelId}/mls/device-names?ids=${batch.map(encodeURIComponent).join(",")}`,
+        )) as Array<AllowedDevice & { revoked: boolean }>;
+        for (const d of found) this.#remember(d);
+      } catch {
+        // Names are a courtesy; the device ID is the announcement.
+      }
     }
   }
 
