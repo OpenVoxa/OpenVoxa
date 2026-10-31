@@ -30,13 +30,6 @@ func (a *API) deleteMessage(w http.ResponseWriter, r *http.Request) {
 	session := sessionFrom(r.Context())
 	messageID := r.PathValue("id")
 
-	role, err := perm.Parse(session.Role)
-	if err != nil {
-		slog.Error("session carries an unknown role", "role", session.Role)
-		writeError(w, http.StatusInternalServerError, "could not delete the message")
-		return
-	}
-
 	tx, err := a.pool.Begin(r.Context())
 	if err != nil {
 		slog.Error("starting message deletion", "err", err)
@@ -65,7 +58,7 @@ func (a *API) deleteMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	isAuthor := authorID != nil && *authorID == session.UserID
-	isModerator := perm.AtLeast(role, perm.Moderator)
+	isModerator := session.Perms.Has(perm.DeleteMessages)
 
 	if !isAuthor && !isModerator {
 		writeError(w, http.StatusForbidden, "you can only delete your own messages")
@@ -384,13 +377,6 @@ func (a *API) banUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	actorRole, err := perm.Parse(actor.Role)
-	if err != nil {
-		slog.Error("session carries an unknown role", "role", actor.Role)
-		writeError(w, http.StatusInternalServerError, "could not ban the user")
-		return
-	}
-
 	tx, err := a.pool.Begin(r.Context())
 	if err != nil {
 		slog.Error("starting ban", "err", err)
@@ -399,11 +385,16 @@ func (a *API) banUser(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 
-	var subjectRoleName string
-	err = tx.QueryRow(r.Context(),
-		`SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
-		subjectID,
-	).Scan(&subjectRoleName)
+	// Lock the account row so two bans cannot race; see below.
+	_, err = tx.Exec(r.Context(),
+		`SELECT 1 FROM users WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+		subjectID)
+	if err != nil {
+		slog.Error("locking subject for ban", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not ban the user")
+		return
+	}
+	subjectRankN, err := subjectRank(r.Context(), tx, subjectID)
 
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
@@ -415,16 +406,9 @@ func (a *API) banUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	subjectRole, err := perm.Parse(subjectRoleName)
-	if err != nil {
-		slog.Error("stored role is unknown", "role", subjectRoleName)
-		writeError(w, http.StatusInternalServerError, "could not ban the user")
-		return
-	}
-
-	// Same rank rule as role changes: moderators cannot ban each other,
+	// Same rank rule as group changes: moderators cannot ban each other,
 	// so one compromised moderator account cannot clear the staff list.
-	if !perm.Outranks(actorRole, subjectRole) {
+	if !perm.Outranks(actor.Rank, subjectRankN) {
 		writeError(w, http.StatusForbidden,
 			"you cannot ban someone at or above your own rank")
 		return
@@ -494,7 +478,7 @@ func (a *API) banUser(w http.ResponseWriter, r *http.Request) {
 		// Deliberately stricter than the ban itself: a moderator can stop
 		// someone posting, an administrator decides whether their history
 		// disappears.
-		if !perm.AtLeast(actorRole, perm.Administrator) {
+		if !actor.Perms.Has(perm.Administrator) {
 			writeError(w, http.StatusForbidden,
 				"only an administrator can purge a user's messages")
 			return

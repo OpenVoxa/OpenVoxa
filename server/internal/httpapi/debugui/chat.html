@@ -931,10 +931,32 @@ async function runMlsSelfTest() {
 
 // ------------------------------------------------------------ moderation
 
-let myRole = null;
+// Permission switches from /me (build-order step 12), already expanded:
+// an administrator's list holds every switch.
+let myPerms = [];
+let myGroups = [];
 
+function can(p) {
+  return myPerms.includes(p);
+}
+
+// Shows "delete" on other people's messages.
 function isModerator() {
-  return myRole === "moderator" || myRole === "administrator";
+  return can("delete_messages");
+}
+
+// Applies /me (or a login/register answer) to the page.
+function applyPerms(data) {
+  myPerms = data.permissions || [];
+  myGroups = data.groups || [];
+  const staff = myPerms.length > 0;
+  if ($("modOpen")) {
+    $("modOpen").hidden = !staff;
+    $("modOpen").disabled = !staff;
+  }
+  const names = myGroups.map((g) => g.name).join(", ") || "Everyone";
+  $("whoami").textContent = `${data.username} (${names})`;
+  return names;
 }
 
 // Per-message controls. The client decides what to show; the server
@@ -1079,7 +1101,7 @@ async function banUser(userID) {
   // purge are different decisions. Banning stops someone participating;
   // purging destroys conversations other people are still reading.
   let purge = false;
-  if (myRole === "administrator") {
+  if (can("administrator")) {
     purge = confirm(
       "Also permanently destroy every message this account has written?\n\n" +
       "This cannot be undone, and unbanning will not bring them back.\n" +
@@ -1213,6 +1235,95 @@ async function pickGif(r) {
   } catch (e) {
     line("err", esc(e.message));
   }
+}
+
+// ------------------------------------------------- permission groups
+// Console helpers for build-order step 12, until the real client has a
+// settings screen. Names rather than IDs, so tests read like the UI will.
+// The server enforces every rule; these only translate names.
+
+async function groupByName(name) {
+  const g = (await call("/api/v1/groups")).find((g) => g.name === name);
+  if (!g) throw new Error(`no group named ${name}`);
+  return g;
+}
+
+async function userByName(name) {
+  const u = (await call("/api/v1/users")).find((u) => u.username === name);
+  if (!u) throw new Error(`no user named ${name}`);
+  return u;
+}
+
+async function showGroups() {
+  const gs = await call("/api/v1/groups");
+  console.table(gs.map((g) => ({
+    name: g.name, position: g.position, members: g.members,
+    permissions: g.permissions.join(" "), auto_assign: g.auto_assign
+  })));
+}
+
+async function showUsers() {
+  const us = await call("/api/v1/users");
+  console.table(us.map((u) => ({
+    username: u.username, rank: u.rank,
+    groups: u.groups.map((g) => g.name).join(", ")
+  })));
+}
+
+async function newGroup(name, position, permissions = [], autoAssign = false) {
+  return call("/api/v1/groups", {
+    method: "POST",
+    body: JSON.stringify({ name, position, permissions, auto_assign: autoAssign })
+  });
+}
+
+// editGroup("Moderator", { permissions: ["ban"], position: 21, name: "Mods" })
+async function editGroup(name, changes) {
+  const g = await groupByName(name);
+  return call(`/api/v1/groups/${g.id}`, { method: "PATCH", body: JSON.stringify(changes) });
+}
+
+async function deleteGroup(name) {
+  const g = await groupByName(name);
+  return call(`/api/v1/groups/${g.id}`, { method: "DELETE" });
+}
+
+async function addToGroup(username, groupName) {
+  const [u, g] = [await userByName(username), await groupByName(groupName)];
+  await call(`/api/v1/users/${u.id}/groups/${g.id}`, { method: "PUT" });
+  return `${username} added to ${groupName}`;
+}
+
+async function removeFromGroup(username, groupName) {
+  const [u, g] = [await userByName(username), await groupByName(groupName)];
+  await call(`/api/v1/users/${u.id}/groups/${g.id}`, { method: "DELETE" });
+  return `${username} removed from ${groupName}`;
+}
+
+// access is [["GroupName", canPost], ...]; [] = administrators only.
+async function accessList(access) {
+  const out = [];
+  for (const [name, canPost] of access) {
+    out.push({ group_id: (await groupByName(name)).id, can_post: !!canPost });
+  }
+  return out;
+}
+
+// mkChannel("vip-chat", "text", true, [["VIP", true]])
+async function mkChannel(name, kind = "text", encrypted = false, access) {
+  const body = { name, kind, encrypted };
+  if (access) body.access = await accessList(access);
+  return call("/api/v1/channels", { method: "POST", body: JSON.stringify(body) });
+}
+
+// setAccess("vip-chat", [["VIP", true], ["Everyone", false]])
+async function setAccess(channelName, access) {
+  const c = (await call("/api/v1/channels")).find((c) => c.name === channelName);
+  if (!c) throw new Error(`no channel named ${channelName} that you can see`);
+  await call(`/api/v1/channels/${c.id}/access`, {
+    method: "PUT", body: JSON.stringify({ access: await accessList(access) })
+  });
+  return `${channelName}: ${access.map(([n, p]) => `${n}${p ? " (post)" : " (view)"}`).join(", ") || "administrators only"}`;
 }
 
 // on() rather than direct assignment: a null element here would throw at
@@ -1521,13 +1632,8 @@ async function authenticate(path) {
     token = data.token;
     myUserID = data.user_id;
     $("deleteAccount").disabled = false;
-    myRole = data.role;
-    if ($("modOpen")) {
-      $("modOpen").hidden = !isModerator();
-      $("modOpen").disabled = !isModerator();
-    }
-    $("whoami").textContent = `${data.username} (${data.role})`;
-    line("sys", `signed in as ${esc(data.username)}, role ${esc(data.role)}`);
+    const names = applyPerms(data);
+    line("sys", `signed in as ${esc(data.username)}, groups: ${esc(names)}`);
     await loadChannels();
     await loadGifConfig();
     await setUpIdentity();
@@ -1675,19 +1781,22 @@ async function connect() {
       if (frame.channel_id === currentChannel) {
         onGroupAdvanced().catch((e) => line("err", esc(e.message)));
       }
-    } else if (frame.type === "role_changed") {
-      if (frame.user_id === myUserID) {
-        myRole = frame.role;
-        if ($("modOpen")) {
-          $("modOpen").hidden = !isModerator();
-          $("modOpen").disabled = !isModerator();
-        }
-        $("whoami").textContent =
-          `${$("whoami").textContent.split(" (")[0]} (${frame.role})`;
-        line("sys", `your role is now ${esc(frame.role)}`);
+    } else if (frame.type === "perms_changed") {
+      // Someone's groups, or a group itself, changed. An empty user_id
+      // means it may touch anyone. The event carries no permissions: the
+      // answer comes from /me.
+      if (!frame.user_id || frame.user_id === myUserID) {
+        const before = myGroups.map((g) => g.name).join(", ");
+        call("/api/v1/me").then((me) => {
+          const names = applyPerms(me);
+          if (names !== (before || "Everyone")) {
+            line("sys", `your groups are now: ${esc(names)}`);
+          }
+        }).catch(() => {});
         loadChannels().catch(() => {});
       }
-      // Anyone's role moving can change who belongs in a group.
+      // Anyone's groups moving can change who belongs in an encryption
+      // group.
       reconcileOpenGroups();
     }
   };

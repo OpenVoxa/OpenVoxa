@@ -9,28 +9,21 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
-
-	"github.com/openvoxa/openvoxa/server/internal/perm"
 )
 
 // This file is the one place that answers "may this account view this
 // channel?". Everything that grants or checks channel access - the
-// websocket, voice tokens, the MLS endpoints, and the list of devices
-// that belong in a channel's encryption group - goes through it, so that
-// custom permission groups (build-order step 12) change the answer here
-// and nowhere else.
+// websocket, voice tokens, the MLS endpoints, the channel list, and the
+// list of devices that belong in a channel's encryption group - goes
+// through it.
 //
-// The rule today has two forms that must agree:
-//
-//   - channelPermsFor, in Go, for the caller. Their session has already
-//     been checked for deletion and bans by requireAuth, so only the role
-//     comparison is left.
-//   - viewerJoins + viewerFilter, in SQL, for OTHER accounts, where the
-//     deletion and ban checks have to be made here. Used for the allowed
-//     device list, welcome recipients and key package claims.
-//
-// listChannels in httpapi.go still filters with its own copy of the rank
-// comparison; it goes when custom groups replace roles.
+// The rule (migration 0012): an account may view a channel when one of
+// its groups (Everyone included) is on the channel's allow-list, or one
+// of its groups carries the administrator switch. It may post when such a
+// group's entry has can_post, or again with administrator. One SQL form
+// serves the caller and other accounts alike; only the ban and deletion
+// checks differ, because requireAuth has already made them for the
+// caller.
 
 // errChannelNotFound covers both a missing channel and one the caller may
 // not view. Callers answer 404 for either, so a hidden channel is not
@@ -39,69 +32,73 @@ var errChannelNotFound = errors.New("channel not found")
 
 // channelPerms is what the caller may do in one channel.
 type channelPerms struct {
-	Kind     string
-	ForcePTT bool
-	CanPost  bool
+	Kind      string
+	Encrypted bool
+	ForcePTT  bool
+	CanPost   bool
 }
 
-// channelPermsFor answers the access question for the caller, given the
-// role from their session. It returns errChannelNotFound when the channel
-// does not exist or the caller may not view it. Any other error is an
-// internal failure, already logged-worthy by the caller.
-func (a *API) channelPermsFor(
-	ctx context.Context, sessionRole string, channelID string,
-) (channelPerms, error) {
-	role, err := perm.Parse(sessionRole)
-	if err != nil {
-		return channelPerms{}, fmt.Errorf("session carries an unknown role %q", sessionRole)
-	}
+// isAdminSQL, canViewSQL and canPostSQL are boolean expressions over an
+// account u and a channel c; both aliases must be in scope.
+const isAdminSQL = `
+	EXISTS (SELECT 1 FROM effective_groups eg
+	          JOIN perm_groups g ON g.id = eg.group_id
+	         WHERE eg.user_id = u.id
+	           AND 'administrator' = ANY(g.permissions))`
 
+const canViewSQL = `(` + isAdminSQL + `
+	OR EXISTS (SELECT 1 FROM channel_access ca
+	             JOIN effective_groups eg ON eg.group_id = ca.group_id
+	            WHERE ca.channel_id = c.id AND eg.user_id = u.id))`
+
+const canPostSQL = `(` + isAdminSQL + `
+	OR EXISTS (SELECT 1 FROM channel_access ca
+	             JOIN effective_groups eg ON eg.group_id = ca.group_id
+	            WHERE ca.channel_id = c.id AND eg.user_id = u.id
+	              AND ca.can_post))`
+
+const accessSQL = canViewSQL + `, ` + canPostSQL
+
+// channelPermsFor answers the access question for the caller. It returns
+// errChannelNotFound when the channel does not exist or the caller may
+// not view it. Any other error is an internal failure.
+func (a *API) channelPermsFor(
+	ctx context.Context, session Session, channelID string,
+) (channelPerms, error) {
 	var out channelPerms
-	var minView, minPost string
-	err = a.pool.QueryRow(ctx,
-		`SELECT kind, min_role_view, min_role_post, force_ptt
-		   FROM channels WHERE id = $1`,
-		channelID,
-	).Scan(&out.Kind, &minView, &minPost, &out.ForcePTT)
+	var canView bool
+	err := a.pool.QueryRow(ctx,
+		`SELECT c.kind, c.encrypted, c.force_ptt,`+accessSQL+`
+		   FROM channels c, users u
+		  WHERE c.id = $1 AND u.id = $2`,
+		channelID, session.UserID,
+	).Scan(&out.Kind, &out.Encrypted, &out.ForcePTT, &canView, &out.CanPost)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return channelPerms{}, errChannelNotFound
 	}
 	if err != nil {
 		return channelPerms{}, fmt.Errorf("looking up channel: %w", err)
 	}
-
-	viewRole, err := perm.Parse(minView)
-	if err != nil {
-		return channelPerms{}, fmt.Errorf("channel %s has an unknown min_role_view", channelID)
-	}
-	if !perm.AtLeast(role, viewRole) {
+	if !canView {
 		return channelPerms{}, errChannelNotFound
 	}
-
-	postRole, err := perm.Parse(minPost)
-	if err != nil {
-		return channelPerms{}, fmt.Errorf("channel %s has an unknown min_role_post", channelID)
-	}
-	out.CanPost = perm.AtLeast(role, postRole)
-
 	return out, nil
 }
 
-// The SQL form of the rule. $1 is always the channel ID. An account may
-// view a channel when it is not deleted, not under an active ban, and its
-// role ranks at least the channel's min_role_view.
+// The form of the rule for OTHER accounts. $1 is always the channel ID.
+// An account may view a channel when it is not deleted, not under an
+// active ban, and the rule above allows it.
 //
 // Bans are checked here, not just at login, because this answers for
 // accounts that are not the caller: a banned user's devices must drop off
 // the allowed list so that reconciliation removes them from the group.
 const viewerJoins = `
 	  FROM channels c
-	  JOIN roles cv ON cv.name = c.min_role_view
-	  JOIN users u  ON u.deleted_at IS NULL
-	  JOIN roles ur ON ur.name = u.role AND ur.rank >= cv.rank`
+	  JOIN users u ON u.deleted_at IS NULL`
 
 const viewerFilter = `
 	 WHERE c.id = $1
+	   AND ` + canViewSQL + `
 	   AND NOT EXISTS (
 	         SELECT 1 FROM bans b
 	          WHERE b.user_id = u.id

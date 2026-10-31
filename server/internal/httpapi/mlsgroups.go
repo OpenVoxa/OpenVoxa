@@ -87,7 +87,7 @@ func (a *API) currentGroup(r *http.Request, q interface {
 func (a *API) requireChannelAccess(
 	w http.ResponseWriter, r *http.Request, channelID string,
 ) (canPost bool, ok bool) {
-	p, err := a.channelPermsFor(r.Context(), sessionFrom(r.Context()).Role, channelID)
+	p, err := a.channelPermsFor(r.Context(), sessionFrom(r.Context()), channelID)
 	switch {
 	case errors.Is(err, errChannelNotFound):
 		writeError(w, http.StatusNotFound, "channel not found")

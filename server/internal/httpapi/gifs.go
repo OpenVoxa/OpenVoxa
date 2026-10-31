@@ -16,10 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/openvoxa/openvoxa/server/internal/gif"
-	"github.com/openvoxa/openvoxa/server/internal/perm"
 )
 
 const gifMediaTTL = 2 * time.Hour
@@ -209,35 +206,22 @@ func (a *API) attachGif(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Same posting permission as any other attachment.
-	role, err := perm.Parse(session.Role)
-	if err != nil {
-		slog.Error("session carries an unknown role", "role", session.Role)
-		writeError(w, http.StatusInternalServerError, "could not attach the GIF")
-		return
-	}
-
+	//
 	// Allowed in encrypted channels too, deliberately. A GIF from the
 	// provider is public content the server fetched itself, so storing it
 	// in the clear reveals which public image was picked, not anything a
 	// user wrote or uploaded. Files users upload are a different thing
 	// and are encrypted by the client. See decisions.md.
-	var minPost string
-	err = a.pool.QueryRow(r.Context(),
-		`SELECT min_role_post FROM channels WHERE id = $1`, channelID,
-	).Scan(&minPost)
-
+	cp, err := a.channelPermsFor(r.Context(), session, channelID)
 	switch {
-	case errors.Is(err, pgx.ErrNoRows):
+	case errors.Is(err, errChannelNotFound):
 		writeError(w, http.StatusNotFound, "channel not found")
 		return
 	case err != nil:
 		slog.Error("looking up channel for gif", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not attach the GIF")
 		return
-	}
-
-	postRole, err := perm.Parse(minPost)
-	if err != nil || !perm.AtLeast(role, postRole) {
+	case !cp.CanPost:
 		writeError(w, http.StatusForbidden, "you cannot post in this channel")
 		return
 	}

@@ -21,7 +21,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/openvoxa/openvoxa/server/internal/blob"
-	"github.com/openvoxa/openvoxa/server/internal/perm"
 )
 
 // Types we are willing to render inline in a browser.
@@ -118,36 +117,20 @@ func (a *API) uploadAttachment(w http.ResponseWriter, r *http.Request) {
 
 	// Posting an attachment is posting. Someone who may not write in a
 	// channel may not put files in it either.
-	role, err := perm.Parse(session.Role)
-	if err != nil {
-		slog.Error("session carries an unknown role", "role", session.Role)
-		writeError(w, http.StatusInternalServerError, "could not upload")
-		return
-	}
-
-	var (
-		minPost   string
-		encrypted bool
-	)
-	err = a.pool.QueryRow(r.Context(),
-		`SELECT min_role_post, encrypted FROM channels WHERE id = $1`, channelID,
-	).Scan(&minPost, &encrypted)
-
+	cp, err := a.channelPermsFor(r.Context(), session, channelID)
 	switch {
-	case errors.Is(err, pgx.ErrNoRows):
+	case errors.Is(err, errChannelNotFound):
 		writeError(w, http.StatusNotFound, "channel not found")
 		return
 	case err != nil:
 		slog.Error("looking up channel for upload", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not upload")
 		return
-	}
-
-	postRole, err := perm.Parse(minPost)
-	if err != nil || !perm.AtLeast(role, postRole) {
+	case !cp.CanPost:
 		writeError(w, http.StatusForbidden, "you cannot post in this channel")
 		return
 	}
+	encrypted := cp.Encrypted
 
 	if !a.uploadLimit.Allow(session.UserID) {
 		writeTooManyRequests(w, a.uploadLimit.RetryAfter(session.UserID))

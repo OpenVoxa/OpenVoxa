@@ -54,10 +54,11 @@ type accessChangedEvent struct {
 	Type string `json:"type"`
 }
 
-type roleChangedEvent struct {
+// permsChangedEvent says someone's groups or a group's switches moved.
+// UserID empty means it may affect anyone, so every client refetches.
+type permsChangedEvent struct {
 	Type   string `json:"type"`
 	UserID string `json:"user_id"`
-	Role   string `json:"role"`
 }
 
 func (a *API) emitAll(v any) {
@@ -111,7 +112,7 @@ func (a *API) NotifyMessageDeleted(channelID, messageID string) {
 
 // NotifyChannelChanged tells clients a channel's settings moved, so they
 // refetch the list. The event carries only the ID: what each client is
-// allowed to see differs by role, so the authoritative answer has to come
+// allowed to see differs by account, so the authoritative answer has to come
 // from the channels endpoint rather than from a broadcast.
 func (a *API) NotifyChannelChanged(channelID string) {
 	a.emitAll(channelChangedEvent{Type: "channel_changed", ChannelID: channelID})
@@ -136,11 +137,14 @@ func (a *API) NotifyGroupAdvanced(channelID string, epoch int64) {
 	})
 }
 
-// NotifyRoleChanged lets a client discover a promotion or demotion
-// promptly. The server already re-reads the role on every request, so this
-// only keeps the interface honest.
-func (a *API) NotifyRoleChanged(userID, role string) {
-	a.emitAll(roleChangedEvent{Type: "role_changed", UserID: userID, Role: role})
+// NotifyPermsChanged lets clients discover a change to someone's groups
+// (userID set) or to a group itself (userID empty) promptly: the affected
+// client refetches /me and the channel list, and members reconcile their
+// open encryption groups. The server already re-reads permissions on
+// every request, so this only keeps the interface honest. Carries no
+// permissions: what changed is for each client to ask.
+func (a *API) NotifyPermsChanged(userID string) {
+	a.emitAll(permsChangedEvent{Type: "perms_changed", UserID: userID})
 }
 
 // NotifyAccessChanged tells clients that who belongs in some encryption
@@ -151,8 +155,8 @@ func (a *API) NotifyRoleChanged(userID, role string) {
 //
 // Carries nothing. Which channels are affected depends on permissions
 // each client has to ask about anyway, and the allowed-devices endpoint
-// is the authoritative answer. Role changes have their own event, which
-// clients treat the same way.
+// is the authoritative answer. Permission changes have their own event,
+// perms_changed, which clients treat the same way.
 func (a *API) NotifyAccessChanged() {
 	a.emitAll(accessChangedEvent{Type: "access_changed"})
 }

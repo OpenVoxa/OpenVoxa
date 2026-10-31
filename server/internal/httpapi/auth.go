@@ -4,6 +4,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -57,7 +58,34 @@ type sessionResponse struct {
 	ExpiresAt time.Time `json:"expires_at"`
 	UserID    string    `json:"user_id"`
 	Username  string    `json:"username"`
-	Role      string    `json:"role"`
+	accountPerms
+}
+
+// accountPerms is what a client shows about its own permissions. Advisory:
+// the server checks again on every request.
+type accountPerms struct {
+	// Permissions is every switch held, expanded: an administrator gets
+	// the full list, so clients never have to know the implication.
+	Permissions []string        `json:"permissions"`
+	Rank        int             `json:"rank"`
+	Groups      []userGroupName `json:"groups"`
+}
+
+func (a *API) loadAccountPerms(ctx context.Context, userID string) (accountPerms, error) {
+	var out accountPerms
+	var names []string
+	err := a.pool.QueryRow(ctx,
+		`SELECT `+userPermsSQL+`,
+		        COALESCE((SELECT json_agg(json_build_object('id', g.id, 'name', g.name)
+		                            ORDER BY g.position DESC, g.name)
+		                    FROM user_perm_groups ug
+		                    JOIN perm_groups g ON g.id = ug.group_id
+		                   WHERE ug.user_id = u.id), '[]'::json)
+		   FROM users u WHERE u.id = $1`,
+		userID,
+	).Scan(&names, &out.Rank, &out.Groups)
+	out.Permissions = perm.NewSet(names).List()
+	return out, err
 }
 
 func (a *API) register(w http.ResponseWriter, r *http.Request) {
@@ -89,7 +117,7 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The first account to register becomes the administrator, because
-	// otherwise nobody can grant that role to anyone.
+	// otherwise nobody can grant that permission to anyone.
 	//
 	// The advisory lock makes this safe under concurrent registration: two
 	// simultaneous first registrations would otherwise both see an empty
@@ -117,16 +145,11 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	role := perm.User
-	if !anyUsers {
-		role = perm.Administrator
-	}
-
 	var userID string
 	err = tx.QueryRow(r.Context(),
-		`INSERT INTO users (username, password_hash, role)
-		 VALUES ($1, $2, $3) RETURNING id`,
-		req.Username, hash, role.String(),
+		`INSERT INTO users (username, password_hash)
+		 VALUES ($1, $2) RETURNING id`,
+		req.Username, hash,
 	).Scan(&userID)
 
 	if err != nil {
@@ -139,17 +162,31 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// New accounts join the auto-assign groups (Member, after the upgrade).
+	// The very first account also joins every group carrying the
+	// administrator switch.
+	if _, err := tx.Exec(r.Context(),
+		`INSERT INTO user_perm_groups (user_id, group_id)
+		 SELECT $1, id FROM perm_groups
+		  WHERE auto_assign OR ($2 AND 'administrator' = ANY(permissions))`,
+		userID, !anyUsers,
+	); err != nil {
+		slog.Error("assigning groups", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not create account")
+		return
+	}
+
 	if err := tx.Commit(r.Context()); err != nil {
 		slog.Error("committing registration", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not create account")
 		return
 	}
 
-	if role == perm.Administrator {
+	if !anyUsers {
 		slog.Info("first account created as administrator", "user_id", userID)
 	}
 
-	a.issueSession(w, r, userID, req.Username, role.String(), req.DeviceName)
+	a.issueSession(w, r, userID, req.Username, req.DeviceName)
 }
 
 func (a *API) login(w http.ResponseWriter, r *http.Request) {
@@ -167,12 +204,12 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var userID, username, storedHash, role string
+	var userID, username, storedHash string
 	err := a.pool.QueryRow(r.Context(),
-		`SELECT id, username, password_hash, role FROM users
+		`SELECT id, username, password_hash FROM users
 		 WHERE username = $1 AND deleted_at IS NULL`,
 		strings.TrimSpace(req.Username),
-	).Scan(&userID, &username, &storedHash, &role)
+	).Scan(&userID, &username, &storedHash)
 
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
@@ -230,10 +267,10 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.issueSession(w, r, userID, username, role, req.DeviceName)
+	a.issueSession(w, r, userID, username, req.DeviceName)
 }
 
-func (a *API) issueSession(w http.ResponseWriter, r *http.Request, userID, username, role, deviceName string) {
+func (a *API) issueSession(w http.ResponseWriter, r *http.Request, userID, username, deviceName string) {
 	token, hash, err := auth.NewSessionToken()
 	if err != nil {
 		slog.Error("generating session token", "err", err)
@@ -261,12 +298,19 @@ func (a *API) issueSession(w http.ResponseWriter, r *http.Request, userID, usern
 		return
 	}
 
+	perms, err := a.loadAccountPerms(r.Context(), userID)
+	if err != nil {
+		slog.Error("loading permissions", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not create session")
+		return
+	}
+
 	writeJSON(w, http.StatusOK, sessionResponse{
-		Token:     token,
-		ExpiresAt: expiresAt,
-		UserID:    userID,
-		Username:  username,
-		Role:      role,
+		Token:        token,
+		ExpiresAt:    expiresAt,
+		UserID:       userID,
+		Username:     username,
+		accountPerms: perms,
 	})
 }
 
@@ -287,15 +331,21 @@ func (a *API) logout(w http.ResponseWriter, r *http.Request) {
 type meResponse struct {
 	UserID   string `json:"user_id"`
 	Username string `json:"username"`
-	Role     string `json:"role"`
+	accountPerms
 }
 
 func (a *API) me(w http.ResponseWriter, r *http.Request) {
 	session := sessionFrom(r.Context())
+	perms, err := a.loadAccountPerms(r.Context(), session.UserID)
+	if err != nil {
+		slog.Error("loading permissions", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not load account")
+		return
+	}
 	writeJSON(w, http.StatusOK, meResponse{
-		UserID:   session.UserID,
-		Username: session.Username,
-		Role:     session.Role,
+		UserID:       session.UserID,
+		Username:     session.Username,
+		accountPerms: perms,
 	})
 }
 
