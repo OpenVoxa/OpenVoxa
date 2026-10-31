@@ -51,6 +51,7 @@ export type {
   DeviceInfo,
   GroupStatus,
   MembershipChange,
+  PersonChange,
   OpenResult,
   ReconcileResult,
 } from "./groups.js";
