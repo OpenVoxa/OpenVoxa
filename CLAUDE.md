@@ -65,6 +65,9 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
 - Commits: DCO sign-off required (`git commit -s`), author
   `rynd-automation <rynd_automation@outlook.com>`. Short imperative
   subject lines, one logical change per commit.
+- Claude can push from the device shell: a repo-scoped GitHub token is
+  stored via `credential.helper store --file=.git/push-credentials`
+  (never commit or print it). Ryan still rebuilds Docker by hand.
 - Commit/push only when asked. Never commit `.env`, keys, or
   `docker-compose.override.yml`.
 - When handing over changes, always give Ryan both:
