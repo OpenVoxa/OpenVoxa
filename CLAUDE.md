@@ -75,7 +75,7 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
      if he is committing).
   2. Docker update:
      ```bash
-     cd OpenVoxa && git pull && cd deploy
+     cd ~/OpenVoxa && git pull && cd deploy
      docker compose --profile tls up -d --build
      ```
      Then hard-refresh the browser (Ctrl+Shift+R) for `debugui/` changes.
