@@ -4,6 +4,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -178,6 +179,10 @@ func (a *API) setUserRole(w http.ResponseWriter, r *http.Request) {
 
 	a.NotifyRoleChanged(subjectID, newRole.String())
 
+	// After the event, so the subject's open connections hear about the
+	// change before any of them are closed.
+	a.closeLostChannels(r.Context(), subjectID)
+
 	writeJSON(w, http.StatusOK, userSummary{
 		ID: subjectID, Username: username, Role: newRole.String(),
 	})
@@ -272,4 +277,27 @@ func (a *API) deleteChannel(w http.ResponseWriter, r *http.Request) {
 
 	a.NotifyChannelDeleted(r.PathValue("id"))
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// closeLostChannels closes a user's websockets on channels they may no
+// longer view.
+//
+// A websocket is authorised once, at upgrade. Without this, a demoted
+// account keeps reading a channel it just lost, and in an encrypted
+// channel keeps receiving commit notices for a group it is about to be
+// removed from. Connections to channels still allowed are left alone,
+// so a demotion that changes nothing visible costs nothing.
+func (a *API) closeLostChannels(ctx context.Context, userID string) {
+	for _, channelID := range a.hub.UserChannels(userID) {
+		ok, err := a.userCanView(ctx, userID, channelID)
+		if err != nil {
+			slog.Error("re-checking channel access", "err", err, "channel_id", channelID)
+			continue
+		}
+		if !ok {
+			n := a.hub.DisconnectUserFrom(userID, channelID)
+			slog.Info("closed connections after losing access",
+				"user_id", userID, "channel_id", channelID, "count", n)
+		}
+	}
 }
