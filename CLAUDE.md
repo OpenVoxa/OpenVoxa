@@ -109,7 +109,7 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
 
 ## Current state (update every session)
 
-_Last updated: 2026-10-30, after media encryption (step 10) build._
+_Last updated: 2026-10-30, after step 10 verified and the membership decision._
 
 - Build-order step 9 (MLS for text) is functionally working on Docker:
   messages in an encrypted channel are ciphertext in Postgres (only the
@@ -128,20 +128,20 @@ _Last updated: 2026-10-30, after media encryption (step 10) build._
 - Local plaintext archive (IndexedDB) so messages survive reloads: MLS
   keys are single-use. Inbound messages are processed through one queue.
 - Blob storage on Docker is a bind mount: `/mnt/openvoxa-blobs`.
+- Media encryption (build-order step 10) verified on Docker 2026-10-30:
+  voice channels have their own MLS group; `groups.mediaKey()` feeds
+  LiveKit E2EE at key slot epoch mod 16; outsiders refused; audio and
+  screen share work both ways. LiveKit 2.23.0 served from our origin.
+- Decided 2026-10-30: encryption-group membership follows channel access
+  automatically, with every join/leave announced (decisions.md
+  Encryption + Known tensions). Custom permission groups replace the
+  fixed roles later. The "Add everyone" buttons are scaffolding.
 - Remaining, in order:
-  1. "Add everyone" skips devices already in the group: verified on
-     Docker 2026-10-30 (second click reports "already in", epoch
-     unchanged). Client reads member device IDs
-     from its ratchet tree (`memberIdentities`) and sends them as
-     `exclude_device_ids` to the claim endpoint, so no key package is
-     consumed for them; claim now returns `{packages, already_in_group}`.
-     Rebase re-filters, so a racing commit can't double-add a device.
-  2. Media keys from the MLS exporter secret (build-order step 10):
-     implemented 2026-10-30, awaiting a Docker call test. Voice channels
-     get their own MLS group; `groups.mediaKey()` feeds LiveKit E2EE at
-     key slot epoch mod 16. LiveKit 2.23.0 is now served from our origin
-     (copied by build.mjs, embedded via the Dockerfile), not jsdelivr.
-  3. Multi-party testing.
+  1. Automatic membership (step 11): server reports missing/revoked
+     devices per channel; online members' clients reconcile; join/leave
+     notices. Then test ts-mls external commit as the no-one-online path.
+  2. Multi-party testing.
+  3. Custom permission groups (step 12).
   4. Opt-in history sharing (Ryan wants it; see decisions.md Open items).
   5. Local storage encryption (blocked on recovery keys).
 - Other open items (revoked-device removal, recovery keys, etc.) live in

@@ -75,6 +75,8 @@ over.
 | Moderation | Message removal by author or moderator; reports verified server-side; bans that revoke sessions and live connections. Purging a banned user's history is administrator-only and separate from the ban itself. |
 | Markdown | Hand-rolled minimal renderer rather than a library: bold, italic, strikethrough, inline and fenced code, blockquote, autolinks. Small enough to audit, and avoids trusting a dependency with untrusted input. |
 | TLS | Required in practice. Caddy provided but optional; three deployment paths documented. |
+| Permissions | Admin-defined groups, each with its own permissions, assigned to channels (Discord roles / TeamSpeak server groups). Replaces the fixed four roles later; the fixed roles stay until then. Decided by Ryan, 2026-10-30. |
+| Encrypted channel membership | Follows channel access automatically. Nobody adds people to encryption groups by hand; every device that joins is announced to the channel. Decided by Ryan, 2026-10-30; see Encryption. |
 
 ### How reporting works under encryption
 
@@ -176,6 +178,18 @@ lost history, permanently.
 **Bandwidth is the real hosting cost.** Ten viewers on one 1080p60 stream
 is roughly 50 to 100 Mbps of sustained egress. "Free to host" assumes the
 operator has the upstream.
+
+**The server's permission list decides who joins encrypted channels.**
+Automatic membership means a malicious operator, or anyone who takes over
+the server, can grant a device of their own access and have members'
+clients add it. They then read everything sent from that point on (not
+before: new members see no history). This is the trade Discord's voice
+E2EE and most group messengers make. It is bounded by visibility rather
+than prevented: every join is announced to the channel, so a ghost
+device cannot be added silently. Device verification (comparing safety
+numbers, as Signal does) would let users confirm each other's devices
+and is the eventual stronger answer. Self-hosting limits who the operator
+is; it does not remove the operator from the trust model.
 
 **Per-account login limiting can be weaponised.** Five failed attempts
 throttles an account, so someone who knows a username can lock them out
@@ -311,6 +325,47 @@ blob}` and the server does a compare-and-swap on the epoch. The epoch is
 a hint for ordering, never something trusted: a client that lies about it
 has its commit accepted by the server and then rejected cryptographically
 by every other member, which is a self-correcting failure.
+
+**Group membership follows channel access, automatically.** Being allowed
+into a channel, text or voice, is what puts a user's devices into its MLS
+group, and losing access is what takes them out. Decided by Ryan,
+2026-10-30. The alternative, a member approving every add by hand, is
+stronger against a hostile server but unusable at the scale of a real
+community, and it is not what Discord or TeamSpeak users expect.
+
+The constraint that shapes how: the server cannot add anyone. A commit
+can only be produced by a device already in the group, because only
+members hold the group's secrets, and that is the point of the design. So
+the server's role is to say who *should* be in, and clients do the rest:
+
+1. **Member reconciliation (the normal path).** The server reports, per
+   channel, which permitted devices are missing from the group and which
+   members no longer have access. Any member's client that is online
+   adds the missing and removes the revoked, in the background. The
+   existing commit compare-and-swap means two members doing this at once
+   cannot fork the group; the loser rebases and finds nothing left to do.
+2. **External join (the fallback, not yet verified).** When no member is
+   online, a permitted device joins on its own from a GroupInfo the group
+   publishes to the server (RFC 9420 external commit). Whether ts-mls
+   1.6.2 supports this has to be established by experiment before it is
+   designed in. Until then a new member waits for any member to come
+   online, which for voice is usually immediate: you are joining a call
+   somebody is already in.
+
+The server still checks access before accepting any commit or welcome,
+so a client cannot add someone the permissions do not allow.
+
+Access is answered by one server-side question, "may this account view
+this channel?", which today is the role check and later is the custom
+groups check. Membership is built against that question, so custom groups
+change its answer without touching the encryption code.
+
+Every device joining or leaving is shown in the channel ("staff added a
+device", "ryan's laptop was removed"). That is the mitigation for the
+tension below and is part of the feature, not polish.
+
+The "Add everyone" and "Add everyone to voice" buttons in the debug page
+are test scaffolding for this and go away when reconciliation exists.
 
 ## Implementation notes
 
@@ -691,15 +746,19 @@ would replace it.
      message. Verified on Docker 2026-10-30 (ryan + staff): image, mp3
      and PDF readable by the other member; stored blob is opaque data;
      server row shows `encrypted` / octet-stream
-10. 🔶 Media encryption keyed off the MLS exporter secret
+10. ✅ Media encryption keyed off the MLS exporter secret
    - ✅ Exporter-derived media key, verified in Node: members agree,
      key changes per epoch and per channel
    - ✅ LiveKit E2EE wired with epoch-indexed key slots, self-hosted
      and pinned LiveKit 2.23.0; checked headless against the real bundle
-   - ⬜ Two-party call on Docker: audio and screen share both ways,
-     participants show `[encrypted]`, a device outside the group cannot
-     join, adding someone mid-call rotates the key without dropping audio
-11. ⬜ The real client: `client-web`, `client-desktop`
+   - ✅ Two-party call on Docker (ryan + staff, 2026-10-30): a device
+     outside the group is refused; adding it rotates the key (epoch 1);
+     audio and screen share both ways, simultaneous streams fine
+11. ⬜ Automatic group membership from channel access: member
+    reconciliation, join and leave notices, then external join if ts-mls
+    supports it. Built against the current roles.
+12. ⬜ Custom permission groups replacing the fixed roles
+13. ⬜ The real client: `client-web`, `client-desktop`
 
 ## Open items
 
@@ -763,9 +822,9 @@ would replace it.
       member's identity. MLS gives per-sender keys for text; per-sender
       media keys (exporter context including the leaf) would close this
       at the cost of one key per participant.
-- [ ] Voice group membership is manual ("Add everyone to voice"). The
-      real client needs a policy, probably everyone who may view the
-      voice channel, applied when they first join.
+- [ ] Group membership is still manual in the debug page ("Add
+      everyone", "Add everyone to voice"). Policy decided (membership
+      follows access, see Encryption); build-order step 11.
 - [ ] LiveKit's `encryption` option also turns on data channel
       encryption. Nothing uses data channels yet; anything that does
       later gets it for free, but must not assume the SFU can read them.
