@@ -113,7 +113,7 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
 
 ## Current state (update every session)
 
-_Last updated: 2026-10-31, after step 11 triggers verified on Docker._
+_Last updated: 2026-10-31, after step 11 join/leave notices built (unverified)._
 
 - Build-order step 9 (MLS for text) is functionally working on Docker:
   messages in an encrypted channel are ciphertext in Postgres (only the
@@ -143,7 +143,9 @@ _Last updated: 2026-10-31, after step 11 triggers verified on Docker._
      Triggers (step 5) done and verified on Docker 2026-10-31:
      `groups.reconcileSoon()` (debounced, staggered by leaf; decisions.md
      Implementation notes), server `access_changed` event, demotion
-     closes sockets to lost channels. Next: join/leave notices (step 6).
+     closes sockets to lost channels. Join/leave notices (step 6) built,
+     NOT yet verified: `groups.onMembership()`, `mls/device-names`
+     endpoint. Then step 7, remove the "Add everyone" buttons.
      Group ops serialised per channel; commit keys wiped only after the
      server accepts; removes and adds in separate commits. External
      commit proven in Node; wire it in last as the no-one-online path.
