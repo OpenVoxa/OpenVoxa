@@ -2274,8 +2274,22 @@ class MlsMediaKeys extends LivekitClient.BaseKeyProvider {
         "raw", crypto.getRandomValues(new Uint8Array(32)), "HKDF", false,
         ["deriveBits", "deriveKey"]);
       if (this.currentEpoch !== epoch) return; // a newer key arrived meanwhile
-      this.onSetEncryptionKey(junk, undefined, slot);
+      this.overwriteSlot(junk, slot);
     }
+  }
+
+  // Replace the key in one slot WITHOUT making it the slot this device
+  // encrypts with. onSetEncryptionKey cannot do that: any call with a
+  // slot number also moves LiveKit's current key index there (and its
+  // "latest manually set" index, used on reconnect). Retiring through it
+  // left every device encrypting with junk 10 s after each key change:
+  // both sides "Decryption failed" (found on Docker 2026-10-31, D4).
+  // keyInfoMap is TypeScript-private, a plain property at runtime; it is
+  // what LiveKit re-sends to the worker after a reconnect.
+  overwriteSlot(material, slot) {
+    const info = { key: material, participantIdentity: undefined, keyIndex: slot };
+    this.keyInfoMap.set(`shared-${slot}`, info);
+    this.emit(LivekitClient.KeyProviderEvent?.SetKey ?? "setKey", info, false);
   }
 
   stop() {
