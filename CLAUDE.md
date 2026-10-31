@@ -113,7 +113,7 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
 
 ## Current state (update every session)
 
-_Last updated: 2026-10-31, after step 11 join/leave notices verified on Docker._
+_Last updated: 2026-10-31, after step 11 "Add everyone" buttons removed._
 
 - Build-order step 9 (MLS for text) is functionally working on Docker:
   messages in an encrypted channel are ciphertext in Postgres (only the
@@ -134,7 +134,7 @@ _Last updated: 2026-10-31, after step 11 join/leave notices verified on Docker._
 - Decided 2026-10-30: encryption-group membership follows channel access
   automatically, with every join/leave announced (decisions.md
   Encryption + Known tensions). Custom permission groups replace the
-  fixed roles later. The "Add everyone" buttons are scaffolding.
+  fixed roles later.
 - Remaining, in order:
   1. Automatic membership (step 11): server side done and verified
      (`access.go`, `GET /channels/{id}/mls/allowed-devices`, welcome
@@ -145,9 +145,10 @@ _Last updated: 2026-10-31, after step 11 join/leave notices verified on Docker._
      Implementation notes), server `access_changed` event, demotion
      closes sockets to lost channels. Join/leave notices (step 6) done and
      verified: `groups.onMembership()`, `mls/device-names` endpoint.
-     Who sees which notices in the real UI is being decided (Ryan:
-     people in chat; devices in an admin pane). Next: step 7, remove
-     the "Add everyone" buttons.
+     Real UI: per-person notices by default, per-device as an option,
+     mod and admin panes (decisions.md, "Notices are per person").
+     Step 7 done: "Add everyone" buttons and `groups.addMembers` gone.
+     Next: external join + stuck-group reset (step 8).
      Group ops serialised per channel; commit keys wiped only after the
      server accepts; removes and adds in separate commits. External
      commit proven in Node; wire it in last as the no-one-online path.
