@@ -141,11 +141,24 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 	mux.HandleFunc("GET /api/v1/channels", api.requireAuth(api.listChannels))
 
 	mux.HandleFunc("GET /api/v1/users",
-		api.requireRole(perm.Moderator, api.listUsers))
-	mux.HandleFunc("PATCH /api/v1/users/{id}/role",
-		withUUIDPath(api.requireRole(perm.Administrator, api.setUserRole)))
+		api.requireStaff(api.listUsers))
 	mux.HandleFunc("DELETE /api/v1/users/{id}",
-		withUUIDPath(api.requireRole(perm.Administrator, api.deleteUser)))
+		withUUIDPath(api.requirePerm(perm.Administrator, api.deleteUser)))
+
+	// Permission groups (build-order step 12). Anyone signed in may read
+	// the list, so a client can show group names; changing anything needs
+	// manage_groups and is limited to groups and accounts below your rank.
+	mux.HandleFunc("GET /api/v1/groups", api.requireAuth(api.listGroups))
+	mux.HandleFunc("POST /api/v1/groups",
+		api.requirePerm(perm.ManageGroups, api.createGroupPerm))
+	mux.HandleFunc("PATCH /api/v1/groups/{id}",
+		withUUIDPath(api.requirePerm(perm.ManageGroups, api.editGroupPerm)))
+	mux.HandleFunc("DELETE /api/v1/groups/{id}",
+		withUUIDPath(api.requirePerm(perm.ManageGroups, api.deleteGroupPerm)))
+	mux.HandleFunc("PUT /api/v1/users/{id}/groups/{group}",
+		withUUIDPath(api.requirePerm(perm.ManageGroups, api.addUserToGroup)))
+	mux.HandleFunc("DELETE /api/v1/users/{id}/groups/{group}",
+		withUUIDPath(api.requirePerm(perm.ManageGroups, api.removeUserFromGroup)))
 
 	mux.HandleFunc("DELETE /api/v1/me", api.requireAuth(api.deleteOwnAccount))
 
@@ -157,16 +170,16 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 		withUUIDPath(api.requireAuth(api.reportMessage)))
 
 	mux.HandleFunc("GET /api/v1/reports",
-		api.requireRole(perm.Moderator, api.listReports))
+		api.requirePerm(perm.ViewReports, api.listReports))
 	mux.HandleFunc("POST /api/v1/reports/{id}/resolve",
-		withUUIDPath(api.requireRole(perm.Moderator, api.resolveReport)))
+		withUUIDPath(api.requirePerm(perm.ViewReports, api.resolveReport)))
 
 	mux.HandleFunc("GET /api/v1/bans",
-		api.requireRole(perm.Moderator, api.listBans))
+		api.requirePerm(perm.Ban, api.listBans))
 	mux.HandleFunc("POST /api/v1/users/{id}/ban",
-		withUUIDPath(api.requireRole(perm.Moderator, api.banUser)))
+		withUUIDPath(api.requirePerm(perm.Ban, api.banUser)))
 	mux.HandleFunc("DELETE /api/v1/users/{id}/ban",
-		withUUIDPath(api.requireRole(perm.Moderator, api.unbanUser)))
+		withUUIDPath(api.requirePerm(perm.Ban, api.unbanUser)))
 
 	// MLS identity. The server stores and routes this material and never
 	// parses it; see docs/decisions.md.
@@ -209,16 +222,18 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 		api.requireAuth(api.ackWelcome))
 
 	mux.HandleFunc("POST /api/v1/channels",
-		api.requireRole(perm.Administrator, api.createChannel))
+		api.requirePerm(perm.ManageChannels, api.createChannel))
 	mux.HandleFunc("DELETE /api/v1/channels/{id}",
-		withUUIDPath(api.requireRole(perm.Administrator, api.deleteChannel)))
+		withUUIDPath(api.requirePerm(perm.ManageChannels, api.deleteChannel)))
 
 	mux.HandleFunc("POST /api/v1/channels/{id}/voice-token",
 		withUUIDPath(api.requireAuth(api.voiceToken)))
 	mux.HandleFunc("PATCH /api/v1/channels/{id}/force-ptt",
-		withUUIDPath(api.requireRole(perm.Moderator, api.setForcePTT)))
+		withUUIDPath(api.requirePerm(perm.ForcePTT, api.setForcePTT)))
 	mux.HandleFunc("PATCH /api/v1/channels/{id}/retention",
-		withUUIDPath(api.requireRole(perm.Administrator, api.setChannelRetention)))
+		withUUIDPath(api.requirePerm(perm.ManageChannels, api.setChannelRetention)))
+	mux.HandleFunc("PUT /api/v1/channels/{id}/access",
+		withUUIDPath(api.requirePerm(perm.ManageChannels, api.setChannelAccess)))
 
 	mux.HandleFunc("POST /api/v1/unfurl", api.requireAuth(api.unfurlLink))
 
@@ -297,37 +312,46 @@ type channelResponse struct {
 	Kind      string `json:"kind"`
 	Encrypted bool   `json:"encrypted"`
 	Retention string `json:"retention"`
+	ForcePTT  bool   `json:"force_ptt"`
 
-	MinRoleView string `json:"min_role_view"`
-	MinRolePost string `json:"min_role_post"`
-	ForcePTT    bool   `json:"force_ptt"`
+	// Access is the channel's allow-list: which groups may view it and
+	// which of those may post. Administrators see every channel without
+	// being listed.
+	Access []channelAccessEntry `json:"access"`
 
-	// CanPost saves every client from reimplementing the rank comparison.
+	// CanPost saves every client from reimplementing the access rule.
 	// It is advisory only: the server checks again on the websocket.
 	CanPost bool `json:"can_post"`
 }
 
+type channelAccessEntry struct {
+	GroupID string `json:"group_id"`
+	Group   string `json:"group"`
+	CanPost bool   `json:"can_post"`
+}
+
+// channelAccessJSON selects channel c's allow-list as a JSON array.
+const channelAccessJSON = `
+	COALESCE((SELECT json_agg(json_build_object(
+	                   'group_id', g.id, 'group', g.name, 'can_post', ca.can_post)
+	                   ORDER BY g.position, g.name)
+	            FROM channel_access ca
+	            JOIN perm_groups g ON g.id = ca.group_id
+	           WHERE ca.channel_id = c.id), '[]'::json)`
+
 // listChannels returns only the channels the caller may view. A channel
-// above their rank is omitted entirely rather than shown and refused.
+// they may not view is omitted entirely rather than shown and refused.
 func (a *API) listChannels(w http.ResponseWriter, r *http.Request) {
 	session := sessionFrom(r.Context())
-
-	role, err := perm.Parse(session.Role)
-	if err != nil {
-		slog.Error("session carries an unknown role", "role", session.Role)
-		writeError(w, http.StatusInternalServerError, "could not list channels")
-		return
-	}
 
 	rows, err := a.pool.Query(r.Context(),
 		`SELECT c.id, c.name, c.kind, c.encrypted,
 		        EXTRACT(EPOCH FROM c.retention)::float8,
-		        c.min_role_view, c.min_role_post, c.force_ptt
-		   FROM channels c
-		   JOIN roles rv ON rv.name = c.min_role_view
-		  WHERE rv.rank <= (SELECT rank FROM roles WHERE name = $1)
+		        c.force_ptt, `+canPostSQL+`, `+channelAccessJSON+`
+		   FROM channels c, users u
+		  WHERE u.id = $1 AND `+canViewSQL+`
 		  ORDER BY c.name`,
-		role.String())
+		session.UserID)
 	if err != nil {
 		slog.Error("listing channels", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not list channels")
@@ -343,7 +367,7 @@ func (a *API) listChannels(w http.ResponseWriter, r *http.Request) {
 		var retentionSeconds *float64
 
 		if err := rows.Scan(&c.ID, &c.Name, &c.Kind, &c.Encrypted, &retentionSeconds,
-			&c.MinRoleView, &c.MinRolePost, &c.ForcePTT); err != nil {
+			&c.ForcePTT, &c.CanPost, &c.Access); err != nil {
 			slog.Error("scanning channel", "err", err)
 			writeError(w, http.StatusInternalServerError, "could not list channels")
 			return
@@ -357,13 +381,6 @@ func (a *API) listChannels(w http.ResponseWriter, r *http.Request) {
 		} else {
 			c.Retention = fmt.Sprintf("%s", time.Duration(*retentionSeconds)*time.Second)
 		}
-
-		postRole, err := perm.Parse(c.MinRolePost)
-		if err != nil {
-			slog.Error("channel has an unknown min_role_post", "channel_id", c.ID)
-			continue
-		}
-		c.CanPost = perm.AtLeast(role, postRole)
 
 		channels = append(channels, c)
 	}

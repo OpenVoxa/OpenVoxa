@@ -175,7 +175,7 @@ func (a *API) websocket(w http.ResponseWriter, r *http.Request) {
 	// Confirm the channel exists, is a text channel, and that this caller
 	// may view it. The permission check happens before the upgrade so a
 	// refusal is a plain HTTP error the client can read.
-	p, err := a.channelPermsFor(r.Context(), session.Role, channelID)
+	p, err := a.channelPermsFor(r.Context(), session, channelID)
 	switch {
 	case errors.Is(err, errChannelNotFound):
 		// 404 rather than 403: a channel you cannot see should not be

@@ -11,27 +11,39 @@ import (
 	"regexp"
 	"strings"
 	"time"
-
-	"github.com/jackc/pgx/v5"
-
-	"github.com/openvoxa/openvoxa/server/internal/perm"
 )
 
 var channelNamePattern = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)
 
 type userSummary struct {
-	ID        string    `json:"id"`
-	Username  string    `json:"username"`
-	Role      string    `json:"role"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        string          `json:"id"`
+	Username  string          `json:"username"`
+	Rank      int             `json:"rank"`
+	Groups    []userGroupName `json:"groups"`
+	CreatedAt time.Time       `json:"created_at"`
 }
 
-// listUsers is moderator-and-above. Moderators need to see who they are
-// moderating; ordinary users do not need a roster of every account.
+type userGroupName struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// listUsers is for anyone holding a permission switch. Staff need to see
+// who they are moderating; ordinary users do not need a roster of every
+// account. Everyone is left out of each account's groups: it is implied.
 func (a *API) listUsers(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.pool.Query(r.Context(),
-		`SELECT id, username, role, created_at
-		   FROM users WHERE deleted_at IS NULL ORDER BY username`)
+		`SELECT u.id, u.username,
+		        COALESCE((SELECT max(g.position) FROM user_perm_groups ug
+		                    JOIN perm_groups g ON g.id = ug.group_id
+		                   WHERE ug.user_id = u.id), 0),
+		        COALESCE((SELECT json_agg(json_build_object('id', g.id, 'name', g.name)
+		                            ORDER BY g.position DESC, g.name)
+		                    FROM user_perm_groups ug
+		                    JOIN perm_groups g ON g.id = ug.group_id
+		                   WHERE ug.user_id = u.id), '[]'::json),
+		        u.created_at
+		   FROM users u WHERE u.deleted_at IS NULL ORDER BY u.username`)
 	if err != nil {
 		slog.Error("listing users", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not list users")
@@ -42,7 +54,7 @@ func (a *API) listUsers(w http.ResponseWriter, r *http.Request) {
 	users := make([]userSummary, 0)
 	for rows.Next() {
 		var u userSummary
-		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.Rank, &u.Groups, &u.CreatedAt); err != nil {
 			slog.Error("scanning user", "err", err)
 			writeError(w, http.StatusInternalServerError, "could not list users")
 			return
@@ -58,143 +70,18 @@ func (a *API) listUsers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, users)
 }
 
-type setRoleRequest struct {
-	Role string `json:"role"`
-}
-
-// setUserRole changes another account's role. Administrator only.
-//
-// Three rules, all enforced server-side:
-//
-//   - You cannot change your own role. Otherwise the audit log fills with
-//     self-promotions and demotion-by-accident locks people out.
-//   - You cannot act on someone of equal or higher rank. Administrators
-//     cannot demote each other, so one compromised admin account cannot
-//     take the server over by removing everyone else.
-//   - You cannot grant a role above your own. Currently moot since only
-//     administrators reach this endpoint, but it stays correct if the
-//     endpoint is ever opened up.
-func (a *API) setUserRole(w http.ResponseWriter, r *http.Request) {
-	actor := sessionFrom(r.Context())
-	subjectID := r.PathValue("id")
-
-	var req setRoleRequest
-	if !decodeJSON(w, r, &req) {
-		return
-	}
-
-	newRole, err := perm.Parse(req.Role)
-	if err != nil {
-		writeError(w, http.StatusBadRequest,
-			"role must be one of: guest, user, moderator, administrator")
-		return
-	}
-
-	if subjectID == actor.UserID {
-		writeError(w, http.StatusForbidden, "you cannot change your own role")
-		return
-	}
-
-	actorRole, err := perm.Parse(actor.Role)
-	if err != nil {
-		slog.Error("session carries an unknown role", "role", actor.Role)
-		writeError(w, http.StatusInternalServerError, "could not change role")
-		return
-	}
-
-	if !perm.AtLeast(actorRole, newRole) {
-		writeError(w, http.StatusForbidden, "you cannot grant a role above your own")
-		return
-	}
-
-	// Lock the subject row so two concurrent changes cannot interleave
-	// between the rank check and the update.
-	tx, err := a.pool.Begin(r.Context())
-	if err != nil {
-		slog.Error("starting role change", "err", err)
-		writeError(w, http.StatusInternalServerError, "could not change role")
-		return
-	}
-	defer tx.Rollback(r.Context())
-
-	var oldRole, username string
-	err = tx.QueryRow(r.Context(),
-		`SELECT role, username FROM users
-		  WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
-		subjectID,
-	).Scan(&oldRole, &username)
-
-	switch {
-	case errors.Is(err, pgx.ErrNoRows):
-		writeError(w, http.StatusNotFound, "user not found")
-		return
-	case err != nil:
-		slog.Error("loading subject", "err", err)
-		writeError(w, http.StatusInternalServerError, "could not change role")
-		return
-	}
-
-	subjectRole, err := perm.Parse(oldRole)
-	if err != nil {
-		slog.Error("stored role is unknown", "role", oldRole)
-		writeError(w, http.StatusInternalServerError, "could not change role")
-		return
-	}
-
-	if !perm.Outranks(actorRole, subjectRole) {
-		writeError(w, http.StatusForbidden,
-			"you cannot change the role of someone at or above your own rank")
-		return
-	}
-
-	if _, err := tx.Exec(r.Context(),
-		`UPDATE users SET role = $1 WHERE id = $2`, newRole.String(), subjectID,
-	); err != nil {
-		slog.Error("updating role", "err", err)
-		writeError(w, http.StatusInternalServerError, "could not change role")
-		return
-	}
-
-	if _, err := tx.Exec(r.Context(),
-		`INSERT INTO role_changes (actor_id, subject_id, old_role, new_role)
-		 VALUES ($1, $2, $3, $4)`,
-		actor.UserID, subjectID, oldRole, newRole.String(),
-	); err != nil {
-		slog.Error("recording role change", "err", err)
-		writeError(w, http.StatusInternalServerError, "could not change role")
-		return
-	}
-
-	if err := tx.Commit(r.Context()); err != nil {
-		slog.Error("committing role change", "err", err)
-		writeError(w, http.StatusInternalServerError, "could not change role")
-		return
-	}
-
-	// Logged with IDs rather than usernames, consistent with the rest of
-	// the logging policy.
-	slog.Info("role changed",
-		"actor_id", actor.UserID, "subject_id", subjectID,
-		"old_role", oldRole, "new_role", newRole.String())
-
-	a.NotifyRoleChanged(subjectID, newRole.String())
-
-	// After the event, so the subject's open connections hear about the
-	// change before any of them are closed.
-	a.closeLostChannels(r.Context(), subjectID)
-	a.kickFromLostVoice(subjectID)
-
-	writeJSON(w, http.StatusOK, userSummary{
-		ID: subjectID, Username: username, Role: newRole.String(),
-	})
-}
-
 type createChannelRequest struct {
-	Name        string `json:"name"`
-	Kind        string `json:"kind"`
-	Encrypted   bool   `json:"encrypted"`
-	MinRoleView string `json:"min_role_view"`
-	MinRolePost string `json:"min_role_post"`
+	Name      string `json:"name"`
+	Kind      string `json:"kind"`
+	Encrypted bool   `json:"encrypted"`
+
+	// Access is the allow-list, as for PUT /channels/{id}/access. Omitted
+	// means the old default: Everyone may view, and the groups new
+	// accounts join (Member) may post.
+	Access *[]struct {
+		GroupID string `json:"group_id"`
+		CanPost bool   `json:"can_post"`
+	} `json:"access"`
 }
 
 func (a *API) createChannel(w http.ResponseWriter, r *http.Request) {
@@ -214,38 +101,21 @@ func (a *API) createChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Empty means take the permissive default.
-	if req.MinRoleView == "" {
-		req.MinRoleView = perm.Guest.String()
-	}
-	if req.MinRolePost == "" {
-		req.MinRolePost = perm.User.String()
-	}
-
-	viewRole, err := perm.Parse(req.MinRoleView)
+	tx, err := a.pool.Begin(r.Context())
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "min_role_view is not a valid role")
+		slog.Error("starting channel creation", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not create channel")
 		return
 	}
-	postRole, err := perm.Parse(req.MinRolePost)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "min_role_post is not a valid role")
-		return
-	}
-	if perm.Outranks(viewRole, postRole) {
-		writeError(w, http.StatusBadRequest,
-			"min_role_post cannot be lower than min_role_view")
-		return
-	}
+	defer tx.Rollback(r.Context())
 
 	var c channelResponse
-	err = a.pool.QueryRow(r.Context(),
-		`INSERT INTO channels (name, kind, encrypted, min_role_view, min_role_post)
-		 VALUES ($1, $2, $3, $4, $5)
-		 RETURNING id, name, kind, encrypted, min_role_view, min_role_post`,
-		req.Name, req.Kind, req.Encrypted, viewRole.String(), postRole.String(),
-	).Scan(&c.ID, &c.Name, &c.Kind, &c.Encrypted, &c.MinRoleView, &c.MinRolePost)
-
+	err = tx.QueryRow(r.Context(),
+		`INSERT INTO channels (name, kind, encrypted)
+		 VALUES ($1, $2, $3)
+		 RETURNING id, name, kind, encrypted`,
+		req.Name, req.Kind, req.Encrypted,
+	).Scan(&c.ID, &c.Name, &c.Kind, &c.Encrypted)
 	if err != nil {
 		if isUniqueViolation(err) {
 			writeError(w, http.StatusConflict, "a channel with that name already exists")
@@ -256,13 +126,56 @@ func (a *API) createChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.Access != nil {
+		var access channelAccessRequest
+		for _, e := range *req.Access {
+			if !uuidPattern.MatchString(e.GroupID) {
+				writeError(w, http.StatusBadRequest, "invalid group id "+e.GroupID)
+				return
+			}
+			access.Access = append(access.Access, e)
+		}
+		err = writeChannelAccess(r.Context(), tx, c.ID, access)
+	} else {
+		_, err = tx.Exec(r.Context(),
+			`INSERT INTO channel_access (channel_id, group_id, can_post)
+			 SELECT $1, id, auto_assign FROM perm_groups
+			  WHERE is_everyone OR auto_assign`, c.ID)
+	}
+	if errors.Is(err, errUnknownGroup) {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err != nil {
+		slog.Error("writing channel access", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not create channel")
+		return
+	}
+
+	if err := tx.QueryRow(r.Context(),
+		`SELECT `+channelAccessJSON+` FROM channels c WHERE c.id = $1`, c.ID,
+	).Scan(&c.Access); err != nil {
+		slog.Error("reading channel access", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not create channel")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		slog.Error("committing channel", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not create channel")
+		return
+	}
+
 	c.Retention = "forever"
+	// manage_channels does not by itself put the creator on the list.
+	if p, err := a.channelPermsFor(r.Context(), sessionFrom(r.Context()), c.ID); err == nil {
+		c.CanPost = p.CanPost
+	}
 	a.NotifyChannelChanged(c.ID)
 	writeJSON(w, http.StatusCreated, c)
 }
 
 // deleteChannel removes a channel and, by cascade, every message in it.
-// Administrator only, and irreversible by design.
+// Needs manage_channels, and irreversible by design.
 func (a *API) deleteChannel(w http.ResponseWriter, r *http.Request) {
 	tag, err := a.pool.Exec(r.Context(),
 		`DELETE FROM channels WHERE id = $1`, r.PathValue("id"))

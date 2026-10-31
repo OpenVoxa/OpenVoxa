@@ -32,8 +32,10 @@ type voiceTokenResponse struct {
 // checks that a token was signed with the right secret and honours the
 // grants inside it. All the policy lives here:
 //
-//   - min_role_view decides whether you may listen (canSubscribe)
-//   - min_role_post decides whether you may speak (canPublish)
+//   - being allowed to view the channel decides whether you may listen
+//     (canSubscribe)
+//   - being allowed to post in it decides whether you may speak
+//     (canPublish)
 //
 // The API secret never leaves the server. Clients only ever see a
 // short-lived token scoped to one room.
@@ -46,7 +48,7 @@ func (a *API) voiceToken(w http.ResponseWriter, r *http.Request) {
 	session := sessionFrom(r.Context())
 	channelID := r.PathValue("id")
 
-	p, err := a.channelPermsFor(r.Context(), session.Role, channelID)
+	p, err := a.channelPermsFor(r.Context(), session, channelID)
 	switch {
 	case errors.Is(err, errChannelNotFound):
 		// Consistent with text channels: something you cannot access is

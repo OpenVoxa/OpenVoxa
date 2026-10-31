@@ -197,6 +197,26 @@ func (h *Hub) UserChannels(userID string) []string {
 	return out
 }
 
+// ChannelUsers lists the users with a connection open to any channel,
+// each once. Used after a change that can move many accounts' access at
+// once (a group edited, a channel's allow-list replaced).
+func (h *Hub) ChannelUsers() []string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	seen := make(map[string]struct{})
+	out := make([]string, 0)
+	for _, subs := range h.channels {
+		for c := range subs {
+			if _, ok := seen[c.UserID]; !ok {
+				seen[c.UserID] = struct{}{}
+				out = append(out, c.UserID)
+			}
+		}
+	}
+	return out
+}
+
 // DisconnectUserFrom closes a user's connections to one channel and
 // reports how many it closed. Their other connections stay up.
 //

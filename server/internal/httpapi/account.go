@@ -70,9 +70,10 @@ func (a *API) deleteOwnAccount(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// deleteUser removes someone else's account. Administrator only.
+// deleteUser removes someone else's account. Needs the administrator
+// switch.
 //
-// Same destruction as self-deletion. The rank rules match role changes:
+// Same destruction as self-deletion. The rank rules match group changes:
 // you cannot delete yourself through this route, and you cannot delete
 // someone at or above your own rank.
 func (a *API) deleteUser(w http.ResponseWriter, r *http.Request) {
@@ -85,19 +86,7 @@ func (a *API) deleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	actorRole, err := perm.Parse(actor.Role)
-	if err != nil {
-		slog.Error("session carries an unknown role", "role", actor.Role)
-		writeError(w, http.StatusInternalServerError, "could not delete account")
-		return
-	}
-
-	var subjectRoleName string
-	err = a.pool.QueryRow(r.Context(),
-		`SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL`,
-		subjectID,
-	).Scan(&subjectRoleName)
-
+	rank, err := subjectRank(r.Context(), a.pool, subjectID)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		writeError(w, http.StatusNotFound, "user not found")
@@ -108,14 +97,7 @@ func (a *API) deleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	subjectRole, err := perm.Parse(subjectRoleName)
-	if err != nil {
-		slog.Error("stored role is unknown", "role", subjectRoleName)
-		writeError(w, http.StatusInternalServerError, "could not delete account")
-		return
-	}
-
-	if !perm.Outranks(actorRole, subjectRole) {
+	if !perm.Outranks(actor.Rank, rank) {
 		writeError(w, http.StatusForbidden,
 			"you cannot delete someone at or above your own rank")
 		return

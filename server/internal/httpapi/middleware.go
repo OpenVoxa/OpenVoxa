@@ -23,7 +23,12 @@ type Session struct {
 	SessionID string
 	UserID    string
 	Username  string
-	Role      string
+
+	// Perms and Rank are read fresh on every request, so a change to
+	// someone's groups takes effect immediately rather than waiting for
+	// the token to expire. Rank is the position of their highest group.
+	Perms perm.Set
+	Rank  int
 }
 
 // contextKey is unexported so no other package can collide with our key.
@@ -54,12 +59,14 @@ func (a *API) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 
 		var s Session
 		var expiresAt time.Time
+		var permNames []string
 
 		// The ban check runs on every request rather than only at login.
 		// Banning deletes existing sessions, but a token issued in the
 		// gap between those two statements would otherwise stay valid.
 		err := a.pool.QueryRow(r.Context(),
-			`SELECT s.id, s.user_id, u.username, u.role, s.expires_at
+			`SELECT s.id, s.user_id, u.username, s.expires_at,
+			        `+userPermsSQL+`
 			   FROM sessions s
 			   JOIN users u ON u.id = s.user_id
 			  WHERE s.token_hash = $1
@@ -70,7 +77,7 @@ func (a *API) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			             AND (b.expires_at IS NULL OR b.expires_at > now())
 			    )`,
 			auth.HashSessionToken(token),
-		).Scan(&s.SessionID, &s.UserID, &s.Username, &s.Role, &expiresAt)
+		).Scan(&s.SessionID, &s.UserID, &s.Username, &expiresAt, &permNames, &s.Rank)
 
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
@@ -81,6 +88,8 @@ func (a *API) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, "could not verify session")
 			return
 		}
+
+		s.Perms = perm.NewSet(permNames)
 
 		if time.Now().After(expiresAt) {
 			// Clean up on sight rather than waiting for a sweep job.
@@ -122,29 +131,57 @@ func bearerToken(r *http.Request) (string, bool) {
 	return token, token != ""
 }
 
-// requireRole wraps requireAuth and additionally demands a minimum role.
-//
-// The role is read fresh from the database on every request rather than
-// baked into the session, so a demotion takes effect immediately instead of
-// waiting 30 days for the token to expire.
-func (a *API) requireRole(min perm.Role, next http.HandlerFunc) http.HandlerFunc {
+// userPermsSQL selects, for the account u, the switches it holds and its
+// rank, as two columns. Shared by requireAuth and anything that needs the
+// same answer for another account (subjectRank).
+const userPermsSQL = `
+	COALESCE((SELECT array_agg(DISTINCT p)
+	            FROM effective_groups eg
+	            JOIN perm_groups g ON g.id = eg.group_id
+	           CROSS JOIN unnest(g.permissions) AS p
+	           WHERE eg.user_id = u.id), '{}'::text[]),
+	COALESCE((SELECT max(g.position)
+	            FROM effective_groups eg
+	            JOIN perm_groups g ON g.id = eg.group_id
+	           WHERE eg.user_id = u.id), 0)`
+
+// requirePerm wraps requireAuth and additionally demands a permission
+// switch. Holders of Administrator pass every check.
+func (a *API) requirePerm(need perm.Perm, next http.HandlerFunc) http.HandlerFunc {
 	return a.requireAuth(func(w http.ResponseWriter, r *http.Request) {
-		session := sessionFrom(r.Context())
-
-		role, err := perm.Parse(session.Role)
-		if err != nil {
-			slog.Error("session carries an unknown role", "role", session.Role)
-			writeError(w, http.StatusInternalServerError, "could not check permissions")
-			return
-		}
-
-		if !perm.AtLeast(role, min) {
+		if !sessionFrom(r.Context()).Perms.Has(need) {
 			// 403 rather than 404: the caller is authenticated and we are
 			// not hiding the route's existence, only refusing the action.
 			writeError(w, http.StatusForbidden, "insufficient permissions")
 			return
 		}
-
 		next(w, r)
 	})
+}
+
+// requireStaff demands any permission switch at all: the line between
+// ordinary accounts and power users.
+func (a *API) requireStaff(next http.HandlerFunc) http.HandlerFunc {
+	return a.requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		if !sessionFrom(r.Context()).Perms.Staff() {
+			writeError(w, http.StatusForbidden, "insufficient permissions")
+			return
+		}
+		next(w, r)
+	})
+}
+
+// subjectRank returns another account's rank, or pgx.ErrNoRows when it
+// does not exist or is deleted. tx may be the pool or a transaction.
+func subjectRank(ctx context.Context, q interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, userID string) (int, error) {
+	var names []string
+	var rank int
+	err := q.QueryRow(ctx,
+		`SELECT `+userPermsSQL+`
+		   FROM users u WHERE u.id = $1 AND u.deleted_at IS NULL`,
+		userID,
+	).Scan(&names, &rank)
+	return rank, err
 }
