@@ -1058,6 +1058,14 @@ and asks LiveKit who is in each voice room (`ListParticipants`) rather
 than checking every account against every room. A change to one
 account's groups uses the per-account path, as a role change did.
 
+**Clients keep an event socket.** `GET /ws` with no channel is a
+socket for server-wide events only (perms_changed, channel_changed,
+access_changed, channel_deleted, user_purged). Found on Docker
+2026-10-31: losing a group closed staff's only socket, so the re-add
+never arrived and the channel list stayed stale until a reload. The
+debug client opens one at sign-in and reconnects it; channel sockets
+skip those event types while it is up.
+
 ## Build order
 
 1. ✅ Server skeleton, auth, one text channel

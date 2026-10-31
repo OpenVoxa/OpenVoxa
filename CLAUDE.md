@@ -179,6 +179,9 @@ _Last updated: 2026-10-31, step 12 (permission groups) built; awaiting Docker te
      `showUsers()`, `newGroup()`, `editGroup()`, `deleteGroup()`,
      `addToGroup()`, `removeFromGroup()`, `mkChannel()`, `setAccess()`.
      No settings UI yet (real client).
+     Event socket (`/ws` without channel) added after D3 on Docker:
+     server-wide events reach a client with no channel open.
+     Docker: D1, D2 passed; D3 retest next (then D4 voice, D5 rank).
   4. Opt-in history sharing (Ryan wants it; see decisions.md Open items).
   5. Local storage encryption (blocked on recovery keys).
 - Other open items (revoked-device removal, recovery keys, etc.) live in
