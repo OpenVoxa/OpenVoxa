@@ -959,8 +959,13 @@ reconcile removes duplicates of its own device ID only.
      a normal event and ryan removed it (6); the new device was added
      automatically after publishing key packages (7). One commit per
      change, both sides in sync, messages both ways
-   - 🔶 Join/leave notices built 2026-10-31 (`groups.onMembership`,
-     `GET /channels/{id}/mls/device-names`); not yet verified
+   - ✅ Join/leave notices (`groups.onMembership`,
+     `GET /channels/{id}/mls/device-names`). Verified on Docker
+     2026-10-31 (ryan + staff + an incognito ryan device): removal and
+     re-add named on the committer (epochs 8, 9); staff added the new
+     device (10) and removed it after revocation, marked revoked (11);
+     ryan's main device, offline throughout, announced both on
+     reconnecting, credited to staff
    - ⬜ External join and stuck-group reset
 12. ⬜ Custom permission groups replacing the fixed roles
 13. ⬜ The real client: `client-web`, `client-desktop`
