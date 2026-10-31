@@ -1389,9 +1389,7 @@ async function connect() {
     $("body").disabled = false;
     $("send").disabled = false;
     $("attach").disabled = false;
-    // The server fetches and stores GIFs itself, so it refuses them in
-    // encrypted channels; the button says so before a click does.
-    if ($("gif")) $("gif").disabled = !gifEnabled || currentChannelEncrypted;
+    if ($("gif")) $("gif").disabled = !gifEnabled;
   };
 
   socket.onclose = () => {

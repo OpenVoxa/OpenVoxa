@@ -216,13 +216,15 @@ func (a *API) attachGif(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var (
-		minPost   string
-		encrypted bool
-	)
+	// Allowed in encrypted channels too, deliberately. A GIF from the
+	// provider is public content the server fetched itself, so storing it
+	// in the clear reveals which public image was picked, not anything a
+	// user wrote or uploaded. Files users upload are a different thing
+	// and are encrypted by the client. See decisions.md.
+	var minPost string
 	err = a.pool.QueryRow(r.Context(),
-		`SELECT min_role_post, encrypted FROM channels WHERE id = $1`, channelID,
-	).Scan(&minPost, &encrypted)
+		`SELECT min_role_post FROM channels WHERE id = $1`, channelID,
+	).Scan(&minPost)
 
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
@@ -237,16 +239,6 @@ func (a *API) attachGif(w http.ResponseWriter, r *http.Request) {
 	postRole, err := perm.Parse(minPost)
 	if err != nil || !perm.AtLeast(role, postRole) {
 		writeError(w, http.StatusForbidden, "you cannot post in this channel")
-		return
-	}
-
-	// The server fetches and stores the GIF itself, so it would hold the
-	// chosen image in the clear in a channel that promises it cannot read
-	// content. Refused until the picker can hand the bytes to the client
-	// for encryption; even then the server proxies the search and sees
-	// the query, which is recorded in decisions.md.
-	if encrypted {
-		writeError(w, http.StatusBadRequest, "GIFs are not available in encrypted channels yet")
 		return
 	}
 

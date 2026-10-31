@@ -601,11 +601,17 @@ queue, because two decryptions running at once each start from the same
 saved group state and the later save throws away the earlier one's
 ratchet progress.
 
-**Encrypted channels must not ask the server to look at content.** Two
-features did: link previews (the server fetches the URL, so it would
-learn every link) and the GIF picker (the server downloads and stores
-the chosen GIF in the clear). Previews are skipped in encrypted channels
-and the server refuses GIFs there.
+**Encrypted channels must not ask the server to look at content.** Link
+previews did: the server fetches the URL, so it would learn every link
+posted. Previews are skipped in encrypted channels.
+
+**Provider GIFs are allowed in encrypted channels, unencrypted.** A GIF
+from the picker is public content the server fetched itself; storing it
+in the clear tells the server which public image was picked, not
+anything a user wrote or uploaded. The protection that matters there is
+that users never contact the provider, which still holds. A `.gif` a
+user uploads from their own device is an attachment like any other and
+is encrypted. Decided by Ryan, 2026-10-30.
 
 **`go mod tidy` silently raises the `go` directive.** Running it with a
 newer local toolchain than the Dockerfile's base image rewrites `go.mod`
@@ -683,10 +689,6 @@ the Dockerfile's Go version at or above the directive.
       dedup.
 - [ ] Encrypted attachment sizes are visible to the server. Padding to
       size buckets would blur them at some storage cost.
-- [ ] GIFs in encrypted channels: the client could fetch the proxied GIF
-      and upload it encrypted, but the server still proxies the search
-      and would see the query and the pick. Decide whether that is
-      acceptable before re-enabling.
 - [ ] The local plaintext archive is deleted per message on deletion
       events, but a message removed by retention while not on screen
       stays in IndexedDB. Needs timestamps stored with entries and a
