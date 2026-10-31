@@ -180,6 +180,56 @@ func (h *Hub) DisconnectUser(userID string) int {
 	return len(doomed)
 }
 
+// UserChannels lists the channels a user has a connection open to.
+func (h *Hub) UserChannels(userID string) []string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	out := make([]string, 0)
+	for id, subs := range h.channels {
+		for c := range subs {
+			if c.UserID == userID {
+				out = append(out, id)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// DisconnectUserFrom closes a user's connections to one channel and
+// reports how many it closed. Their other connections stay up.
+//
+// For a revocation narrower than a ban: a demoted account loses some
+// channels and keeps the rest, so closing everything would be wrong in
+// the other direction.
+func (h *Hub) DisconnectUserFrom(userID, channelID string) int {
+	h.mu.Lock()
+
+	doomed := make([]*Client, 0)
+	if subs, ok := h.channels[channelID]; ok {
+		for c := range subs {
+			if c.UserID == userID {
+				doomed = append(doomed, c)
+			}
+		}
+		for _, c := range doomed {
+			delete(subs, c)
+			delete(h.all, c)
+		}
+		if len(subs) == 0 {
+			delete(h.channels, channelID)
+		}
+	}
+
+	h.mu.Unlock()
+
+	for _, c := range doomed {
+		c.close()
+	}
+	return len(doomed)
+}
+
 // SubscriberCount is used by the health endpoint and tests.
 func (h *Hub) SubscriberCount(channelID string) int {
 	h.mu.RLock()
