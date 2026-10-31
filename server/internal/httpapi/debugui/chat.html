@@ -761,11 +761,14 @@ function releaseNotices() {
   for (const text of held) line("sys", text);
 }
 
-function describeDevice(d) {
+// The revoked flag is the device's status now, not at the time of the
+// change, so it is only shown when the device is leaving: a device caught
+// up on after it was revoked did not join as a revoked one.
+function describeDevice(d, leaving = false) {
   if (session && d.deviceId === session.status.deviceId) return "this device";
   const owner = d.username ? `${esc(d.username)}'s device` : "an unknown device";
   const label = d.label ? ` "${esc(d.label)}"` : "";
-  return `${owner}${label} [${short(d.deviceId)}]${d.revoked ? " (revoked)" : ""}`;
+  return `${owner}${label} [${short(d.deviceId)}]${leaving && d.revoked ? " (revoked)" : ""}`;
 }
 
 function describeCommitter(change) {
@@ -786,7 +789,7 @@ function onMembershipChange(change) {
       `(added by ${by}, epoch ${change.epoch})`);
   }
   for (const d of change.left) {
-    noticeLine(`${where}${describeDevice(d)} was removed from the encryption group ` +
+    noticeLine(`${where}${describeDevice(d, true)} was removed from the encryption group ` +
       `(by ${by}, epoch ${change.epoch})`);
   }
 }
