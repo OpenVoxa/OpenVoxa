@@ -49,7 +49,9 @@ export type { ApiCall, IdentityStatus } from "./identity.js";
 export type {
   AddResult,
   AutoEvent,
+  DeviceInfo,
   GroupStatus,
+  MembershipChange,
   OpenResult,
   ReconcileResult,
 } from "./groups.js";
