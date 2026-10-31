@@ -113,25 +113,20 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
 
 ## Current state (update every session)
 
-_Last updated: 2026-10-31, after step 11 client reconcile verified on Docker._
+_Last updated: 2026-10-31, after step 11 triggers built (step 5, unverified)._
 
 - Build-order step 9 (MLS for text) is functionally working on Docker:
   messages in an encrypted channel are ciphertext in Postgres (only the
   MLS framing header — group ID, epoch — is in the clear); plaintext
   channels show plaintext. Two-party test passed (ryan + staff): welcome
   path works, pre-join messages unreadable, messages flow both ways.
-- Done: device identity + key packages; group create/join/catch-up;
-  epoch-ordered commits with rebase; encrypted text end to end; own sent
-  plaintext kept locally (MLS senders can't decrypt their own messages).
-- Encrypted attachments verified on Docker: per-file AES-256-GCM in
-  `client-core/src/attachments.ts`, key carried in a JSON envelope inside
-  the MLS message; server stores ciphertext as `encrypted` / octet-stream
-  regardless of what the client sends. Link previews skipped in encrypted
-  channels. Giphy GIFs stay unencrypted there by Ryan's decision (public
-  content); user-uploaded .gif files are encrypted.
-- Local plaintext archive (IndexedDB) so messages survive reloads: MLS
-  keys are single-use. Inbound messages are processed through one queue.
-- Blob storage on Docker is a bind mount: `/mnt/openvoxa-blobs`.
+- Done and verified on Docker: device identity + key packages; group
+  create/join/catch-up; epoch-ordered commits with rebase; encrypted text
+  and attachments (per-file AES-256-GCM, key inside the MLS message;
+  Giphy GIFs stay unencrypted by Ryan's decision); local plaintext
+  archive in IndexedDB (MLS keys are single-use; own sent plaintext kept
+  since senders can't decrypt their own). Blob storage on Docker is a
+  bind mount: `/mnt/openvoxa-blobs`.
 - Media encryption (build-order step 10) verified on Docker 2026-10-30:
   voice channels have their own MLS group; `groups.mediaKey()` feeds
   LiveKit E2EE at key slot epoch mod 16; outsiders refused; audio and
@@ -144,14 +139,16 @@ _Last updated: 2026-10-31, after step 11 client reconcile verified on Docker._
   1. Automatic membership (step 11): server side done and verified
      (`access.go`, `GET /channels/{id}/mls/allowed-devices`, welcome
      check, channel-scoped claims; committing needs view, not post).
-     Client `groups.reconcile()` done and verified on Docker (step 4),
-     run by hand from the console for now. Next: triggers (step 5),
-     join/leave notices.
-     Group ops are now serialised per channel; commit keys are wiped
-     only after the server accepts (decisions.md Implementation notes). ts-mls external commit is proven in Node (step 0 done,
-     decisions.md Implementation notes); wire it in as the
-     no-one-online path last. Never pass `resync = true` (hangs).
-     Removes and adds go in separate commits (decisions.md).
+     Client `groups.reconcile()` done and verified on Docker (step 4).
+     Triggers (step 5) built, NOT yet verified on Docker:
+     `groups.reconcileSoon()` (debounced, staggered by leaf; decisions.md
+     Implementation notes), server `access_changed` event, demotion
+     closes sockets to lost channels. Next: verify step 5, then
+     join/leave notices (step 6).
+     Group ops serialised per channel; commit keys wiped only after the
+     server accepts; removes and adds in separate commits. External
+     commit proven in Node; wire it in last as the no-one-online path.
+     Never pass `resync = true` (hangs). All in decisions.md Impl. notes.
   2. Multi-party testing.
   3. Custom permission groups (step 12).
   4. Opt-in history sharing (Ryan wants it; see decisions.md Open items).
