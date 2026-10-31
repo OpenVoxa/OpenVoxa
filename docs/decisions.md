@@ -801,6 +801,21 @@ device registration, because a device is not addable until it has
 packages; it also re-adds a device that was skipped for running dry.
 Temporary bans expiring send nothing; the next hint picks them up.
 
+**Join and leave notices come from the group, names from the server.**
+Each device diffs the member identities in its own state before and
+after every commit it makes or applies, including ones it catches up on
+after being offline, so a device the server slips in is seen by every
+member regardless of what the server reports. The device ID in each
+notice is that ground truth; the account name and label next to it come
+from the allowed list (cached) or `GET /channels/{id}/mls/device-names`,
+which needs view access and resolves any device ID, revoked included,
+because a device that just left is usually one no longer allowed.
+Leavers are always looked up fresh, so a revocation shows. The notice
+names the committer from the handshake log's `sender_device_id`, which
+is also the server's word. Notices are emitted only after the new state
+is persisted, and in order through one queue. The debug page holds them
+while a channel's history loads, since history clears the log.
+
 **External commit works in ts-mls 1.6.2.** Proven in Node on
 2026-10-30 (throwaway script, not committed), with states round-tripped
 through `encodeGroupState` as the browser does:
@@ -944,7 +959,8 @@ reconcile removes duplicates of its own device ID only.
      a normal event and ryan removed it (6); the new device was added
      automatically after publishing key packages (7). One commit per
      change, both sides in sync, messages both ways
-   - ⬜ Join/leave notices
+   - 🔶 Join/leave notices built 2026-10-31 (`groups.onMembership`,
+     `GET /channels/{id}/mls/device-names`); not yet verified
    - ⬜ External join and stuck-group reset
 12. ⬜ Custom permission groups replacing the fixed roles
 13. ⬜ The real client: `client-web`, `client-desktop`
