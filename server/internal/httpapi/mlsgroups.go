@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -389,6 +390,92 @@ func (a *API) listAllowedDevices(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, devices)
+}
+
+// maxDeviceLookup bounds one names lookup. A group's notices name at most
+// the devices one commit added or removed, plus who committed.
+const maxDeviceLookup = 100
+
+// deviceName is who a device belongs to, for join and leave notices.
+type deviceName struct {
+	DeviceID string `json:"device_id"`
+	UserID   string `json:"user_id"`
+	Username string `json:"username"`
+	Label    string `json:"label"`
+	Revoked  bool   `json:"revoked"`
+}
+
+// listDeviceNames resolves device IDs to account and label, so a member
+// can announce "staff's laptop was removed" for a device that is no
+// longer on the allowed list (which is usually why it was removed).
+//
+// Requires view access to the channel, like every MLS endpoint. Any
+// device ID resolves, revoked ones included: the caller already holds
+// the IDs, from the group's own ratchet tree, and the notice is the
+// point. What is announced as authoritative is the device ID itself,
+// which comes from the MLS credential; the name is the server's claim
+// about it and the client shows both.
+func (a *API) listDeviceNames(w http.ResponseWriter, r *http.Request) {
+	channelID := r.PathValue("id")
+
+	if _, ok := a.requireChannelAccess(w, r, channelID); !ok {
+		return
+	}
+
+	ids := make([]string, 0)
+	for _, id := range strings.Split(r.URL.Query().Get("ids"), ",") {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if !uuidPattern.MatchString(id) {
+			writeError(w, http.StatusBadRequest, "ids must be UUIDs")
+			return
+		}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		writeJSON(w, http.StatusOK, []deviceName{})
+		return
+	}
+	if len(ids) > maxDeviceLookup {
+		writeError(w, http.StatusBadRequest, "too many ids")
+		return
+	}
+
+	rows, err := a.pool.Query(r.Context(),
+		`SELECT d.id::text, u.id::text,
+		        CASE WHEN u.deleted_at IS NULL THEN u.username ELSE '[deleted]' END,
+		        d.label, d.revoked_at IS NOT NULL
+		   FROM devices d
+		   JOIN users u ON u.id = d.user_id
+		  WHERE d.id::text = ANY($1::text[])`,
+		ids,
+	)
+	if err != nil {
+		slog.Error("looking up device names", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not look up devices")
+		return
+	}
+	defer rows.Close()
+
+	out := make([]deviceName, 0, len(ids))
+	for rows.Next() {
+		var d deviceName
+		if err := rows.Scan(&d.DeviceID, &d.UserID, &d.Username, &d.Label, &d.Revoked); err != nil {
+			slog.Error("scanning device name", "err", err)
+			writeError(w, http.StatusInternalServerError, "could not look up devices")
+			return
+		}
+		out = append(out, d)
+	}
+	if err := rows.Err(); err != nil {
+		slog.Error("iterating device names", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not look up devices")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, out)
 }
 
 type handshakeEntry struct {
