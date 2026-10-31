@@ -1087,9 +1087,19 @@ reconcile removes duplicates of its own device ID only.
 - [ ] Recovery keys do not exist. Without one, a forgotten password means
       permanently unreadable history, because the server holds only
       ciphertext. The key has to be generated at signup and shown once.
-- [ ] Removing a revoked device from the groups it belongs to is
-      client-side work. The server cannot do it, because it cannot
-      produce a commit.
+- [x] Removing a revoked device from the groups it belongs to is
+      client-side work. Done: reconciliation removes it (step 11).
+- [ ] Inactive devices expire after 30 days. Decided by Ryan, 2026-10-31,
+      deferred so functionality comes first. A device whose keys are gone
+      (a closed private window, a wiped browser) stays active forever, and
+      members keep adding it and spending its key packages, last resort
+      included. Plan: update `devices.last_seen_at` on group activity and
+      key package publishing (nothing updates it today), revoke devices
+      idle 30 days in the existing sweep (revoking already makes members
+      remove them), and have a client that finds itself revoked register
+      a new device and rejoin. Same idea as Signal unlinking idle devices.
+      Until then: use "Forget this device" before closing a private
+      window.
 - [ ] Attachments in PLAINTEXT channels are still content-addressed and
       deduplicated across users, which reveals that someone else uploaded
       an identical file. Accepted there; encrypted channels no longer
