@@ -372,6 +372,27 @@ Every device joining or leaving is shown in the channel ("staff added a
 device", "ryan's laptop was removed"). That is the mitigation for the
 tension below and is part of the feature, not polish.
 
+**A group nobody permitted can commit to is replaced, not rescued.**
+Decided by Ryan, 2026-10-31. If every remaining member loses access, no
+one who is allowed in holds the group's secrets, and only a member can
+commit. In order:
+
+1. External join first. If the stored GroupInfo matches the epoch the
+   server has on record, the next permitted device joins from it, and
+   its own reconciliation then removes the members without access.
+   Nothing is lost.
+2. Otherwise a fresh group. When there is no GroupInfo, or it is from an
+   older epoch than the server's record (the server tracks the epoch for
+   commit ordering, so it can tell), the server lets a permitted device
+   start a new group for the channel, exactly as a first-time create.
+   The old group's handshake log and GroupInfo are dropped.
+
+What a reset costs: devices see no messages from before it, which is the
+same rule as joining any encrypted channel today, and the reset is
+announced in the channel like any membership change. A hostile server
+could force one, but that gains it nothing it cannot already do by
+granting itself access (see Known tensions).
+
 The "Add everyone" and "Add everyone to voice" buttons in the debug page
 are test scaffolding for this and go away when reconciliation exists.
 
@@ -581,7 +602,7 @@ request and no error anywhere obvious. GIF and moderation controls are now
 attached through a helper that warns rather than throws. This disappears
 with `client-web`, where components fail independently.
 
-**Nine ts-mls API details were observed rather than documented.** Each
+**Ten ts-mls API details were observed rather than documented.** Each
 was written against the README first and was wrong. The pattern, not any
 individual case, is the useful record: this library's documentation
 describes what the functions are for, not what they return or in what
@@ -625,6 +646,13 @@ The details themselves:
   fresh key package has a new one; the miss becomes leaf index -0.5 and
   the tree walk never ends. Never pass `resync = true`. See the external
   commit note below for the replacement.
+- A removed device learns it was removed from `groupActiveState`
+  (`{kind: "removedFromGroup"}` after processing the commit) - except
+  when the same commit also adds someone who lands in its old leaf. Then
+  it reports `active` and believes the newcomer's leaf is its own. It
+  still cannot read anything (it lacks the new epoch's secrets) and its
+  messages are rejected, so nothing leaks, but it cannot tell it was
+  removed. See the removal note below.
 
 **The Docker build context is the repository root.** The server image
 bundles client-core alongside the Go binary, so the Node stage and the Go
@@ -760,6 +788,25 @@ through `encodeGroupState` as the browser does:
 - Removal is `{proposalType: "remove", remove: {removed: leafIndex}}` in
   `createCommit`'s `extraProposals`, where the leaf index is the tree
   array index divided by two, found by matching the credential identity.
+
+**Removes and adds go in separate commits.** Observed in Node,
+2026-10-30, ts-mls 1.6.2:
+
+- A combined add + remove commit works for every remaining member, but
+  an add fills the lowest blank leaf, which is often the one just freed.
+  The removed device then misreads its own state (see the ts-mls list
+  above). So reconciliation commits removals first and additions in a
+  second commit.
+- As a second check, after any commit a client confirms the leaf at its
+  own index still carries its own signature key; if not, it treats
+  itself as removed. That catches the case whatever caused it.
+- A member cannot remove itself ("Commit cannot contain a remove
+  proposal removing committer"). A device that loses access is removed
+  by another member's client, never by its own.
+- Removing a blank or out-of-range leaf is refused ("Tried to remove
+  empty leaf node"), so a stale leaf index fails loudly rather than
+  removing the wrong device - provided the index is looked up in the
+  same state the commit is built on.
 
 ## Build order
 
