@@ -47,7 +47,6 @@ export {
 export type { Envelope, EncryptedFile, FileKey } from "./attachments.js";
 export type { ApiCall, IdentityStatus } from "./identity.js";
 export type {
-  AddResult,
   AutoEvent,
   DeviceInfo,
   GroupStatus,
