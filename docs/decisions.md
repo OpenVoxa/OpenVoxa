@@ -822,6 +822,10 @@ would replace it.
       member's identity. MLS gives per-sender keys for text; per-sender
       media keys (exporter context including the leaf) would close this
       at the cost of one key per participant.
+- [ ] The commit endpoint does not yet check that each welcome's
+      recipient device belongs to a user with access to the channel. The
+      membership decision says the server enforces this; it must before
+      reconciliation ships (step 11).
 - [ ] Group membership is still manual in the debug page ("Add
       everyone", "Add everyone to voice"). Policy decided (membership
       follows access, see Encryption); build-order step 11.
