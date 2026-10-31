@@ -22,6 +22,16 @@ import type { ApiCall } from "./identity.js";
 /** How many times to rebase a commit that lost an epoch race. */
 const MAX_COMMIT_ATTEMPTS = 4;
 
+/** Exporter label for voice and screen-share keys. Changing it changes every key. */
+const MEDIA_KEY_LABEL = "OpenVoxa media key v1";
+
+/**
+ * 32 bytes of input keying material. LiveKit runs it through HKDF to get
+ * the actual AES-GCM frame key, so this only needs to be uniformly random
+ * and at least as long as the key it feeds.
+ */
+const MEDIA_KEY_BYTES = 32;
+
 export type GroupStatus =
   | "ready"
   | "created"
@@ -165,6 +175,32 @@ export class Groups {
   epoch(channelId: string): number | null {
     const state = this.#states.get(channelId);
     return state ? epochOf(state) : null;
+  }
+
+  /**
+   * The media encryption key for this channel's current epoch.
+   *
+   * Voice and screen share are keyed from the same MLS group as the
+   * channel, so a membership change rotates the media key in the same
+   * step: someone removed cannot derive the next epoch's key, and someone
+   * added cannot derive an earlier one. Every member derives the same
+   * bytes independently; the key is never sent anywhere.
+   *
+   * The label names the use and the version, so changing how media keys
+   * are derived later produces different keys rather than ambiguity. The
+   * channel ID goes in the exporter context as well, as defence in depth
+   * against two uses of one group ever producing the same key.
+   */
+  async mediaKey(channelId: string): Promise<{ epoch: number; key: Uint8Array }> {
+    const state = this.#states.get(channelId);
+    if (!state) throw new Error(`groups: not a member of ${channelId}`);
+    const key = await this.#mls.exportSecret(
+      state,
+      MEDIA_KEY_LABEL,
+      MEDIA_KEY_BYTES,
+      new TextEncoder().encode(channelId),
+    );
+    return { epoch: epochOf(state), key };
   }
 
   isMember(channelId: string): boolean {

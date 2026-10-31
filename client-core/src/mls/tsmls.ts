@@ -449,6 +449,7 @@ export class TsMlsProvider implements MlsProvider {
     state: GroupState,
     label: string,
     length: number,
+    context: Uint8Array = new Uint8Array(),
   ): Promise<Uint8Array> {
     const impl = this.#require();
 
@@ -461,13 +462,13 @@ export class TsMlsProvider implements MlsProvider {
     // group state, which is why passing the state silently failed.
     const group = state as { keySchedule: { exporterSecret: Uint8Array } };
 
-    // Context is empty for now. When media keys are derived it carries
-    // the channel and epoch, so two uses of the same group cannot
-    // produce the same key.
+    // Context binds the output to its use (media keys pass the channel
+    // ID). The epoch needs no context: each epoch has its own exporter
+    // secret.
     return tsMls.mlsExporter(
       group.keySchedule.exporterSecret,
       label,
-      new Uint8Array(),
+      context,
       length,
       impl,
     ) as Promise<Uint8Array>;

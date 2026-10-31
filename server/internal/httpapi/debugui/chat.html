@@ -12,7 +12,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OpenVoxa debug client</title>
-<script src="https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.umd.min.js"></script>
+<!-- Served from our own origin, pinned; see client-core/build.mjs. -->
+<script src="livekit-client.umd.js"></script>
 <script src="core.js"></script>
 <style>
   :root {
@@ -170,6 +171,8 @@
   <button id="joinVoice" disabled>Join</button>
   <button id="leaveVoice" disabled>Leave</button>
   <button id="muteToggle" disabled>Mute</button>
+  <button id="inviteVoice" disabled>Add everyone to voice</button>
+  <div id="voiceCrypto" class="ptt-hint"></div>
   <label style="margin-top:.5rem">
     <input type="checkbox" id="pttMode"> push-to-talk
     <span class="ptt-hint">(hold Space while this page has focus)</span>
@@ -639,9 +642,9 @@ async function openGroup(channelId) {
   }
 }
 
-/** Add every other account's devices to this channel's group. */
-async function inviteEveryone() {
-  if (!session || !session.groups.isMember(currentChannel)) {
+/** Add every other account's devices to a channel's group. */
+async function inviteEveryone(channelId = currentChannel) {
+  if (!session || !session.groups.isMember(channelId)) {
     return line("err", "not a member of this group");
   }
 
@@ -652,7 +655,7 @@ async function inviteEveryone() {
   if (!others.length) return line("sys", "no other accounts to add");
 
   try {
-    const r = await session.groups.addMembers(currentChannel, others);
+    const r = await session.groups.addMembers(channelId, others);
     const list = (ids) => ids.map((id) => esc(names.get(id) || id)).join(", ");
     if (r.added.length) {
       line("sys", `added ${list(r.added)}; group is now at epoch ${r.epoch}`);
@@ -1538,7 +1541,10 @@ function renderParticipants() {
       (pub) => pub.track && !pub.isMuted);
     li.textContent =
       `${p.name || p.identity}${p === room.localParticipant ? " (you)" : ""}` +
-      `${muted ? " - muted" : ""}`;
+      `${muted ? " - muted" : ""}` +
+      // isEncrypted is LiveKit's own view: true once every track this
+      // participant publishes goes through the frame encryptor.
+      `${p.isEncrypted ? " [encrypted]" : " [NOT ENCRYPTED]"}`;
     if (p.isSpeaking) li.className = "speaking";
     ul.appendChild(li);
   }
@@ -1837,9 +1843,153 @@ $("stopShare").onclick = () => stopShare();
 
 // ------------------------------------------------------------------ voice
 
+// ------------------------------------------------------ voice encryption
+//
+// Voice and screen share are always end to end encrypted (decisions.md,
+// feature decision 5). Each voice channel has its own MLS group, exactly
+// like an encrypted text channel, and the frame key comes from that
+// group's exporter secret. LiveKit encrypts every audio and video frame in
+// a worker before it leaves the browser, so the SFU relays ciphertext.
+//
+// Key rotation. Every commit starts a new epoch with a new key, but the
+// members do not all process a commit at the same instant. So keys live
+// in a ring: epoch N goes in slot N mod 16 and each frame says which slot
+// encrypted it. A member who has not caught up yet still has the old key,
+// and briefly cannot read someone who has moved on; it catches up as soon
+// as it notices (someone joining, a decryption error, or the poll).
+
+const MEDIA_KEYRING = 16;
+
+class MlsMediaKeys extends LivekitClient.BaseKeyProvider {
+  constructor() {
+    super({
+      sharedKey: true,       // one group key, not one per participant
+      ratchetWindowSize: 0,  // never ratchet: keys come only from MLS
+      failureTolerance: -1,  // a failed frame never invalidates a key
+      keyringSize: MEDIA_KEYRING,
+    });
+  }
+
+  async setEpochKey(epoch, bytes) {
+    // HKDF input material; LiveKit derives the AES-GCM frame key from it.
+    const material = await crypto.subtle.importKey(
+      "raw", bytes, "HKDF", false, ["deriveBits", "deriveKey"]);
+    // Protected in LiveKit's TypeScript, callable from a subclass. It is
+    // the only way to set a key at a chosen slot.
+    this.onSetEncryptionKey(material, undefined, epoch % MEDIA_KEYRING);
+  }
+}
+
+let voiceChannelId = null;
+let voiceKeys = null;
+let voiceKeyEpoch = null;
+let voiceWorker = null;
+let voicePoll = null;
+let voiceLastError = 0;
+
+// Every group operation on the voice channel goes through this chain, so
+// a poll, a join event and an "add everyone" never run against the same
+// group state at once (the later save would discard the earlier one).
+let voiceChain = Promise.resolve();
+function voiceGroupTask(fn) {
+  const run = voiceChain.then(fn);
+  voiceChain = run.catch(() => {});
+  return run;
+}
+
+function voiceCrypto(text) {
+  const el = $("voiceCrypto");
+  if (el) el.textContent = text;
+}
+
+/** Apply any pending commits and load the key for the current epoch. */
+function syncVoiceKey() {
+  return voiceGroupTask(async () => {
+    if (!voiceChannelId || !voiceKeys) return;
+    await session.groups.catchUp(voiceChannelId);
+    const { epoch, key } = await session.groups.mediaKey(voiceChannelId);
+    try {
+      if (epoch === voiceKeyEpoch) return;
+      await voiceKeys.setEpochKey(epoch, key);
+    } finally {
+      key.fill(0);
+    }
+    const first = voiceKeyEpoch === null;
+    voiceKeyEpoch = epoch;
+    voiceCrypto(`media encrypted with the epoch ${epoch} group key`);
+    if (!first) line("sys", `voice key rotated (epoch ${epoch})`);
+  });
+}
+
+function stopVoiceCrypto() {
+  clearInterval(voicePoll);
+  voicePoll = null;
+  voiceWorker?.terminate(); // LiveKit leaves the worker to its owner
+  voiceWorker = null;
+  voiceKeys = null;
+  voiceKeyEpoch = null;
+  voiceChannelId = null;
+  voiceCrypto("");
+  if ($("inviteVoice")) $("inviteVoice").disabled = true;
+}
+
+/**
+ * Get this device into the voice channel's group and load its key.
+ * Returns false, with the reason shown, if it cannot.
+ */
+async function startVoiceCrypto(channelId) {
+  if (!LivekitClient.isE2EESupported()) {
+    line("err", "this browser cannot encrypt media, and voice is always encrypted");
+    return false;
+  }
+  if (!session) {
+    line("err", "no crypto session; sign in again");
+    return false;
+  }
+
+  const result = await session.groups.open(channelId);
+  if (!session.groups.isMember(channelId)) {
+    line("err", esc(result.status === "awaiting_invite"
+      ? "this device is not in this voice channel's encryption group yet. " +
+        "Ask someone in the call to click \"Add everyone to voice\"."
+      : result.detail || "could not open the voice channel's encryption group"));
+    return false;
+  }
+  if (result.status === "created") {
+    line("sys", "created this voice channel's encryption group");
+  }
+
+  voiceChannelId = channelId;
+  voiceKeys = new MlsMediaKeys();
+  await syncVoiceKey();
+  if (voiceKeyEpoch === null) {
+    stopVoiceCrypto();
+    line("err", "could not derive the voice key");
+    return false;
+  }
+
+  // Commit notifications only reach the text channel this page is
+  // connected to, so the voice group is also polled while in a call.
+  // Cheap: an empty handshake list when nothing changed.
+  voicePoll = setInterval(() =>
+    syncVoiceKey().catch((e) => line("err", `voice key: ${esc(e.message)}`)), 5000);
+  return true;
+}
+
 async function joinVoice() {
   const opt = $("voiceChannel").selectedOptions[0];
-  const data = await call(`/api/v1/channels/${opt.value}/voice-token`, { method: "POST" });
+
+  // Keys first. Joining unencrypted and switching later would put the
+  // first moments of audio through the SFU in the clear.
+  if (!(await startVoiceCrypto(opt.value))) return;
+
+  let data;
+  try {
+    data = await call(`/api/v1/channels/${opt.value}/voice-token`, { method: "POST" });
+  } catch (e) {
+    stopVoiceCrypto();
+    throw e;
+  }
 
   // adaptiveStream picks a simulcast layer from how large the video
   // element is on screen, so shrinking the window downgrades the stream.
@@ -1847,10 +1997,36 @@ async function joinVoice() {
   // It is a Room-level setting, so the checkbox only takes effect here,
   // at join time.
   const pinned = $("pinQuality").checked;
-  room = new LivekitClient.Room({ adaptiveStream: !pinned, dynacast: true });
+  // Same origin, as browsers require for workers. Classic script, not a
+  // module.
+  voiceWorker = new Worker("livekit-client.e2ee.worker.js");
+  room = new LivekitClient.Room({
+    adaptiveStream: !pinned,
+    dynacast: true,
+    encryption: { keyProvider: voiceKeys, worker: voiceWorker },
+  });
+  // Before connect, so nothing is ever published unencrypted.
+  await room.setE2EEEnabled(true);
 
   room
-    .on(LivekitClient.RoomEvent.ParticipantConnected, renderParticipants)
+    .on(LivekitClient.RoomEvent.ParticipantConnected, () => {
+      renderParticipants();
+      // Whoever just joined was probably just added, which moved the
+      // group to a new epoch. Pick up the new key now.
+      syncVoiceKey().catch((e) => line("err", `voice key: ${esc(e.message)}`));
+    })
+    .on(LivekitClient.RoomEvent.ParticipantEncryptionStatusChanged, renderParticipants)
+    .on(LivekitClient.RoomEvent.EncryptionError, (err, participant) => {
+      // Usually means a frame arrived under a key we do not have yet,
+      // i.e. we are behind on commits. Fires per frame, so the message
+      // is throttled; the catch-up is cheap and runs every time.
+      syncVoiceKey().catch(() => {});
+      if (Date.now() - voiceLastError > 5000) {
+        voiceLastError = Date.now();
+        line("err", `voice decryption: ${esc(err?.message || String(err))}` +
+          (participant ? ` (${esc(participant.name || participant.identity)})` : ""));
+      }
+    })
     .on(LivekitClient.RoomEvent.ParticipantDisconnected, renderParticipants)
     .on(LivekitClient.RoomEvent.ActiveSpeakersChanged, renderParticipants)
     .on(LivekitClient.RoomEvent.TrackMuted, renderParticipants)
@@ -1858,6 +2034,7 @@ async function joinVoice() {
     .on(LivekitClient.RoomEvent.Disconnected, () => {
       line("sys", "left voice");
       stopShare();
+      stopVoiceCrypto();
       room = null; micTrack = null;
       screenEls.forEach((fig) => fig.remove());
       screenEls.clear();
@@ -1890,7 +2067,14 @@ async function joinVoice() {
       }
     });
 
-  await room.connect(data.url, data.token);
+  try {
+    await room.connect(data.url, data.token);
+  } catch (e) {
+    // No Disconnected event follows a failed connect, so clean up here.
+    room = null;
+    stopVoiceCrypto();
+    throw e;
+  }
   line("sys", `joined voice: ${esc(opt.textContent)}`);
 
   if ($("pinQuality").checked) {
@@ -1925,6 +2109,7 @@ async function joinVoice() {
 
   $("joinVoice").disabled = true;
   $("leaveVoice").disabled = false;
+  if ($("inviteVoice")) $("inviteVoice").disabled = false;
   renderParticipants();
 }
 
@@ -1937,6 +2122,10 @@ async function setMuted(muted) {
 
 $("joinVoice").onclick = () => joinVoice().catch((e) => line("err", esc(e.message)));
 $("leaveVoice").onclick = () => room?.disconnect();
+on("inviteVoice", "onclick", () =>
+  voiceGroupTask(() => inviteEveryone(voiceChannelId))
+    .then(() => syncVoiceKey())
+    .catch((e) => line("err", esc(e.message))));
 $("muteToggle").onclick = () => setMuted(!micTrack?.isMuted);
 
 $("pttMode").onchange = () => setMuted($("pttMode").checked);

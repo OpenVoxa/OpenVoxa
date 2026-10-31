@@ -35,6 +35,9 @@ COPY server/ ./
 # Must land before `go build`: the embed directive reads the directory at
 # compile time, so a bundle copied in afterwards would not be included.
 COPY --from=client /client/dist/core.js ./internal/httpapi/debugui/core.js
+# LiveKit's browser bundle and its E2EE worker, served from our own origin.
+# See client-core/build.mjs for why they are not loaded from a CDN.
+COPY --from=client /client/dist/livekit-client.umd.js /client/dist/livekit-client.e2ee.worker.js ./internal/httpapi/debugui/
 
 RUN CGO_ENABLED=0 go build -o /out/openvoxa-server .
 

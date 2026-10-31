@@ -618,6 +618,49 @@ newer local toolchain than the Dockerfile's base image rewrites `go.mod`
 and the container build then fails with a confusing version error. Keep
 the Dockerfile's Go version at or above the directive.
 
+**Media keys come from the voice channel's own MLS group.** A voice
+channel gets a group exactly like an encrypted text channel. Each member
+derives the frame key with the MLS exporter (label `OpenVoxa media key
+v1`, context = channel ID, 32 bytes) and hands it to LiveKit, which runs
+it through HKDF to an AES-GCM key and encrypts every frame in a worker
+before it leaves the browser. The key is never transmitted. A membership
+change is a new epoch and therefore a new key, so removal and addition
+rotate media keys with no separate key distribution.
+
+**LiveKit key slots are epoch mod 16.** Members process a commit at
+different moments, so for a short while some encrypt under the new epoch
+and some under the old. LiveKit keeps a ring of keys and every frame
+carries the slot it was encrypted with, so both keys stay usable during
+the handover. `ExternalE2EEKeyProvider.setKey` always writes slot 0, which
+would overwrite the old key mid-handover; the client subclasses
+`BaseKeyProvider` instead. Options: `sharedKey: true`, `ratchetWindowSize:
+0` (keys come only from MLS, never from LiveKit's ratchet),
+`failureTolerance: -1` (a failed frame never marks a key invalid; with the
+default of 10 a member who is briefly behind would discard the right key).
+
+**Voice refuses to start without encryption.** Keys are loaded and
+`setE2EEEnabled(true)` is called before `connect`, so nothing is ever
+published in the clear, and a browser without insertable streams or
+`RTCRtpScriptTransform` cannot join. `room.isE2EEEnabled` reads false until
+connected (it waits for an event naming the local participant);
+`localParticipant.isE2EEEnabled` is what governs publishing and is true
+from the start.
+
+**LiveKit is served from our origin, pinned exactly.** Browsers refuse a
+Worker script from another origin, and the E2EE worker speaks a message
+protocol to the main library that changes between releases, so a floating
+CDN tag would eventually break encryption silently. Self-hosting also
+removes a third party able to serve code that sees every decrypted frame.
+`client-core/build.mjs` copies both files from `node_modules`; the
+Dockerfile puts them in `debugui/`. The worker is not terminated by
+LiveKit; the client terminates it on leave.
+
+**Voice commits are polled.** `group_advanced` only reaches subscribers of
+the text channel a socket is connected to, so a call also catches up on
+its voice group when someone joins, on any decryption error, and every 5
+seconds. Cheap at this scale; a socket subscribed to several channels
+would replace it.
+
 ## Build order
 
 1. ✅ Server skeleton, auth, one text channel
@@ -648,7 +691,14 @@ the Dockerfile's Go version at or above the directive.
      message. Verified on Docker 2026-10-30 (ryan + staff): image, mp3
      and PDF readable by the other member; stored blob is opaque data;
      server row shows `encrypted` / octet-stream
-10. ⬜ Media encryption keyed off the MLS exporter secret
+10. 🔶 Media encryption keyed off the MLS exporter secret
+   - ✅ Exporter-derived media key, verified in Node: members agree,
+     key changes per epoch and per channel
+   - ✅ LiveKit E2EE wired with epoch-indexed key slots, self-hosted
+     and pinned LiveKit 2.23.0; checked headless against the real bundle
+   - ⬜ Two-party call on Docker: audio and screen share both ways,
+     participants show `[encrypted]`, a device outside the group cannot
+     join, adding someone mid-call rotates the key without dropping audio
 11. ⬜ The real client: `client-web`, `client-desktop`
 
 ## Open items
@@ -708,7 +758,16 @@ the Dockerfile's Go version at or above the directive.
       persisting the new state is stuck: it cannot process its own commit
       from the handshake log. Recovery would be a rejoin (external commit
       or re-invite).
-- [ ] "Add everyone" does not check existing membership; clicking it
-      twice would try to add the same devices again.
+- [ ] Media frames are authenticated to the group, not to a sender. The
+      key is shared, so any member could forge frames under another
+      member's identity. MLS gives per-sender keys for text; per-sender
+      media keys (exporter context including the leaf) would close this
+      at the cost of one key per participant.
+- [ ] Voice group membership is manual ("Add everyone to voice"). The
+      real client needs a policy, probably everyone who may view the
+      voice channel, applied when they first join.
+- [ ] LiveKit's `encryption` option also turns on data channel
+      encryption. Nothing uses data channels yet; anything that does
+      later gets it for free, but must not assume the SFU can read them.
 - [ ] Unfurl endpoint is a deliberate SSRF surface. Worth naming in
       SECURITY.md so reviewers look at it first.

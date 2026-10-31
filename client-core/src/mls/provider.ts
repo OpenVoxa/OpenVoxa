@@ -108,5 +108,6 @@ export interface MlsProvider {
     state: GroupState,
     label: string,
     length: number,
+    context?: Uint8Array,
   ): Promise<Uint8Array>;
 }
