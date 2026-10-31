@@ -589,8 +589,8 @@ the Dockerfile's Go version at or above the directive.
      rebase on conflict
    - ✅ Encrypted application messages (verified single-user: ciphertext
      at rest, plaintext channels unchanged)
-   - ⬜ Two-party test: welcome path and forward-secrecy boundary on a
-     real second device
+   - ✅ Two-party test: welcome path and forward-secrecy boundary on a
+     real second device (ryan + staff, 2026-10-30)
    - ⬜ Encrypted attachments (blobs in encrypted channels are currently
      plaintext on disk)
 10. ⬜ Media encryption keyed off the MLS exporter secret
@@ -635,5 +635,18 @@ the Dockerfile's Go version at or above the directive.
       an identical file. Once channels are encrypted, clients will encrypt
       before upload, which breaks deduplication and is the correct
       tradeoff.
+- [ ] Opt-in history sharing for encrypted channels (requested). An
+      admin-set per-channel option, shown in the channel badge like
+      retention, under which an existing member's client re-encrypts the
+      plaintext it holds into the current epoch for a newly added device.
+      Weakens the "new members see no history" guarantee by design, so it
+      must be visible and off by default. Needs a local plaintext archive
+      on member devices first; only own sent messages are kept today.
+- [ ] A device whose commit the server accepted but which crashed before
+      persisting the new state is stuck: it cannot process its own commit
+      from the handshake log. Recovery would be a rejoin (external commit
+      or re-invite).
+- [ ] "Add everyone" does not check existing membership; clicking it
+      twice would try to add the same devices again.
 - [ ] Unfurl endpoint is a deliberate SSRF surface. Worth naming in
       SECURITY.md so reviewers look at it first.

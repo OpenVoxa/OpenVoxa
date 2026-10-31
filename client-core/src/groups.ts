@@ -259,6 +259,14 @@ export class Groups {
       for (const entry of entries) {
         if (entry.epoch < epochOf(state)) continue;
 
+        // Our own commit. MLS never lets a sender process its own commit
+        // (the keys it was framed with are already spent), and the commit
+        // path applies it locally once the server accepts it. Seeing it
+        // here just means the server's "group advanced" event beat that
+        // local update, so leave it to the commit path rather than
+        // failing with an opaque OperationError.
+        if (entry.sender_device_id === this.#deviceId) break;
+
         const result = await this.#mls.decrypt(state, fromBase64(entry.blob));
         state = result.state;
         applied++;
