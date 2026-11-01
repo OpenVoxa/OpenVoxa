@@ -1024,6 +1024,15 @@ now carries an optional client-chosen `ref` (up to 64 chars), echoed on
 the resulting message and on an error about that frame; client-core
 pairs by it. The debug page still sends none and is unaffected.
 
+**MLS handshake bodies have their own size cap.** Every JSON body was
+capped at 64 KB. An add commit carries the Welcome and the whole ratchet
+tree (tagged JSON) once per added device, so it grows with the square of
+the devices added at once; adding about ten devices to a new channel got
+413 and nobody was added (found 2026-11-01 in the cloud test). Group
+creation, commits, resets and GroupInfo uploads now allow 8 MB
+(`maxMLSBody`). Sending the tree once per commit instead of per welcome
+would make it linear; not needed at our scale yet.
+
 **Edits and the archive.** The archive is keyed by message id and MLS
 keys are single-use, so an edited message needs a second decryption and
 a way to know whether the archived text is the latest. An edit's
@@ -1364,6 +1373,18 @@ to pick their own colours later, so every colour stays a variable.
       nobody else, since that a hidden channel is busy is itself a leak.
       The client keeps the last-read time per channel in localStorage; a
       channel seen for the first time counts as read.
+    - Channel management in client-web (moved forward from M5 at Ryan's
+      request 2026-11-01): accounts with manage_channels get a "+" beside
+      the Text and Voice headings (create dialog: type, name, encryption
+      for text, allow-list pre-filled with the server default) and a gear
+      on each channel (allow-list, retention, history sharing for
+      encrypted text, delete with a second confirmation). force_ptt
+      holders get the gear on voice channels for "Require push-to-talk".
+      Name and encryption stay fixed after creation (no rename on the
+      server; flipping encryption would strand history or break the
+      promise to people who wrote it). Voice is always encrypted, so the
+      dialog offers no switch for it. Permissions refresh on
+      perms_changed.
     - Device linking by QR (after M1): a logged-in device shows a QR of
       `https://server/link#<one-time secret>` (about 2 min, single use);
       the phone's camera opens it; the server only relays encrypted

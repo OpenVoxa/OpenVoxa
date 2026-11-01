@@ -151,6 +151,12 @@ settings and admin panes:
   /messages/{id}`, `channel_activity` to viewers only), send frames carry a
   `ref` echoed on the message. client-web now owns the device: sign-out
   uploads the backup, revokes the device and wipes the local DB.
+  M2-1 step 1 (plain send/edit/delete) verified on Docker 2026-11-01.
+- Channel management in client-web (Ryan asked, pulled forward from M5):
+  `ChannelDialogs.tsx` (create, settings, delete; "+" and gear in the
+  sidebar for manage_channels / force_ptt). Server: MLS handshake bodies
+  now capped at 8 MB (`maxMLSBody`), was 64 KB and refused adds of ~10
+  devices. Pushed, awaiting test C1.
   Verified end to end in the cloud container (real server + Postgres +
   Playwright, two and three accounts).
 - Pending tests from earlier: P3 password test, D1 list/delete-user.
