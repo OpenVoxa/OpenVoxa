@@ -98,4 +98,5 @@ button.link:hover { text-decoration: underline; }
   font-size: 13px;
   color: var(--muted);
 }
-.rules li.ok { color: var(--text); }
+.rules .ok { color: var(--text); }
+label .error { font-size: 13px; font-weight: 400; text-transform: none; }

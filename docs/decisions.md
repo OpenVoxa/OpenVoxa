@@ -1118,9 +1118,10 @@ held to). The Linux model is copied instead: root needs the machine.
 
 ### Password rules
 
-Decided with Ryan 2026-11-01: 12 to 256 characters with at least one
-upper-case letter, one lower-case letter, one number and one symbol
-(anything not a letter, digit or space). Checked when a password is set
+Decided with Ryan 2026-11-01: 12 to 256 characters using at least three
+of the four kinds: upper-case letter, lower-case letter, number, symbol
+(anything not a letter, digit or space). First all four; relaxed to 3 of
+4 the same day as a middle ground. Checked when a password is set
 (registration, `PUT /api/v1/me/password`), never at login, so older
 accounts still sign in. Server: `password.go` `passwordProblem`; client-web
 mirrors it in `password.ts` for a live checklist. Changing the password
@@ -1128,7 +1129,11 @@ needs the current one, uses the login rate limit, signs out every other
 session and closes all sockets. There is no forgotten-password reset (no
 email by design); a host command would be the natural path if wanted.
 Composition rules are not what NIST SP 800-63B recommends (it favours
-length plus a breached-password list); chosen anyway as the owner's call.
+length plus a breached-password list). Ryan's reasoning, from years in
+IT: without them users pick `password1234` and, after a breach, reset to
+`password2345`; the rules force a rethink. The sign-up form shows the
+checklist live, and "Passwords don't match." under the confirm field once
+the password itself passes.
 
 ### Palette
 

@@ -8,22 +8,30 @@
 export const MIN_PASSWORD = 12;
 export const MAX_PASSWORD = 256;
 
-export interface PasswordRule {
-  readonly label: string;
+/** How many of the four character kinds a password needs. */
+export const REQUIRED_KINDS = 3;
+
+export interface PasswordCheck {
+  readonly lengthOk: boolean;
+  /** The four kinds, each with whether the password has it. */
+  readonly kinds: ReadonlyArray<{ readonly label: string; readonly ok: boolean }>;
+  readonly kindsOk: boolean;
   readonly ok: boolean;
 }
 
-export function passwordRules(p: string): PasswordRule[] {
+export function checkPassword(p: string): PasswordCheck {
   const length = [...p].length; // runes, like the server
   let symbol = false;
   for (const ch of p) {
     if (!/\p{L}|\p{Nd}|\s/u.test(ch)) symbol = true;
   }
-  return [
-    { label: `${MIN_PASSWORD}+ characters`, ok: length >= MIN_PASSWORD && length <= MAX_PASSWORD },
-    { label: "upper-case letter", ok: /\p{Lu}/u.test(p) },
-    { label: "lower-case letter", ok: /\p{Ll}/u.test(p) },
+  const kinds = [
+    { label: "upper-case", ok: /\p{Lu}/u.test(p) },
+    { label: "lower-case", ok: /\p{Ll}/u.test(p) },
     { label: "number", ok: /\p{Nd}/u.test(p) },
     { label: "symbol", ok: symbol },
   ];
+  const lengthOk = length >= MIN_PASSWORD && length <= MAX_PASSWORD;
+  const kindsOk = kinds.filter((k) => k.ok).length >= REQUIRED_KINDS;
+  return { lengthOk, kinds, kindsOk, ok: lengthOk && kindsOk };
 }
