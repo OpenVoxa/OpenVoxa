@@ -36,6 +36,8 @@ client-core/       TypeScript protocol + crypto, no UI
   src/identity.ts      device keys, registration, key packages
   src/groups.ts        MLS group lifecycle (create/join/commit/persist)
   src/chat.ts          text chat: Chat (account) + ChannelView (channel)
+  src/voice.ts         voice + screen share (VoiceClient); not in index
+  scripts/patch-ts-mls.mjs  build-time fix of a ts-mls validation bug
   src/storage.ts       IndexedDB persistence
   src/index.ts         exports -> global `OpenVoxaCore`
   build.mjs            esbuild IIFE -> dist/core.js
@@ -156,10 +158,18 @@ settings and admin panes:
   `ChannelDialogs.tsx` (create, settings, delete; "+" and gear in the
   sidebar for manage_channels / force_ptt). Server: MLS handshake bodies
   now capped at 8 MB (`maxMLSBody`), was 64 KB and refused adds of ~10
-  devices. Pushed, awaiting test C1.
+  devices. Verified on Docker (C1) 2026-11-01.
+- M3 (voice + screen share in client-web) pushed, awaiting test V3:
+  client-core `voice.ts` (`VoiceClient`, lazy-loaded), client-web
+  `VoiceUI.tsx` (roster, voice bar, stage, share/settings/person
+  dialogs), `voiceWorker.ts`; server `voicepresence.go`
+  (`GET /voice/participants`, `POST /channels/{id}/voice/changed`,
+  `voice_changed`). ts-mls is patched at build time
+  (`scripts/patch-ts-mls.mjs`, decisions.md Implementation notes).
+  Console handle `openvoxaVoice` (`audioStats()`, `snapshot()`).
   Verified end to end in the cloud container (real server + Postgres +
   Playwright, two and three accounts).
 - Pending tests from earlier: P3 password test, D1 list/delete-user.
 - Palette: variables in `client-web/src/styles.css` only.
-- Next after M2: M3 voice in client-web (port voice from chat.html into
-  client-core). Open items in decisions.md "Open items".
+- Next: M4 (attachments, GIFs, unfurls, notices); Ryan asked about the
+  GIF button. Open items in decisions.md "Open items".
