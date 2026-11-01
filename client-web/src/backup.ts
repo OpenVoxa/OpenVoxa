@@ -9,8 +9,8 @@
  * - about a minute after the latest new message, so a busy chat uploads
  *   once per quiet minute instead of once per message.
  *
- * client-web has no chat yet (M2), so nothing calls scheduleUpload()
- * today; the chat view will call it for every message it archives.
+ * The chat (client-core Chat, via ChatApp) calls scheduleUpload() for
+ * every message it archives.
  */
 
 import { Backup, BackupLocked, type BackupStatus } from "@core/recovery";

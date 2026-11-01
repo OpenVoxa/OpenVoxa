@@ -8,6 +8,9 @@ import { loadSession, saveSession } from "./session";
 import { Login } from "./Login";
 import { BackupManager, markAskedForKey, wasAskedForKey } from "./backup";
 import { RecoveryRestore, RecoverySetup } from "./Recovery";
+import { ChatApp } from "./ChatApp";
+import type { Chat } from "@core/chat";
+import { dropCryptoSession } from "./core";
 
 export function App() {
   const [session, setSession] = useState<Session | null>(loadSession);
@@ -86,21 +89,50 @@ function Home({ session, justRegistered, onLoggedOut }: {
     }
   }
 
-  async function logout() {
-    // Signing out will wipe this device's message archive, so the backup
-    // has to be current first. uploadNow() skips when there is no backup.
-    if (manager) {
-      setBusy("Backing up before signing out…");
+  /**
+   * Sign out. client-web owns this browser's device for the account, so
+   * signing out also revokes the device and wipes its keys and message
+   * archive, like the debug page's "Forget device". The backup is
+   * uploaded first; the next sign-in restores from it with the recovery
+   * key.
+   */
+  async function logout(chat: Chat | null) {
+    if (!manager) return;
+    setBusy("Backing up before signing out…");
+    const s = await manager.status().catch(() => null);
+    if (!s?.unlocked) {
+      const why = !s
+        ? "You have no recovery key, so your encrypted message history isn't backed up."
+        : "This device isn't backing up (it needs your recovery key).";
+      if (!confirm(`${why}\n\nSigning out erases it from this browser for good. Sign out anyway?`)) {
+        setBusy(null);
+        return;
+      }
+    } else {
       try {
         await manager.uploadNow();
       } catch (err) {
         const why = err instanceof Error ? err.message : String(err);
-        if (!confirm(`Your history couldn't be backed up (${why}).\n\nLog out anyway?`)) {
+        if (!confirm(`Your history couldn't be backed up (${why}).\n\nSigning out erases it from this browser. Sign out anyway?`)) {
           setBusy(null);
           return;
         }
       }
-      manager.close();
+    }
+    manager.close();
+
+    setBusy("Signing out…");
+    if (chat) {
+      try {
+        await chat.forgetDevice();
+        dropCryptoSession(session.user_id);
+      } catch (err) {
+        // The server still lists the device: wiping its keys now would
+        // leave members adding a device nobody holds. Keep them; the next
+        // sign-in in this browser uses the same device.
+        chat.close();
+        console.warn("could not revoke this device; keeping its keys:", err);
+      }
     }
     // Clear locally even if the server call fails: a dead token is harmless.
     try {
@@ -146,45 +178,19 @@ function Home({ session, justRegistered, onLoggedOut }: {
     );
   }
 
-  // Placeholder home until the text UI (M2).
+  if (!manager) return null;
   return (
-    <div className="auth-page">
-      <div className="auth-card">
-        <h1>OpenVoxa</h1>
-        <p>Logged in as <strong>{session.username}</strong></p>
-        <p className="muted">Groups: {session.groups.map((g) => g.name).join(", ") || "none"}</p>
-
-        <div className="panel-row">
-          <strong>History backup</strong>
-          {!status && (
-            <>
-              <span className="muted">No recovery key yet.</span>
-              <button className="link" onClick={() => setPhase({ k: "setup", skippable: true, replacing: false })}>
-                Set one up
-              </button>
-            </>
-          )}
-          {status && !status.unlocked && (
-            <>
-              <span className="muted">This device isn't backing up.</span>
-              <button className="link" onClick={() => setPhase({ k: "restore" })}>Enter recovery key</button>
-            </>
-          )}
-          {status?.unlocked && (
-            <>
-              <span className="muted">
-                Last saved {new Date(status.updatedAt).toLocaleString()} ({Math.max(1, Math.round(status.totalBytes / 1024))} KB)
-              </span>
-              <button className="link" onClick={backUpNow} disabled={!!busy}>Back up now</button>
-            </>
-          )}
-        </div>
-        {notice && <p className="muted" role="status">{notice}</p>}
-
-        <p className="muted">The new client is under construction. Chat still lives in the debug page.</p>
-        <a href="/debug/chat.html">Open the debug page</a>
-        <button className="primary" onClick={logout} disabled={!!busy}>{busy ?? "Log out"}</button>
-      </div>
-    </div>
+    <ChatApp
+      session={session}
+      manager={manager}
+      backup={status}
+      notice={notice}
+      busy={busy}
+      onLogout={(chat) => void logout(chat)}
+      onBackUpNow={backUpNow}
+      onSetUpKey={() => setPhase({ k: "setup", skippable: true, replacing: false })}
+      onEnterKey={() => setPhase({ k: "restore" })}
+      onExpired={onLoggedOut}
+    />
   );
 }
