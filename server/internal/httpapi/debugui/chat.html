@@ -542,7 +542,12 @@ const awaitingEcho = [];
 // to the right entry in awaitingEcho.
 let inbound = Promise.resolve();
 
+// Raw messages as the server sent them, by id, so ones that become
+// readable later (shared history) can be prepared and drawn again.
+const rawMessages = new Map();
+
 function enqueueInbound(m) {
+  if (m.id) rawMessages.set(m.id, m);
   inbound = inbound
     .then(() => prepareMessage(m))
     .then(renderMessage)
@@ -581,7 +586,10 @@ async function prepareMessage(m) {
   // before decryption, not after: MLS deletes each message key once it
   // is used, so the second attempt at the same ciphertext always fails.
   const saved = await OpenVoxaCore.storage.getPlaintext(m.id);
-  if (saved !== undefined) return opened(saved);
+  if (saved !== undefined) {
+    const sharedBy = await OpenVoxaCore.storage.getSharedBy(m.id);
+    return { ...opened(saved), sharedBy };
+  }
 
   if (own) return { ...m, body: "[sent from another device]", unreadable: true };
 
@@ -696,6 +704,14 @@ const lastSkipped = new Map();
 function onAutoReconcile(ev) {
   const where = ev.channelId === voiceChannelId ? "voice" : "channel";
 
+  if (ev.kind === "history_shared") {
+    if (ev.channelId === currentChannel) {
+      line("sys", `shared ${ev.messages} earlier message(s) with ` +
+        `${ev.recipients.length} new device(s)`);
+    }
+    return;
+  }
+
   if (ev.kind === "removed") return onRemovedFromGroup(ev.channelId, ev.replaced);
   if (ev.kind === "error") {
     return line("err", `${where} membership: ${esc(ev.error?.message || String(ev.error))}`);
@@ -765,6 +781,50 @@ function describeCommitter(change) {
   if (change.self) return "this device";
   if (!change.by) return "a member";
   return change.by.username ? esc(change.by.username) : `device [${short(change.by.deviceId)}]`;
+}
+
+// ------------------------------------------------ shared history
+//
+// With history sharing on, a member's client hands a newly added device
+// its copy of the channel (client-core, importSharedHistory). Each such
+// message is that member's word for what was said, so it carries a
+// "shared by" marker; "an unverified member" means the name inside the
+// bundle did not match who uploaded it.
+
+function sharerName(b) {
+  if (!b.verified) return "an unverified member";
+  return b.username ? esc(b.username) : `device [${short(b.deviceId)}]`;
+}
+
+async function importShared(channelId) {
+  if (!session || channelId !== currentChannel) return;
+  const got = await session.groups.importSharedHistory(channelId);
+  if (!got.messages) return;
+  const who = [...new Set(got.sharedBy.map(sharerName))].join(", ");
+  line("sys", `${got.messages} earlier message(s) shared by ${who}`);
+  // Through the same queue as incoming messages, so decryption never
+  // runs twice at once.
+  inbound = inbound.then(redrawUnreadable)
+    .catch((e) => line("err", `redrawing shared history: ${esc(e.message)}`));
+}
+
+// Replace each "[not readable on this device]" line whose plaintext has
+// since arrived, in place.
+async function redrawUnreadable() {
+  for (const old of [...logEl.querySelectorAll('[data-unreadable="1"]')]) {
+    const raw = rawMessages.get(old.dataset.id);
+    if (!raw) continue;
+    // Own messages consume the send queue in prepareMessage; leave them
+    // while a send is in flight.
+    if (raw.author_id === myUserID && awaitingEcho.length) continue;
+    const m = await prepareMessage(raw);
+    if (m.unreadable) continue;
+    const before = logEl.children.length;
+    renderMessage(m);
+    const added = [...logEl.children].slice(before);
+    for (const node of added) logEl.insertBefore(node, old);
+    old.remove();
+  }
 }
 
 // Per person by default (decisions.md, "Notices are per person"): an
@@ -862,6 +922,7 @@ async function onGroupAdvanced() {
     const ready = await openGroup(channelId);
     if (ready) line("sys", "this device was added to the channel's encryption group");
     if (ready) session.groups.reconcileSoon(channelId);
+    if (ready) importShared(channelId).catch((e) => line("err", `shared history: ${esc(e.message)}`));
     return;
   }
 
@@ -1371,6 +1432,19 @@ async function setAccess(channelName, access) {
   return `${channelName}: ${access.map(([n, p]) => `${n}${p ? " (post)" : " (view)"}`).join(", ") || "administrators only"}`;
 }
 
+// setHistorySharing("vip-test", true): new members of an encrypted
+// channel get the messages existing members hold (decisions.md, "History
+// sharing is opt-in per channel").
+async function setHistorySharing(channelName, enabled) {
+  const c = (await call("/api/v1/channels")).find((c) => c.name === channelName);
+  if (!c) throw new Error(`no channel named ${channelName} that you can see`);
+  await call(`/api/v1/channels/${c.id}/history-sharing`, {
+    method: "PATCH", body: JSON.stringify({ enabled: !!enabled })
+  });
+  await loadChannels();
+  return `${channelName}: history sharing ${enabled ? "on" : "off"}`;
+}
+
 // on() rather than direct assignment: a null element here would throw at
 // parse time and silently prevent every handler BELOW it from being
 // attached, including the login button. A missing GIF control should cost
@@ -1557,6 +1631,7 @@ function renderMessage(m) {
     el.dataset.id = m.id;
     el.dataset.author = m.author_id || "";
     el.dataset.ts = m.created_at;
+    el.dataset.unreadable = m.unreadable ? "1" : "";
     return el;
   };
 
@@ -1567,7 +1642,8 @@ function renderMessage(m) {
 
   const el = tag(line("msg",
     `<span class="at">${esc(when)}</span> ` +
-    `<span class="who">${esc(m.username || "[deleted user]")}</span>: ${markdown(m.body)}`));
+    `<span class="who">${esc(m.username || "[deleted user]")}</span>: ${markdown(m.body)}` +
+    (m.sharedBy ? ` <span class="ptt-hint">(shared by ${sharerName(m.sharedBy)})</span>` : "")));
 
   messageActions(el, m);
   renderAttachments(el, m.attachments, m.files);
@@ -1716,7 +1792,8 @@ async function loadChannels() {
     const access = c.can_post ? "can post" : "read only";
     opt.dataset.encrypted = c.encrypted ? "1" : "";
     opt.textContent =
-      `${c.name} (${c.encrypted ? "encrypted" : "plaintext"}, kept ${c.retention}, ${access})`;
+      `${c.name} (${c.encrypted ? "encrypted" : "plaintext"}, kept ${c.retention}, ` +
+      `${c.encrypted && c.history_sharing ? "history shared with new members, " : ""}${access})`;
     select.appendChild(opt);
   }
 
@@ -1735,6 +1812,12 @@ async function connect() {
   if (currentChannelEncrypted) {
     const ready = await openGroup(channelID);
     if (ready) session.groups.reconcileSoon(channelID);
+    // Bundles may already be waiting (shared while this page was closed).
+    // Imported after the history renders, which then gets redrawn.
+    if (ready) {
+      setTimeout(() => importShared(channelID)
+        .catch((e) => line("err", `shared history: ${esc(e.message)}`)), 0);
+    }
     if (!ready) {
       // Still connect: the channel list and membership changes arrive
       // over the same socket, so a device waiting for an invitation
@@ -1878,6 +1961,13 @@ function onFrame(frame) {
         socket?.close();
       }
       loadChannels().catch(() => {});
+    } else if (frame.type === "history_shared") {
+      // Someone shared earlier messages; collect them if this device is
+      // one of the recipients.
+      if (frame.channel_id === currentChannel && session &&
+          (frame.recipients || []).includes(session.status.deviceId)) {
+        importShared(currentChannel).catch((e) => line("err", `shared history: ${esc(e.message)}`));
+      }
     } else if (frame.type === "group_advanced") {
       // Someone changed the membership. Apply their commit now rather
       // than discovering it when the next message fails to decrypt.

@@ -64,6 +64,20 @@ export interface StoredKeyPair {
   readonly createdAt: number;
 }
 
+/**
+ * Who shared a message. deviceId is the sharer's own claim from inside
+ * the encrypted bundle, checked against the server's record of who
+ * uploaded it; verified is false when the two disagree.
+ */
+export interface SharedBy {
+  deviceId: string;
+  username?: string;
+  verified: boolean;
+}
+
+/** Archive values: plain text, or text with who shared it. */
+type ArchivedValue = string | { text: string; sharedBy: SharedBy };
+
 const ALL_STORES = [STORE_DEVICE, STORE_KEYPAIRS, STORE_GROUPS, STORE_SENT];
 
 function open(name: string = dbName): Promise<IDBDatabase> {
@@ -252,9 +266,31 @@ export const storage = {
   },
 
   async getPlaintext(messageId: string): Promise<string | undefined> {
-    return run<string | undefined>(STORE_SENT, "readonly", (s) =>
-      s.get(messageId) as IDBRequest<string | undefined>,
+    const value = await run<ArchivedValue | undefined>(STORE_SENT, "readonly", (s) =>
+      s.get(messageId) as IDBRequest<ArchivedValue | undefined>,
     );
+    return typeof value === "string" ? value : value?.text;
+  },
+
+  /**
+   * Store a message another member shared (history sharing), unless this
+   * device already has its own copy. The sharer is kept with it, because
+   * a shared message is that member's word for what was said: nothing
+   * here can prove it matches the original (decisions.md, "History
+   * sharing is opt-in per channel").
+   */
+  async putShared(messageId: string, text: string, sharedBy: SharedBy): Promise<boolean> {
+    if ((await this.getPlaintext(messageId)) !== undefined) return false;
+    await run(STORE_SENT, "readwrite", (s) => s.put({ text, sharedBy }, messageId));
+    return true;
+  },
+
+  /** Who shared a message, or undefined for one this device read itself. */
+  async getSharedBy(messageId: string): Promise<SharedBy | undefined> {
+    const value = await run<ArchivedValue | undefined>(STORE_SENT, "readonly", (s) =>
+      s.get(messageId) as IDBRequest<ArchivedValue | undefined>,
+    );
+    return typeof value === "object" && value ? value.sharedBy : undefined;
   },
 
   async deletePlaintext(messageId: string): Promise<void> {

@@ -10,7 +10,7 @@ import {
   epochOf,
   groupIdOf,
 } from "./mls/tsmls.js";
-import { storage } from "./storage.js";
+import { storage, type SharedBy } from "./storage.js";
 import type { ApiCall } from "./identity.js";
 
 /**
@@ -131,7 +131,19 @@ export interface ReconcileResult {
 export type AutoEvent =
   | { kind: "reconciled"; channelId: string; result: ReconcileResult }
   | { kind: "removed"; channelId: string; replaced: boolean }
-  | { kind: "error"; channelId: string; error: unknown };
+  | { kind: "error"; channelId: string; error: unknown }
+  | { kind: "history_shared"; channelId: string; recipients: string[]; messages: number };
+
+/** What importSharedHistory brought in. */
+export interface ImportedHistory {
+  /** Messages newly stored; ones this device already had are skipped. */
+  messages: number;
+  /** Who shared each bundle that was imported. */
+  sharedBy: SharedBy[];
+}
+
+/** Largest bundle sent; the server refuses more than 8 MB. */
+const MAX_HISTORY_BYTES = 7 * 1024 * 1024;
 
 /**
  * A device named in a membership notice.
@@ -1085,6 +1097,9 @@ export class Groups {
    */
   #announce(raw: RawChange): void {
     if (raw.joined.length === 0 && raw.left.length === 0) return;
+    // Not a notice, but driven by the same change; it must not depend on
+    // anyone listening.
+    this.#offerHistory(raw);
     if (this.#membershipListeners.size === 0) return;
 
     this.#notices = this.#notices.then(async () => {
@@ -1115,6 +1130,139 @@ export class Groups {
         }
       }
     });
+  }
+
+  /**
+   * Offer this device's copy of a channel's history to devices that just
+   * joined, if the channel shares history (decisions.md, "History sharing
+   * is opt-in per channel").
+   *
+   * One member does it: whoever committed the add. A device that joined
+   * on its own from the GroupInfo has nobody who added it, so every
+   * member that sees the join takes its turn (the reconcile stagger) and
+   * the server keeps only the first bundle per device.
+   */
+  #offerHistory(raw: RawChange): void {
+    const recipients = raw.joined.filter((id) => id !== this.#deviceId);
+    if (recipients.length === 0) return;
+    const self = raw.by === this.#deviceId;
+    const external = raw.by !== null && raw.joined.includes(raw.by);
+    if (!self && !external) return;
+
+    const wait = self ? 0 : this.#staggerFor(raw.channelId);
+    void sleep(wait)
+      .then(() => this.#shareHistory(raw.channelId, recipients))
+      .then((messages) => {
+        if (messages > 0) {
+          this.#emit({ kind: "history_shared", channelId: raw.channelId, recipients, messages });
+        }
+      })
+      .catch((error) => this.#emit({ kind: "error", channelId: raw.channelId, error }));
+  }
+
+  /** Returns how many messages went into the bundle; 0 when sharing is off. */
+  async #shareHistory(channelId: string, recipients: string[]): Promise<number> {
+    if (!this.#states.has(channelId)) return 0;
+    const q = `device_id=${encodeURIComponent(this.#deviceId)}`;
+
+    let ids: string[];
+    try {
+      ids = (await this.#call(
+        `/api/v1/channels/${channelId}/mls/history/message-ids?${q}`,
+      )) as string[];
+    } catch (err) {
+      // 409: this channel does not share history. The usual case.
+      if ((err as { status?: unknown } | null)?.status === 409) return 0;
+      throw err;
+    }
+
+    // Newest first, so trimming to fit drops the oldest.
+    const entries: Array<[string, string]> = [];
+    for (const id of ids) {
+      const text = await storage.getPlaintext(id);
+      if (text !== undefined) entries.push([id, text]);
+    }
+    if (entries.length === 0) return 0;
+
+    const encoder = new TextEncoder();
+    let count = entries.length;
+    let bytes = encoder.encode(JSON.stringify({ v: 1, by: this.#deviceId, entries }));
+    while (bytes.length > MAX_HISTORY_BYTES && count > 1) {
+      count = Math.floor(count / 2);
+      bytes = encoder.encode(
+        JSON.stringify({ v: 1, by: this.#deviceId, entries: entries.slice(0, count) }),
+      );
+    }
+
+    const message = await this.encrypt(channelId, bytes);
+    await this.#call(`/api/v1/channels/${channelId}/mls/history`, {
+      method: "POST",
+      body: JSON.stringify({
+        device_id: this.#deviceId,
+        recipients,
+        body: toBase64(message),
+      }),
+    });
+    return count;
+  }
+
+  /**
+   * Collect history bundles waiting for this device in a channel and
+   * store their messages in the local archive, marked with who shared
+   * them. Messages this device already holds are left alone.
+   *
+   * Call after joining a channel's group and whenever a history_shared
+   * event names this device. Safe to call when nothing is waiting.
+   */
+  async importSharedHistory(channelId: string): Promise<ImportedHistory> {
+    const out: ImportedHistory = { messages: 0, sharedBy: [] };
+    if (!this.#states.has(channelId)) return out;
+
+    const shares = (await this.#call(
+      `/api/v1/channels/${channelId}/mls/history?device_id=${encodeURIComponent(this.#deviceId)}`,
+    )) as Array<{ id: string; sender_device_id: string | null; body: string }>;
+    if (shares.length === 0) return out;
+
+    // The bundle is from the current epoch or close to it; be there first.
+    await this.catchUp(channelId);
+
+    for (const share of shares) {
+      const plain = await this.decrypt(channelId, fromBase64(share.body));
+      if (plain) {
+        let bundle: { by?: unknown; entries?: unknown } = {};
+        try {
+          bundle = JSON.parse(new TextDecoder().decode(plain));
+        } catch {
+          // Not a bundle this client understands; dropped below.
+        }
+        const by = typeof bundle.by === "string" ? bundle.by : "";
+        await this.#describe(channelId, by ? [by] : [], []);
+        const sharedBy: SharedBy = {
+          deviceId: by,
+          username: this.#names.get(by)?.username,
+          verified: by !== "" && by === share.sender_device_id,
+        };
+        let stored = 0;
+        if (Array.isArray(bundle.entries)) {
+          for (const entry of bundle.entries) {
+            if (!Array.isArray(entry) || typeof entry[0] !== "string" ||
+                typeof entry[1] !== "string") continue;
+            if (await storage.putShared(entry[0], entry[1], sharedBy)) stored++;
+          }
+        }
+        if (stored > 0) {
+          out.messages += stored;
+          out.sharedBy.push(sharedBy);
+        }
+      }
+      // Imported, or unreadable to this device for good (MLS keys are
+      // single-use): either way it is done with.
+      await this.#call(
+        `/api/v1/channels/${channelId}/mls/history/${share.id}?device_id=${encodeURIComponent(this.#deviceId)}`,
+        { method: "DELETE" },
+      ).catch(() => {});
+    }
+    return out;
   }
 
   /**
