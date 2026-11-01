@@ -1090,13 +1090,21 @@ a long password (one internet-facing login with total power is a
 password-guessing and phishing target, and a shared secret nobody can be
 held to). The Linux model is copied instead: root needs the machine.
 
-- **Last-admin guard** (`lastadmin.go`, `adminGuard`): any transaction
-  that can take the administrator switch from someone (deleting an
-  account, either way; editing or deleting a group; removing a group
-  member) locks, counts active administrators (holding the switch through
-  any group, not deleted, not banned) before and after, and is refused
-  with 409 if it goes from some to none. Only the transition is refused,
-  so a server already without one does not trap everyone else.
+- **Two-administrator floor** (`lastadmin.go`, `adminGuard`,
+  `MinAdmins = 2`; raised from one the same day at Ryan's request): one is
+  not enough, because whoever takes over an administrator account could
+  remove the others and be the sole controller. Any transaction that can
+  take the switch from someone (deleting an account, either way; editing
+  or deleting a group; removing a group member; a ban, since banned
+  administrators don't count) locks, counts active administrators
+  (holding the switch through any group, not deleted, not banned) before
+  and after, and is refused with 409 if the count drops AND ends below
+  two. A server already under two (new, or older than this rule) is not
+  frozen, only kept from dropping further; startup and `list-admins` warn.
+  With exactly two, neither can leave until a third is added. The floor
+  limits what a rogue administrator can remove; it does not stop other
+  damage they can do with the switch, and same-rank administrators
+  already cannot remove each other.
 - **Host recovery** (`cli.go`): `docker compose exec server
   /openvoxa-server grant-admin <username>` puts the account in the
   top-positioned group with the switch, creating one above all others if
