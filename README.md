@@ -10,14 +10,14 @@ A free, open-source alternative to Discord and TeamSpeak. Your server, your data
 
 OpenVoxa is **pre-alpha**. It is being built in public, from scratch, by someone learning large chunks of this as they go.
 
-Text and voice work. **None of it is encrypted yet.** The server can read every message you send. That is the single most important feature this project exists to deliver, and it is not built.
+Text, voice and screen sharing work, and end-to-end encryption is now built: encrypted channels and every call are encrypted on your device with MLS (RFC 9420), so the server only stores and relays ciphertext. **But none of it has been reviewed by anyone qualified.** Encryption that hasn't been audited is encryption you should assume is broken somewhere. That review is the line between "interesting project" and "something to trust".
 
 **Please do not:**
 
 - Use this for any conversation you would mind seeing on a billboard
 - Expose it to the open internet
 - Recommend it to anyone who actually needs privacy (journalists, activists, people in unsafe situations)
-- Assume the word "encrypted" anywhere in this repo describes something that has shipped and been reviewed
+- Assume the word "encrypted" anywhere in this repo means "reviewed and safe"; it means "built and tested by us"
 
 **You may absolutely:**
 
@@ -26,7 +26,7 @@ Text and voice work. **None of it is encrypted yet.** The server can read every 
 - Argue with the design decisions in [`docs/decisions.md`](docs/decisions.md)
 - Open issues that start with "this is a terrible idea because..."
 
-The banner comes down when end-to-end encryption exists and a qualified reviewer has audited it, with their name on the review. Until then, assume it is broken. It probably is.
+The banner comes down when a qualified reviewer has audited the encryption, with their name on the review. Until then, assume it is broken. It probably is.
 
 ---
 
@@ -40,13 +40,31 @@ If this project ever has a monetization strategy, something has gone wrong. Plea
 
 ## What works today
 
+**End-to-end encryption**
+
+- **Encrypted text channels** using MLS (RFC 9420) via ts-mls. Message bodies are ciphertext in the database; only the MLS framing (group and epoch) is in the clear. New members see nothing from before they joined, unless the channel turns on history sharing, where existing members' apps send newcomers what they hold, marked "shared by".
+- **Encrypted voice and screen sharing.** Every call has its own MLS group, and each audio and video frame is encrypted in the browser before it reaches the media server. The key changes whenever someone joins or leaves, and removed devices are cut off.
+- **Encrypted attachments**: each file gets its own key, sent inside the encrypted message.
+- **Membership follows access.** Who belongs in a channel's encryption group is decided by who may view the channel. Clients add and remove devices automatically, and every join and leave is announced to the people in the channel, so a device the server slips in cannot hide.
+- **Recovery key.** At sign-up you get 12 words (and a QR code). They encrypt a backup of your message history, which the server stores without being able to read. A new device restores your history with the words.
+- **Device lifecycle**: a device is the cryptographic identity, not the account. Unused devices expire after 30 days, and signing out revokes the device and wipes its keys.
+
+**The web client** (served at `/`)
+
+- Sign-up and login with sensible password rules (length, variety, a common-password list), recovery key setup and restore
+- Discord-style layout: channel list with unread markers, message history that loads as you scroll, edit and delete your own messages
+- Voice: click a channel to join, see who's in every call, speaking indicators, mute, deafen, push-to-talk with a key of your choice, per-person volume, microphone and speaker pickers
+- Screen sharing with quality presets (up to 4K or 1440p60), a choice between sharp text and smooth motion, optional audio, and a stage view with fullscreen and live stats
+- Channel management for admins: create text and voice channels, choose who can view and post, retention, history sharing, forced push-to-talk, delete
+
+**The server**
+
 - **Accounts** with argon2id password hashing and revocable server-side sessions
-- **Text channels** over WebSocket, with history that persists across reconnects
-- **Voice channels** via a self-hosted LiveKit SFU, tested on desktop and iOS Safari
-- **Permission groups** — admin-defined groups with permission switches and a rank order; each channel lists which groups may view and which may post. Starts as Administrator, Moderator, Member and Everyone
+- **Permission groups**: admin-defined groups with permission switches and a rank order; each channel lists which groups may view and which may post. Starts as Administrator, Moderator, Member and Everyone. There are always at least two administrators, and host commands to recover if not
+- **Voice** via a self-hosted LiveKit SFU, tested on desktop and iOS Safari. The server never touches media; it only hands out tokens
 - **Rate limiting** on authentication, per IP and per account
-- **Rich text**: markdown, link previews with SSRF-hardened unfurling, file attachments with inline image, audio and video playback, and GIF search that never puts your users in front of a third party
-- **Moderation**: message removal, reports verified against the server's own copy, and bans that cut off live connections rather than waiting for a token to expire
+- **Rich text** (in the debug page for now): markdown, link previews with SSRF-hardened unfurling, file attachments with inline image, audio and video playback, and GIF search that never puts your users in front of a third party
+- **Moderation**: message removal, reports verified against the server's own copy (for unencrypted channels), and bans that cut off live connections and calls immediately
 - **Retention and deletion** that actually work: channels display their policy and a sweep enforces it, account deletion destroys content, and both propagate live to connected clients
 - **TLS** with three documented deployment paths
 
@@ -54,9 +72,12 @@ Permissions are enforced where it counts. A user without post rights in a voice 
 
 ## What it's meant to do, and doesn't yet
 
-- **End-to-end encryption** for text (MLS, RFC 9420) and for voice and screen media. The database schema is already shaped for it: message bodies are opaque `BYTEA`, so turning encryption on needs no migration.
-- **Screen sharing** with configurable resolution and frame rate
-- **A real client.** The web client at `/` has sign-up and login, recovery keys with history backup, text chat (encrypted and plain channels, history paging, editing and deleting, unread markers), channel management, and encrypted voice with screen sharing. Attachments, GIFs and the remaining admin tools still live in the deliberately ugly debug page at `/debug/`. The desktop client comes later.
+- **The rest of the web client**: attachments, GIFs, link previews, join/leave notices and sounds (next), then settings and admin panes. Until then those live in the deliberately ugly debug page at `/debug/`.
+- **A desktop client** (Electron) with a global push-to-talk key.
+- **Encrypting the local message archive** on your device with the recovery key.
+- **Linking a new device by QR code**, and **two-factor sign-in** (TOTP).
+- **Several devices per account at once.** The design supports it; only one device per account is built.
+- **An independent security review.** See the banner.
 
 ## What it's explicitly not doing
 
@@ -70,7 +91,7 @@ Stating the limits plainly is most of the point. A privacy tool that is vague ab
 
 ### What this is designed to protect against
 
-*Once encryption ships. Today the server reads everything.*
+*In encrypted channels and calls. Channels can also be created unencrypted, and the server can read those; every channel shows which it is.*
 
 - A curious or malicious server operator reading message content in encrypted channels
 - Someone observing your network traffic
@@ -108,11 +129,19 @@ We did not write our own cryptography, which is the single best decision in the 
 | Moderation: removal, reports, bans | ✅ Done |
 | `client-core` package and MLS toolchain | ✅ Done |
 | Device identity and key packages | ✅ Done |
-| End-to-end encrypted text (MLS) | 🔶 In progress |
-| End-to-end encrypted media | ⬜ Not started |
-| A user interface a human would enjoy | ⬜ Not started |
+| End-to-end encrypted text (MLS) | ✅ Done |
+| End-to-end encrypted voice and screen sharing | ✅ Done |
+| Automatic encryption membership, join/leave notices | ✅ Done |
+| Recovery key and encrypted history backup | ✅ Done |
+| Web client: sign-up, recovery, text chat | ✅ Done |
+| Web client: channel management | ✅ Done |
+| Web client: voice and screen sharing | ✅ Done |
+| Web client: attachments, GIFs, previews, notices | 🔶 Next |
+| Web client: settings and admin panes | ⬜ Not started |
+| Desktop client | ⬜ Not started |
+| Independent security review | ⬜ Not started |
 
-The encryption rows are the ones that matter. Everything above them is foundation.
+The review row is the one that matters now. Everything above it is built and tested by us, which is not the same thing as safe.
 
 ## How it's built
 
@@ -122,7 +151,7 @@ The encryption rows are the ones that matter. Everything above them is foundatio
 | Database | PostgreSQL |
 | Client core | TypeScript, shared between desktop and web |
 | Desktop | Electron |
-| Web | React |
+| Web | React + Vite, embedded in the server binary and served at `/` |
 | Media | [LiveKit](https://livekit.io), self-hosted |
 | Attachments | Content-addressed blobs on disk; local or network storage |
 | GIF search | Giphy or Tenor, proxied server-side; off by default |
@@ -168,7 +197,7 @@ Very welcome, especially from people who know more about this than we do.
 - Design debate goes in [Discussions](../../discussions), bugs go in [Issues](../../issues)
 - Found a security problem? [`SECURITY.md`](SECURITY.md) has the private reporting channel. Please use it rather than opening a public issue.
 
-If you are a cryptographer or a security researcher and you want to tear this apart, you are the single most welcome category of contributor this project has. The encryption work is about to start, which is the best possible time to arrive.
+If you are a cryptographer or a security researcher and you want to tear this apart, you are the single most welcome category of contributor this project has. The encryption is built and has never been reviewed, which makes now the most useful possible time to arrive.
 
 ## License
 
