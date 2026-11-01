@@ -162,6 +162,15 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 
 	mux.HandleFunc("DELETE /api/v1/me", api.requireAuth(api.deleteOwnAccount))
 
+	// Recovery backups: the caller's own, opaque, encrypted client-side
+	// (recovery.go, migration 0015).
+	mux.HandleFunc("GET /api/v1/me/backup", api.requireAuth(api.getBackup))
+	mux.HandleFunc("PUT /api/v1/me/backup", api.requireAuth(api.startBackup))
+	mux.HandleFunc("DELETE /api/v1/me/backup", api.requireAuth(api.deleteBackup))
+	mux.HandleFunc("PUT /api/v1/me/backup/chunks/{name}", api.requireAuth(api.putBackupChunk))
+	mux.HandleFunc("GET /api/v1/me/backup/chunks/{name}", api.requireAuth(api.getBackupChunk))
+	mux.HandleFunc("DELETE /api/v1/me/backup/chunks/{name}", api.requireAuth(api.deleteBackupChunk))
+
 	// Authors delete their own; the handler checks for moderator rank
 	// before allowing anyone else's.
 	mux.HandleFunc("DELETE /api/v1/messages/{id}",
