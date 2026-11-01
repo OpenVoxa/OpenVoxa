@@ -1433,6 +1433,33 @@ to pick their own colours later, so every colour stays a variable.
       changed`, and the server sends `voice_changed` to the channel's
       viewers only (as `channel_activity`), who ask again; kicks send it
       too. Clients also poll every 20 s for people who vanish silently.
+    - Chat extras in client-web (M4 session A, 2026-11-01): Markdown
+      (`markdown.tsx`: bold, italic, strike, inline and fenced code,
+      "> " quotes, links; built as React elements, never HTML strings,
+      same subset as the debug page). Link previews (`previews.tsx`) for
+      the first link in a message, via `POST /unfurl`, one request per
+      link per page load; YouTube is click-to-load (youtube-nocookie).
+      In encrypted channels previews are off unless the user opts in
+      (Settings, "Link previews in encrypted channels", per browser):
+      Ryan chose opt-in over never or always, since the server learns
+      the link and preview images load from the linked site; the setting
+      says so. GIF picker (`gifs.tsx`): the GIF button appears when
+      `GET /gifs/config` says enabled; trending on open, search as you
+      type (400 ms pause), picking one sends it at once as its own
+      message (`ChannelView.send(text, attachments)`, text may be empty
+      with an attachment). Plain attachments (any in plain channels,
+      GIFs in any) show inline from their signed URL; sender-encrypted
+      files are a placeholder until session B. Join/leave notices: Chat
+      forwards `groups.onMembership` people changes for the open
+      encrypted channel; `ChannelSnapshot.notices` are now
+      `{id, at, text, kind}` and sit among messages by time. Voice
+      join/leave tones (`tones.ts`): two WebAudio notes, rising for a
+      join and falling for a leave, for you connecting/leaving and others
+      in your call; people already there when you connect are not
+      announced (2 s settle). On by default, "Join and leave sounds" in
+      Settings. The user-panel gear and the voice-bar cog open one
+      Settings dialog (Voice and Chat sections). Mic button is
+      highlighted when deafened too.
     - Device linking by QR (after M1): a logged-in device shows a QR of
       `https://server/link#<one-time secret>` (about 2 min, single use);
       the phone's camera opens it; the server only relays encrypted
