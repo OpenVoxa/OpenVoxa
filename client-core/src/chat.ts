@@ -160,7 +160,15 @@ export type ChatEvent =
   /** This account's groups or permissions may have changed: refetch /me. */
   | { type: "me_changed" }
   | { type: "unread"; unread: ReadonlySet<string> }
+  /** Who is in each voice call (channels you can see, non-empty only). */
+  | { type: "voice"; presence: VoicePresence }
   | { type: "error"; message: string };
+
+/** Voice channel ID -> the people in its call. */
+export type VoicePresence = Readonly<Record<string, readonly { user_id: string; username: string }[]>>;
+
+/** Fallback refresh of voice presence, for people who vanish silently. */
+const VOICE_POLL_MS = 20_000;
 
 // ------------------------------------------------------------- helpers
 
@@ -205,7 +213,7 @@ function compareMessages(a: ChatMessage, b: ChatMessage): number {
 /** Server-wide event types (emitAll / emitUsers on the server). */
 const GLOBAL_EVENTS = new Set([
   "user_purged", "access_changed", "channel_changed", "channel_deleted",
-  "perms_changed", "channel_activity",
+  "perms_changed", "channel_activity", "voice_changed",
 ]);
 
 const EVENT_RETRY_MS = 5000;
@@ -248,6 +256,9 @@ export class Chat {
   #view: ChannelView | null = null;
   #unread = new Set<string>();
   #offAuto: (() => void) | null = null;
+  #voice: VoicePresence = {};
+  #voicePoll: ReturnType<typeof setInterval> | undefined;
+  #voiceTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(session: Session, opts: ChatOptions) {
     this.session = session;
@@ -262,6 +273,26 @@ export class Chat {
 
   get unread(): ReadonlySet<string> {
     return this.#unread;
+  }
+
+  get voicePresence(): VoicePresence {
+    return this.#voice;
+  }
+
+  /** Ask the server who is in each voice call. */
+  async refreshVoice(): Promise<void> {
+    try {
+      this.#voice = (await this.#opts.call("/api/v1/voice/participants")) as VoicePresence;
+      this.#emit({ type: "voice", presence: this.#voice });
+    } catch {
+      /* voice may be off on this server; the next refresh tries again */
+    }
+  }
+
+  /** Coalesce bursts of voice_changed into one refresh. */
+  #refreshVoiceSoon(): void {
+    clearTimeout(this.#voiceTimer);
+    this.#voiceTimer = setTimeout(() => void this.refreshVoice(), 300);
   }
 
   /** The open channel, if any. */
@@ -288,11 +319,15 @@ export class Chat {
     this.#offAuto = this.session.groups.onAuto((ev) => this.#onAuto(ev));
     await this.refreshChannels();
     void this.#openEvents();
+    void this.refreshVoice();
+    this.#voicePoll = setInterval(() => void this.refreshVoice(), VOICE_POLL_MS);
   }
 
   /** Stop everything. The crypto session itself is the caller's. */
   close(): void {
     this.#closed = true;
+    clearInterval(this.#voicePoll);
+    clearTimeout(this.#voiceTimer);
     this.#offAuto?.();
     this.#view?.close();
     this.#view = null;
@@ -432,9 +467,13 @@ export class Chat {
       case "access_changed":
         this.#reconcileOpen();
         break;
+      case "voice_changed":
+        this.#refreshVoiceSoon();
+        break;
       case "channel_changed":
       case "channel_deleted":
         this.refreshChannels().catch(() => {});
+        this.#refreshVoiceSoon();
         break;
       case "perms_changed":
         if (!frame.user_id || frame.user_id === this.userId) {
