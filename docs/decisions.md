@@ -1116,6 +1116,27 @@ held to). The Linux model is copied instead: root needs the machine.
   registration must carry it (`setup_code`); `GET /api/v1/setup` tells the
   sign-up form to ask. The code changes on every restart.
 
+### Password rules
+
+Decided with Ryan 2026-11-01: 12 to 256 characters with at least one
+upper-case letter, one lower-case letter, one number and one symbol
+(anything not a letter, digit or space). Checked when a password is set
+(registration, `PUT /api/v1/me/password`), never at login, so older
+accounts still sign in. Server: `password.go` `passwordProblem`; client-web
+mirrors it in `password.ts` for a live checklist. Changing the password
+needs the current one, uses the login rate limit, signs out every other
+session and closes all sockets. There is no forgotten-password reset (no
+email by design); a host command would be the natural path if wanted.
+Composition rules are not what NIST SP 800-63B recommends (it favours
+length plus a breached-password list); chosen anyway as the owner's call.
+
+### Palette
+
+client-web default (Ryan, 2026-11-01): background #333333, buttons
+#D96932, text #FFFFFF; derived shades are `styles.css` variables. Light
+mode later: same orange, black text instead of white. Users will be able
+to pick their own colours later, so every colour stays a variable.
+
 ## Build order
 
 1. ✅ Server skeleton, auth, one text channel

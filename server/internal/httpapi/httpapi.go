@@ -167,6 +167,7 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 		withUUIDPath(api.requirePerm(perm.ManageGroups, api.removeUserFromGroup)))
 
 	mux.HandleFunc("DELETE /api/v1/me", api.requireAuth(api.deleteOwnAccount))
+	mux.HandleFunc("PUT /api/v1/me/password", api.requireAuth(api.changeOwnPassword))
 
 	// Recovery backups: the caller's own, opaque, encrypted client-side
 	// (recovery.go, migration 0015).

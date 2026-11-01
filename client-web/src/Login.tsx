@@ -3,8 +3,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { call, guessDeviceName, type Session } from "./api";
-
-const MIN_PASSWORD = 12; // matches the server's minPasswordLen
+import { passwordRules } from "./password";
 
 export function Login({ onSession }: { onSession: (s: Session) => void }) {
   const [mode, setMode] = useState<"login" | "register">("login");
@@ -30,8 +29,8 @@ export function Login({ onSession }: { onSession: (s: Session) => void }) {
     e.preventDefault();
     setError(null);
     if (registering) {
-      if (password.length < MIN_PASSWORD) {
-        setError(`Password must be at least ${MIN_PASSWORD} characters.`);
+      if (passwordRules(password).some((r) => !r.ok)) {
+        setError("Password doesn't meet the requirements yet.");
         return;
       }
       if (password !== confirm) {
@@ -78,6 +77,15 @@ export function Login({ onSession }: { onSession: (s: Session) => void }) {
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
             autoComplete={registering ? "new-password" : "current-password"} required />
         </label>
+        {registering && (
+          <ul className="rules" aria-label="Password requirements">
+            {passwordRules(password).map((r) => (
+              <li key={r.label} className={r.ok ? "ok" : undefined}>
+                {r.ok ? "✓" : "•"} {r.label}
+              </li>
+            ))}
+          </ul>
+        )}
         {registering && (
           <label>
             Confirm password
