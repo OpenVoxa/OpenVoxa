@@ -85,6 +85,10 @@ type API struct {
 	// Message edits, per user: 20 up front, then one a second. Sending is
 	// limited per connection in ws.go; edits come over HTTP.
 	editLimit *ratelimit.Limiter
+
+	// Who is in each voice call; see voicepresence.go.
+	voicePresence  voicePresenceCache
+	voiceHintLimit *ratelimit.Limiter
 }
 
 // New returns the server's root handler. debugUIEnabled serves a bare-bones
@@ -134,6 +138,9 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 		gifLimit: ratelimit.New(0.5, 30, 15*time.Minute),
 
 		editLimit: ratelimit.New(1, 20, 15*time.Minute),
+
+		// Join/leave hints: 10 up front, then one every 2 seconds.
+		voiceHintLimit: ratelimit.New(0.5, 10, 15*time.Minute),
 	}
 
 	if _, err := rand.Read(api.attachKey); err != nil {
@@ -264,6 +271,10 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 
 	mux.HandleFunc("POST /api/v1/channels/{id}/voice-token",
 		withUUIDPath(api.requireAuth(api.voiceToken)))
+	// Who is in each voice call, and the hint that makes clients ask.
+	mux.HandleFunc("GET /api/v1/voice/participants", api.requireAuth(api.voiceParticipants))
+	mux.HandleFunc("POST /api/v1/channels/{id}/voice/changed",
+		withUUIDPath(api.requireAuth(api.voiceChanged)))
 	mux.HandleFunc("PATCH /api/v1/channels/{id}/force-ptt",
 		withUUIDPath(api.requirePerm(perm.ForcePTT, api.setForcePTT)))
 	mux.HandleFunc("PATCH /api/v1/channels/{id}/retention",
