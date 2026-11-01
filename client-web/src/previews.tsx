@@ -34,7 +34,7 @@ function fetchPreview(call: ApiCall, url: string): Promise<Preview | null> {
 }
 
 export function youtubeID(url: string): string | null {
-  const m = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([\w-]{11})/);
+  const m = url.match(/(?:youtube\.com\/(?:watch\?(?:[^\s#]*&)?v=|embed\/|shorts\/|live\/)|youtu\.be\/)([\w-]{11})/);
   return m ? m[1] : null;
 }
 
@@ -43,21 +43,29 @@ function safeUrl(u: string | undefined, fallback: string): string {
   return u && /^https?:\/\//i.test(u) ? u : fallback;
 }
 
-export function LinkPreview({ call, url }: { call: ApiCall; url: string }) {
-  const [p, setP] = useState<Preview | null>(null);
+/**
+ * fetch: ask the server for the card. Without it (an encrypted channel
+ * the user hasn't opted in for) only a YouTube link shows anything: a
+ * bare click-to-play box, which contacts nobody until clicked.
+ */
+export function LinkPreview({ call, url, fetch }: { call: ApiCall; url: string; fetch: boolean }) {
+  const [fetched, setP] = useState<Preview | null>(null);
   const [playing, setPlaying] = useState(false);
   useEffect(() => {
+    if (!fetch) return;
     let live = true;
     void fetchPreview(call, url).then((r) => live && setP(r));
     return () => {
       live = false;
     };
-  }, [call, url]);
+  }, [call, url, fetch]);
+  const vid = youtubeID(url);
+  // A YouTube link still gets its player if the card couldn't be fetched.
+  const p = (fetch ? fetched : null) ?? (vid ? ({ url, site: "YouTube" } as Preview) : null);
   if (!p) return null;
 
   const href = safeUrl(p.url, url);
   const image = p.image && /^https?:\/\//i.test(p.image) ? p.image : null;
-  const vid = youtubeID(url);
   return (
     <div className="preview">
       {p.site && <div className="site small muted">{p.site}</div>}
@@ -78,7 +86,7 @@ export function LinkPreview({ call, url }: { call: ApiCall; url: string }) {
           // Click to load: embedding at once would contact YouTube for
           // every message with a link, watched or not.
           <button className="embed" onClick={() => setPlaying(true)} title="Play (loads from YouTube)">
-            {image && <img src={image} alt="" referrerPolicy="no-referrer" />}
+            {image ? <img src={image} alt="" referrerPolicy="no-referrer" /> : <span className="no-thumb" />}
             <span className="play" aria-hidden>▶</span>
           </button>
         )

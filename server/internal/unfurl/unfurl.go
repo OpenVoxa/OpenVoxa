@@ -17,12 +17,14 @@ package unfurl
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -171,6 +173,18 @@ func (f *Fetcher) Fetch(ctx context.Context, raw string) (Preview, error) {
 		return p, nil
 	}
 
+	// YouTube's watch pages are huge and often answer a server with a
+	// consent page, so scraping them rarely finds a title. Its oEmbed
+	// endpoint is the documented way to ask.
+	if id := youtubeID(target); id != "" {
+		p, err := f.fetchYouTube(ctx, canonical, id)
+		if err != nil {
+			return Preview{}, err
+		}
+		f.store(canonical, p)
+		return p, nil
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, canonical, nil)
 	if err != nil {
 		return Preview{}, err
@@ -199,6 +213,70 @@ func (f *Fetcher) Fetch(ctx context.Context, raw string) (Preview, error) {
 
 	f.store(canonical, preview)
 	return preview, nil
+}
+
+var youtubeIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{11}$`)
+
+// youtubeID returns the video ID of a YouTube video link, or "".
+func youtubeID(u *url.URL) string {
+	host := strings.TrimPrefix(strings.ToLower(u.Hostname()), "www.")
+	host = strings.TrimPrefix(host, "m.")
+	var id string
+	switch host {
+	case "youtu.be":
+		id = strings.Trim(u.Path, "/")
+	case "youtube.com", "music.youtube.com":
+		switch {
+		case u.Path == "/watch":
+			id = u.Query().Get("v")
+		case strings.HasPrefix(u.Path, "/shorts/"), strings.HasPrefix(u.Path, "/embed/"), strings.HasPrefix(u.Path, "/live/"):
+			parts := strings.Split(u.Path, "/")
+			if len(parts) > 2 {
+				id = parts[2]
+			}
+		}
+	}
+	if !youtubeIDRe.MatchString(id) {
+		return ""
+	}
+	return id
+}
+
+// fetchYouTube asks YouTube's oEmbed endpoint about one video, through
+// the same guarded client as every other fetch.
+func (f *Fetcher) fetchYouTube(ctx context.Context, canonical, id string) (Preview, error) {
+	endpoint := "https://www.youtube.com/oembed?format=json&url=" +
+		url.QueryEscape("https://www.youtube.com/watch?v="+id)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return Preview{}, err
+	}
+	req.Header.Set("User-Agent", "OpenVoxa/0.1 (+https://github.com/OpenVoxa/OpenVoxa) link-preview")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := f.client.Do(req)
+	if err != nil {
+		return Preview{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		// 401/403: embedding disabled; 404: private or removed.
+		return Preview{}, fmt.Errorf("unfurl: youtube oembed returned %d", resp.StatusCode)
+	}
+
+	var o struct {
+		Title        string `json:"title"`
+		AuthorName   string `json:"author_name"`
+		ThumbnailURL string `json:"thumbnail_url"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&o); err != nil {
+		return Preview{}, fmt.Errorf("unfurl: youtube oembed: %w", err)
+	}
+	p := Preview{URL: canonical, Site: "YouTube", Title: o.Title, Description: o.AuthorName}
+	if t, err := url.Parse(o.ThumbnailURL); err == nil && t.Scheme == "https" {
+		p.Image = t.String()
+	}
+	return p, nil
 }
 
 func (f *Fetcher) cached(key string) (Preview, bool) {
