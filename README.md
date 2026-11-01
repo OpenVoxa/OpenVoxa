@@ -56,7 +56,7 @@ Permissions are enforced where it counts. A user without post rights in a voice 
 
 - **End-to-end encryption** for text (MLS, RFC 9420) and for voice and screen media. The database schema is already shaped for it: message bodies are opaque `BYTEA`, so turning encryption on needs no migration.
 - **Screen sharing** with configurable resolution and frame rate
-- **A real client.** The web client at `/` has sign-up and login, recovery keys with history backup, and text chat (encrypted and plain channels, history paging, editing and deleting, unread markers). Voice, attachments and admin tools still live in the deliberately ugly debug page at `/debug/`. The desktop client comes later.
+- **A real client.** The web client at `/` has sign-up and login, recovery keys with history backup, text chat (encrypted and plain channels, history paging, editing and deleting, unread markers), channel management, and encrypted voice with screen sharing. Attachments, GIFs and the remaining admin tools still live in the deliberately ugly debug page at `/debug/`. The desktop client comes later.
 
 ## What it's explicitly not doing
 

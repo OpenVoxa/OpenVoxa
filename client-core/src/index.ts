@@ -50,6 +50,7 @@ export type {
   CryptoState,
   KeyValueStore,
   Unreadable,
+  VoicePresence,
 } from "./chat.js";
 export {
   encryptFile,

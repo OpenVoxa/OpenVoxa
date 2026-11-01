@@ -3,21 +3,27 @@
 
 /**
  * The signed-in client: channel sidebar, message pane, composer (build
- * order 13, M2). Discord-like layout, one server per instance, so no
- * server rail. Voice channels are listed but inert until M3.
+ * order 13, M2/M3). Discord-like layout, one server per instance, so no
+ * server rail. Clicking a voice channel joins its call; the people in
+ * each call are listed under it, and screen shares open in the stage.
  *
  * All chat logic lives in client-core's Chat / ChannelView; this file
  * only draws their snapshots and forwards what the user does.
  */
 
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { Chat, type ChannelView, type ChannelInfo } from "@core/chat";
+import { Chat, type ChannelView, type ChannelInfo, type VoicePresence } from "@core/chat";
+import type { VoiceClient, VoiceParticipant } from "@core/voice";
 import type { BackupStatus } from "@core/recovery";
 import type { Session } from "./api";
 import type { BackupManager } from "./backup";
 import { apiCall, cryptoSession, localStore, wsUrl } from "./core";
 import { ChannelPane } from "./ChannelPane";
 import { ChannelSettingsDialog, CreateChannelDialog } from "./ChannelDialogs";
+import {
+  PersonMenu, ShareDialog, Stage, VoiceBar, VoiceRoster, VoiceSettingsDialog,
+  usePushToTalk, useVoiceSnapshot,
+} from "./VoiceUI";
 
 const LAST_CHANNEL = (userId: string) => `lastChannel.${userId}`;
 
@@ -44,8 +50,18 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   const [dialog, setDialog] = useState<
     | { k: "create"; kind: "text" | "voice" }
     | { k: "settings"; id: string }
+    | { k: "share" }
+    | { k: "voiceSettings" }
     | null
   >(null);
+  const [presence, setPresence] = useState<VoicePresence>({});
+  // Created on first join: loading it pulls in LiveKit, which text-only
+  // use never needs.
+  const [voiceClient, setVoiceClient] = useState<VoiceClient | null>(null);
+  const vsnap = useVoiceSnapshot(voiceClient);
+  usePushToTalk(voiceClient, vsnap);
+  const [stage, setStage] = useState<{ focus: string | null } | null>(null);
+  const [person, setPerson] = useState<{ p: VoiceParticipant; at: { x: number; y: number } } | null>(null);
   const call = useMemo(() => apiCall(session.token, onExpired),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [session.token]);
@@ -69,6 +85,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
         c.on((e) => {
           if (e.type === "channels") setChannels(e.channels);
           else if (e.type === "unread") setUnread(e.unread);
+          else if (e.type === "voice") setPresence(e.presence);
           else if (e.type === "me_changed") {
             (call("/api/v1/me") as Promise<{ permissions: string[] }>)
               .then((me) => live && setPerms(me.permissions ?? []))
@@ -82,6 +99,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
         }
         setChannels(c.channels);
         setUnread(c.unread);
+        setPresence(c.voicePresence);
         setChat(c);
       })
       .catch((err) => live && setFailed(err instanceof Error ? err.message : String(err)));
@@ -93,7 +111,26 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   }, [session.user_id, session.token]);
 
   const text = useMemo(() => channels.filter((c) => c.kind === "text"), [channels]);
-  const voice = useMemo(() => channels.filter((c) => c.kind === "voice"), [channels]);
+  const voiceChannels = useMemo(() => channels.filter((c) => c.kind === "voice"), [channels]);
+
+  // Leave the call when the client goes away (sign-out, session end).
+  useEffect(() => () => void voiceClient?.leave(), [voiceClient]);
+
+  // Keep the call in step with its channel: forced push-to-talk follows
+  // the setting, and a deleted or lost channel ends the call.
+  useEffect(() => {
+    if (!voiceClient || !vsnap || vsnap.state === "idle" || !chat) return;
+    const c = voiceChannels.find((v) => v.id === vsnap.channelId);
+    if (!c) void voiceClient.leave();
+    else voiceClient.setForcePTT(c.force_ptt);
+  }, [voiceClient, vsnap, voiceChannels, chat]);
+
+  // The stage closes itself when the last share ends.
+  const screens = vsnap?.screens ?? [];
+  useEffect(() => {
+    if (stage && !screens.length) setStage(null);
+    else if (stage?.focus && !screens.some((s) => s.id === stage.focus)) setStage({ focus: null });
+  }, [stage, screens]);
 
   // Pick a channel: the open one if it still exists, else the last one
   // used, else the first.
@@ -131,6 +168,33 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
     return <div className="auth-page"><p className="muted">Setting up encryption…</p></div>;
   }
 
+  async function ensureVoice(): Promise<VoiceClient | null> {
+    if (!chat) return null;
+    let v = voiceClient;
+    if (!v) {
+      const [{ VoiceClient }, { createE2EEWorker }] = await Promise.all([
+        import("@core/voice"),
+        import("./voiceWorker"),
+      ]);
+      v = new VoiceClient(chat.session, {
+        call, userId: session.user_id, createWorker: createE2EEWorker, store: localStore,
+      });
+      setVoiceClient(v);
+      // A handle for the browser console, as the debug page has its
+      // helpers: openvoxaVoice.audioStats(), openvoxaVoice.snapshot().
+      (window as unknown as { openvoxaVoice?: VoiceClient }).openvoxaVoice = v;
+    }
+    return v;
+  }
+
+  async function joinVoice(channelId: string) {
+    const v = await ensureVoice();
+    if (!v || !chat) return;
+    if (vsnap?.channelId === channelId && vsnap.state !== "idle") return;
+    await v.join(channelId);
+    void chat.refreshVoice();
+  }
+
   const can = (p: string) => perms.includes(p) || perms.includes("administrator");
   const canDeleteAny = can("delete_messages");
   const canManage = can("manage_channels");
@@ -165,7 +229,10 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
               <li key={c.id} className="channel-row">
                 <button
                   className={`channel${c.id === openId ? " active" : ""}${unread.has(c.id) ? " unread" : ""}`}
-                  onClick={() => setOpenId(c.id)}
+                  onClick={() => {
+                    setOpenId(c.id);
+                    setStage(null);
+                  }}
                   aria-current={c.id === openId ? "page" : undefined}
                   title={c.encrypted ? "End-to-end encrypted" : "Not encrypted"}
                 >
@@ -179,31 +246,62 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
             ))}
             {!text.length && <li className="muted empty">No channels you can see.</li>}
           </ul>
-          {(voice.length > 0 || canManage) && (
+          {(voiceChannels.length > 0 || canManage) && (
             <>
               {heading("Voice channels", "voice")}
               <ul>
-                {voice.map((c) => (
-                  <li key={c.id} className="channel-row">
-                    <button className="channel" disabled title="Voice arrives in a later version; use the debug page for now">
-                      <SpeakerIcon />
-                      <span className="name">{c.name}</span>
-                      {c.force_ptt && <span className="tag small" title="Push-to-talk required">PTT</span>}
-                    </button>
-                    {gear(c)}
-                  </li>
-                ))}
-                {!voice.length && <li className="muted empty">No voice channels yet.</li>}
+                {voiceChannels.map((c) => {
+                  const here = vsnap && vsnap.state !== "idle" && vsnap.channelId === c.id;
+                  return (
+                    <li key={c.id} className="voice-item">
+                      <div className="channel-row">
+                        <button className={`channel${here ? " active" : ""}`}
+                          onClick={() => void joinVoice(c.id)}
+                          title={here ? "You're in this call" : "Join the call"}>
+                          <SpeakerIcon />
+                          <span className="name">{c.name}</span>
+                          {c.force_ptt && <span className="tag small" title="Push-to-talk required">PTT</span>}
+                        </button>
+                        {gear(c)}
+                      </div>
+                      <VoiceRoster
+                        live={here ? vsnap.participants : null}
+                        others={presence[c.id] ?? []}
+                        onWatch={(pid) => {
+                          const s = screens.find((x) => x.participantId === pid);
+                          setStage({ focus: s?.id ?? null });
+                        }}
+                        onPerson={(p, at) => setPerson({ p, at })}
+                      />
+                    </li>
+                  );
+                })}
+                {!voiceChannels.length && <li className="muted empty">No voice channels yet.</li>}
               </ul>
             </>
           )}
         </div>
+        {voiceClient && vsnap && (
+          <VoiceBar voice={voiceClient} snap={vsnap}
+            channelName={voiceChannels.find((c) => c.id === vsnap.channelId)?.name ?? ""}
+            onShare={() => setDialog({ k: "share" })}
+            onSettings={() => setDialog({ k: "voiceSettings" })} />
+        )}
+        {screens.length > 0 && !stage && (
+          <button className="watch-banner" onClick={() => setStage({ focus: null })}>
+            <span className="live">LIVE</span> {screens.length === 1 ? `${screens[0].name} is sharing` : `${screens.length} screens shared`} · Watch
+          </button>
+        )}
         <UserPanel session={session} backup={backup} notice={notice} busy={busy}
           onLogout={() => onLogout(chat)} onBackUpNow={onBackUpNow}
+          onVoiceSettings={() => void ensureVoice().then((v) => v && setDialog({ k: "voiceSettings" }))}
           onSetUpKey={onSetUpKey} onEnterKey={onEnterKey} />
       </nav>
       <main className="pane">
-        {view ? (
+        {stage && voiceClient ? (
+          <Stage voice={voiceClient} screens={screens} focus={stage.focus}
+            setFocus={(focus) => setStage({ focus })} onBack={() => setStage(null)} />
+        ) : view ? (
           <ChannelPane key={view.channel.id} view={view} username={session.username} canDeleteAny={canDeleteAny} />
         ) : (
           <div className="pane-empty muted">{text.length ? "Opening…" : "Nothing to show yet."}</div>
@@ -221,6 +319,17 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
             });
           }}
         />
+      )}
+      {dialog?.k === "share" && voiceClient && (
+        <ShareDialog voice={voiceClient} onClose={() => setDialog(null)} />
+      )}
+      {dialog?.k === "voiceSettings" && voiceClient && (
+        <VoiceSettingsDialog voice={voiceClient} snap={vsnap} onClose={() => setDialog(null)} />
+      )}
+      {person && voiceClient && (
+        <PersonMenu voice={voiceClient}
+          person={vsnap?.participants.find((p) => p.id === person.p.id) ?? person.p}
+          at={person.at} onClose={() => setPerson(null)} />
       )}
       {dialogChannel && (
         <ChannelSettingsDialog
@@ -267,7 +376,7 @@ function SpeakerIcon() {
   );
 }
 
-function UserPanel({ session, backup, notice, busy, onLogout, onBackUpNow, onSetUpKey, onEnterKey }: {
+function UserPanel({ session, backup, notice, busy, onLogout, onBackUpNow, onSetUpKey, onEnterKey, onVoiceSettings }: {
   session: Session;
   backup: BackupStatus | null;
   notice: string | null;
@@ -276,6 +385,7 @@ function UserPanel({ session, backup, notice, busy, onLogout, onBackUpNow, onSet
   onBackUpNow: () => void;
   onSetUpKey: () => void;
   onEnterKey: () => void;
+  onVoiceSettings: () => void;
 }) {
   return (
     <div className="user-panel">
@@ -290,6 +400,9 @@ function UserPanel({ session, backup, notice, busy, onLogout, onBackUpNow, onSet
         </span>
         {notice && <span className="muted small" role="status">{notice}</span>}
       </div>
+      <button className="icon" onClick={onVoiceSettings} title="Voice settings" aria-label="Voice settings">
+        <GearIcon />
+      </button>
       <button className="secondary" onClick={onLogout} disabled={!!busy}>{busy ?? "Log out"}</button>
     </div>
   );
