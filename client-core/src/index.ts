@@ -38,7 +38,7 @@ export { TsMlsProvider } from "./mls/tsmls.js";
 export { Identity } from "./identity.js";
 export { Groups, GroupReset, RemovedFromGroup } from "./groups.js";
 export { storage } from "./storage.js";
-export { Chat, ChannelView } from "./chat.js";
+export { Chat, ChannelView, describePerson } from "./chat.js";
 export type {
   AttachmentInfo,
   ChannelAccess,
@@ -49,6 +49,7 @@ export type {
   ChatOptions,
   CryptoState,
   KeyValueStore,
+  Notice,
   Unreadable,
   VoicePresence,
 } from "./chat.js";

@@ -8,11 +8,16 @@
  */
 
 import {
-  Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore,
+  useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore,
   type KeyboardEvent, type ReactNode,
 } from "react";
-import type { ChannelSnapshot, ChannelView, ChatMessage, CryptoState } from "@core/chat";
+import type { AttachmentInfo, ChannelSnapshot, ChannelView, ChatMessage, CryptoState, Notice } from "@core/chat";
+import type { ApiCall } from "@core/identity";
 import { describeRetention } from "./ChannelDialogs";
+import { firstLink, Markdown } from "./markdown";
+import { LinkPreview } from "./previews";
+import { GifPicker, useGifsEnabled } from "./gifs";
+import { PREVIEWS_ENCRYPTED, useToggle } from "./settings";
 
 function useSnapshot(view: ChannelView): ChannelSnapshot {
   const subscribe = useCallback((cb: () => void) => view.on(cb), [view]);
@@ -23,15 +28,18 @@ function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export function ChannelPane({ view, username, canDeleteAny }: {
+export function ChannelPane({ view, call, username, canDeleteAny }: {
   view: ChannelView;
+  call: ApiCall;
   username: string;
   canDeleteAny: boolean;
 }) {
   const snap = useSnapshot(view);
+  const previewsEncrypted = useToggle(PREVIEWS_ENCRYPTED);
   const [editing, setEditing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const c = snap.channel;
+  const previews = !c.encrypted || previewsEncrypted;
 
   const lastOwn = [...snap.messages].reverse().find((m) => m.own && !m.deleted && !m.pending && !m.unreadable);
 
@@ -54,6 +62,8 @@ export function ChannelPane({ view, username, canDeleteAny }: {
       <MessageList
         view={view}
         snap={snap}
+        call={call}
+        previews={previews}
         username={username}
         canDeleteAny={canDeleteAny}
         editing={editing}
@@ -69,10 +79,11 @@ export function ChannelPane({ view, username, canDeleteAny }: {
 
       <Composer
         snap={snap}
-        onSend={async (text) => {
+        call={call}
+        onSend={async (text, attachments) => {
           setError(null);
           try {
-            await view.send(text);
+            await view.send(text, attachments);
             return true;
           } catch (err) {
             setError(errText(err));
@@ -109,9 +120,11 @@ const STICK_PX = 80;
 /** Start loading older history this close to the top. */
 const OLDER_PX = 300;
 
-function MessageList({ view, snap, username, canDeleteAny, editing, setEditing, onError }: {
+function MessageList({ view, snap, call, previews, username, canDeleteAny, editing, setEditing, onError }: {
   view: ChannelView;
   snap: ChannelSnapshot;
+  call: ApiCall;
+  previews: boolean;
   username: string;
   canDeleteAny: boolean;
   editing: string | null;
@@ -162,20 +175,45 @@ function MessageList({ view, snap, username, canDeleteAny, editing, setEditing, 
     if (el.scrollHeight <= el.clientHeight + OLDER_PX) void view.loadOlder();
   }, [snap.loaded, snap.hasMore, snap.loadingOlder, snap.messages.length, view]);
 
+  // Notices sit among the messages by time, after any sent at the same
+  // moment. Pending messages carry the time they were sent from here.
   const rows: ReactNode[] = [];
+  const notices = snap.notices;
+  let ni = 0;
+  let lastDay = "";
+  /** A day separator when `at` starts a new day; true if it did. */
+  const dayBreak = (at: string, key: string) => {
+    const day = new Date(at).toDateString();
+    if (day === lastDay) return false;
+    lastDay = day;
+    rows.push(<div key={`day:${day}:${key}`} className="day" role="separator"><span>{formatDay(at)}</span></div>);
+    return true;
+  };
+  const noticesBefore = (at: string | null) => {
+    const t = at === null ? Infinity : Date.parse(at);
+    while (ni < notices.length && Date.parse(notices[ni].at) < t) {
+      const n = notices[ni];
+      dayBreak(n.at, `n${n.id}`);
+      rows.push(<NoticeRow key={`n${n.id}`} n={n} />);
+      ni++;
+    }
+  };
   let prev: ChatMessage | undefined;
   for (const m of snap.messages) {
-    const day = new Date(m.createdAt).toDateString();
-    const newDay = !prev || new Date(prev.createdAt).toDateString() !== day;
-    if (newDay) {
-      rows.push(<div key={`day:${day}:${m.id}`} className="day" role="separator"><span>{formatDay(m.createdAt)}</span></div>);
-    }
+    const before = ni;
+    noticesBefore(m.createdAt);
+    // A notice breaks up a run of messages from one person.
+    if (ni !== before) prev = undefined;
+    const newDay = dayBreak(m.createdAt, m.id);
     const compact = !newDay && !!prev && prev.authorId === m.authorId && !prev.deleted &&
       Date.parse(m.createdAt) - Date.parse(prev.createdAt) < 5 * 60_000;
     rows.push(
       <Message
         key={m.id}
         m={m}
+        call={call}
+        encrypted={snap.channel.encrypted}
+        previews={previews}
         compact={compact}
         username={username}
         canDelete={!m.pending && !m.deleted && (m.own || canDeleteAny)}
@@ -204,9 +242,17 @@ function MessageList({ view, snap, username, canDeleteAny, editing, setEditing, 
     );
     prev = m;
   }
+  noticesBefore(null);
+
+  // An image finishing loading makes the list taller; keep following the
+  // bottom if we were. (load doesn't bubble, so listen in capture.)
+  const onLoad = () => {
+    const el = ref.current;
+    if (el && stick.current) el.scrollTop = el.scrollHeight;
+  };
 
   return (
-    <div className="messages" ref={ref} onScroll={onScroll} role="log" aria-live="polite">
+    <div className="messages" ref={ref} onScroll={onScroll} onLoadCapture={onLoad} role="log" aria-live="polite">
       <div className="history-top muted small">
         {snap.loadingOlder ? "Loading older messages…"
           : snap.hasMore ? <button className="link small" onClick={() => void view.loadOlder()}>Load older messages</button>
@@ -217,7 +263,14 @@ function MessageList({ view, snap, username, canDeleteAny, editing, setEditing, 
       </div>
       {!snap.loaded && <div className="muted small center">Loading…</div>}
       {rows}
-      {snap.notices.map((n, i) => <div key={`n${i}`} className="notice small">{n}</div>)}
+    </div>
+  );
+}
+
+function NoticeRow({ n }: { n: Notice }) {
+  return (
+    <div className={`notice small${n.kind === "membership" ? " membership" : ""}`} role="status">
+      <time className="muted" dateTime={n.at}>{formatTime(n.at)}</time> {n.text}
     </div>
   );
 }
@@ -244,8 +297,11 @@ const UNREADABLE: Record<NonNullable<ChatMessage["unreadable"]>, string> = {
 
 // ------------------------------------------------------------ message
 
-function Message({ m, compact, username, canDelete, canEdit, editing, onEdit, onCancelEdit, onSaveEdit, onDelete, onDismiss }: {
+function Message({ m, call, encrypted, previews, compact, username, canDelete, canEdit, editing, onEdit, onCancelEdit, onSaveEdit, onDelete, onDismiss }: {
   m: ChatMessage;
+  call: ApiCall;
+  encrypted: boolean;
+  previews: boolean;
   compact: boolean;
   username: string;
   canDelete: boolean;
@@ -265,7 +321,8 @@ function Message({ m, compact, username, canDelete, canEdit, editing, onEdit, on
   if (m.deleted) body = <em>Message deleted.</em>;
   else if (m.unreadable) body = <em>{UNREADABLE[m.unreadable]}</em>;
   else if (editing) body = <EditBox initial={m.text} onSave={onSaveEdit} onCancel={onCancelEdit} />;
-  else body = <Linkified text={m.text} />;
+  else body = m.text ? <Markdown text={m.text} /> : null;
+  const link = previews && !m.deleted && !m.unreadable && !m.pending && !editing ? firstLink(m.text) : null;
 
   return (
     <article className={classes} data-id={m.id} aria-label={`${name} at ${formatTime(m.createdAt)}`}>
@@ -287,11 +344,8 @@ function Message({ m, compact, username, canDelete, canEdit, editing, onEdit, on
           </span>
         )}
       </div>
-      {!m.deleted && m.attachments.length > 0 && (
-        <div className="muted small">
-          {m.attachments.length} attachment{m.attachments.length > 1 ? "s" : ""} (not shown in this client yet; open the debug page)
-        </div>
-      )}
+      {!m.deleted && m.attachments.length > 0 && <Attachments m={m} encrypted={encrypted} />}
+      {link && <LinkPreview call={call} url={link} />}
       {m.sharedBy && !m.deleted && (
         <div className="muted small">
           Shared by {m.sharedBy.verified ? (m.sharedBy.username ?? "a member") : "an unverified member"}
@@ -316,20 +370,54 @@ function Message({ m, compact, username, canDelete, canEdit, editing, onEdit, on
   );
 }
 
-const URL_RE = /\bhttps?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]}]/g;
+// Types shown inline. SVG is left out: it can carry script. Everything
+// else is a download link, which the server serves as an attachment.
+const INLINE = /^(image\/(png|jpeg|gif|webp)|video\/(mp4|webm)|audio\/(mpeg|ogg|wav))$/;
 
-/** Text with http(s) links clickable. React escapes everything else. */
-function Linkified({ text }: { text: string }) {
-  const parts: ReactNode[] = [];
-  let last = 0;
-  for (const match of text.matchAll(URL_RE)) {
-    const i = match.index ?? 0;
-    if (i > last) parts.push(text.slice(last, i));
-    parts.push(<a key={i} href={match[0]} target="_blank" rel="noopener noreferrer nofollow">{match[0]}</a>);
-    last = i + match[0].length;
+/**
+ * A message's files. What the server stores as-is (anything in a plain
+ * channel, and provider GIFs in any channel) shows inline from its signed
+ * URL. Files encrypted by their sender come in M4 session B.
+ */
+function Attachments({ m, encrypted }: { m: ChatMessage; encrypted: boolean }) {
+  const keyed = new Set(m.files.map((f) => f.id));
+  return (
+    <div className="attachments">
+      {m.attachments.map((a) => {
+        const sealed = encrypted && (keyed.has(a.id) ||
+          (a.filename === "encrypted" && a.content_type === "application/octet-stream"));
+        if (sealed) {
+          return <span key={a.id} className="muted small">Encrypted file (not shown in this client yet; open the debug page)</span>;
+        }
+        return <PlainAttachment key={a.id} a={a} />;
+      })}
+    </div>
+  );
+}
+
+function PlainAttachment({ a }: { a: AttachmentInfo }) {
+  if (!a.url) return <span className="muted small">{a.filename} (still sending…)</span>;
+  const kind = INLINE.test(a.content_type) ? a.content_type.split("/")[0] : null;
+  if (kind === "image") {
+    return (
+      <a href={a.url} target="_blank" rel="noopener noreferrer" className="att-media">
+        <img src={a.url} alt={a.filename} loading="lazy" />
+      </a>
+    );
   }
-  if (last < text.length) parts.push(text.slice(last));
-  return <span className="text">{parts.map((p, i) => <Fragment key={i}>{p}</Fragment>)}</span>;
+  if (kind === "video") return <video className="att-media" src={a.url} controls preload="metadata" />;
+  if (kind === "audio") return <audio src={a.url} controls preload="metadata" />;
+  return (
+    <a href={a.url} target="_blank" rel="noopener noreferrer" className="att-file">
+      {a.filename} <span className="muted small">({formatSize(a.size)})</span>
+    </a>
+  );
+}
+
+function formatSize(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function EditBox({ initial, onSave, onCancel }: {
@@ -379,12 +467,16 @@ function EditBox({ initial, onSave, onCancel }: {
 
 // ----------------------------------------------------------- composer
 
-function Composer({ snap, onSend, onEditLast }: {
+function Composer({ snap, call, onSend, onEditLast }: {
   snap: ChannelSnapshot;
-  onSend: (text: string) => Promise<boolean>;
+  call: ApiCall;
+  onSend: (text: string, attachments?: AttachmentInfo[]) => Promise<boolean>;
   onEditLast: () => void;
 }) {
   const [text, setText] = useState("");
+  const [gifs, setGifs] = useState(false);
+  const gifsEnabled = useGifsEnabled(call);
+  const closeGifs = useCallback(() => setGifs(false), []);
   const ref = useRef<HTMLTextAreaElement>(null);
   const encryptedNotReady = snap.channel.encrypted && snap.crypto.kind !== "ready";
   const reason = !snap.canPost ? "You can't post in this channel."
@@ -416,6 +508,15 @@ function Composer({ snap, onSend, onEditLast }: {
 
   return (
     <div className="composer">
+      {gifs && !reason && (
+        <GifPicker call={call} channelId={snap.channel.id} onClose={closeGifs}
+          onPick={async (a) => {
+            // Sent on its own straight away, like other chat apps; whatever
+            // is typed stays in the box.
+            if (!(await onSend("", [a]))) throw new Error("Couldn't send the GIF.");
+            ref.current?.focus();
+          }} />
+      )}
       <AutoTextarea
         ref={ref}
         value={text}
@@ -425,6 +526,11 @@ function Composer({ snap, onSend, onEditLast }: {
         placeholder={reason ?? `Message #${snap.channel.name}`}
         label={`Message #${snap.channel.name}`}
       />
+      {gifsEnabled && (
+        <button className={`secondary gif-btn${gifs ? " on" : ""}`} disabled={!!reason}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={() => setGifs((g) => !g)} title="Send a GIF" aria-expanded={gifs}>GIF</button>
+      )}
       <button className="primary" onClick={() => void send()} disabled={!!reason || !text.trim()}>Send</button>
     </div>
   );

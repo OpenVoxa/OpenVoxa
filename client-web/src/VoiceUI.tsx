@@ -14,6 +14,7 @@ import type {
 } from "@core/voice";
 import { Modal } from "./ChannelDialogs";
 import { localStore } from "./core";
+import { PREVIEWS_ENCRYPTED, setToggle, useToggle, VOICE_TONES } from "./settings";
 
 // The presets are duplicated from client-core's SHARE_PRESETS so this
 // file needs no runtime import of the (lazy) voice module.
@@ -276,7 +277,7 @@ export function VoiceBar({ voice, snap, channelName, onShare, onSettings }: {
         <button className="primary small-btn" onClick={() => void voice.startAudio()}>Click to hear the call</button>
       )}
       <div className="voice-buttons">
-        <button className={`vbtn${!snap.pttMode && snap.muted ? " on" : ""}`}
+        <button className={`vbtn${!snap.pttMode && (snap.muted || snap.deafened) ? " on" : ""}`}
           disabled={connecting || !snap.canPublish || snap.pttMode}
           onClick={() => void voice.setMuted(!snap.muted)}
           title={!snap.canPublish ? "You can't speak here" : snap.pttMode ? "Push-to-talk is on" : snap.muted ? "Unmute" : "Mute"}
@@ -403,6 +404,8 @@ export function VoiceSettingsDialog({ voice, snap, onClose }: {
   const [binding, setBinding] = useState(false);
   const [pin, setPin] = useState(voice.pinQuality);
   const [error, setError] = useState<string | null>(null);
+  const tones = useToggle(VOICE_TONES);
+  const previews = useToggle(PREVIEWS_ENCRYPTED);
 
   useEffect(() => {
     voice.listDevices().then(setDevices).catch((err) => setError(String(err?.message ?? err)));
@@ -427,8 +430,9 @@ export function VoiceSettingsDialog({ voice, snap, onClose }: {
     d.label || (d.deviceId === "default" ? "System default" : `Device ${i + 1}`);
 
   return (
-    <Modal title="Voice settings" onClose={onClose}>
+    <Modal title="Settings" onClose={onClose}>
       <div className="modal-body">
+        <h3 className="settings-head">Voice</h3>
         <label>
           Microphone
           <select value={input} onChange={(e) => {
@@ -486,6 +490,25 @@ export function VoiceSettingsDialog({ voice, snap, onClose }: {
           <span>
             Always watch screen shares at full quality
             <span className="muted small block">Otherwise quality follows the size of the video on screen. Applies next time you join.</span>
+          </span>
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={tones} onChange={(e) => setToggle(VOICE_TONES, e.target.checked)} />
+          <span>
+            Join and leave sounds
+            <span className="muted small block">A short tone when you or someone else joins or leaves your call.</span>
+          </span>
+        </label>
+
+        <h3 className="settings-head">Chat</h3>
+        <label className="check">
+          <input type="checkbox" checked={previews} onChange={(e) => setToggle(PREVIEWS_ENCRYPTED, e.target.checked)} />
+          <span>
+            Link previews in encrypted channels
+            <span className="muted small block">
+              Messages stay encrypted, but to build a preview the server fetches the link, so it learns which
+              links you see there. Preview images load from the linked site. Plain channels always show previews.
+            </span>
           </span>
         </label>
         {error && <p className="error" role="alert">{error}</p>}

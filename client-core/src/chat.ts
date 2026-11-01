@@ -20,7 +20,7 @@
 
 import { decodeEnvelope, encodeEnvelope, type FileKey } from "./attachments.js";
 import type { ApiCall } from "./identity.js";
-import type { AutoEvent } from "./groups.js";
+import type { AutoEvent, MembershipChange, PersonChange } from "./groups.js";
 import { normalizeTime, storage, type SharedBy } from "./storage.js";
 import type { Session } from "./index.js";
 
@@ -132,8 +132,20 @@ export interface ChannelSnapshot {
   readonly loadingOlder: boolean;
   readonly canPost: boolean;
   readonly crypto: CryptoState;
-  /** Something worth a line in the UI (shared history, group replaced). */
-  readonly notices: readonly string[];
+  /** Something worth a line in the UI (shared history, group replaced,
+   * who joined or left the encryption group). Oldest first. */
+  readonly notices: readonly Notice[];
+}
+
+/** A line in the message stream that isn't a message. */
+export interface Notice {
+  /** Unique within the view, for React keys. */
+  readonly id: number;
+  /** When this device learned of it (ISO time); sorts it among messages. */
+  readonly at: string;
+  readonly text: string;
+  /** "membership": someone joined or left the channel's encryption. */
+  readonly kind: "info" | "membership";
 }
 
 /** Per-account key/value storage for small client state (unread marks). */
@@ -256,6 +268,7 @@ export class Chat {
   #view: ChannelView | null = null;
   #unread = new Set<string>();
   #offAuto: (() => void) | null = null;
+  #offMembership: (() => void) | null = null;
   #voice: VoicePresence = {};
   #voicePoll: ReturnType<typeof setInterval> | undefined;
   #voiceTimer: ReturnType<typeof setTimeout> | undefined;
@@ -317,6 +330,7 @@ export class Chat {
 
   async start(): Promise<void> {
     this.#offAuto = this.session.groups.onAuto((ev) => this.#onAuto(ev));
+    this.#offMembership = this.session.groups.onMembership((c) => this.#onMembership(c));
     await this.refreshChannels();
     void this.#openEvents();
     void this.refreshVoice();
@@ -329,6 +343,7 @@ export class Chat {
     clearInterval(this.#voicePoll);
     clearTimeout(this.#voiceTimer);
     this.#offAuto?.();
+    this.#offMembership?.();
     this.#view?.close();
     this.#view = null;
     const ws = this.#events;
@@ -500,6 +515,15 @@ export class Chat {
     else if (ev.kind === "reconciled") v.cryptoReady();
   }
 
+  /** Who joined or left the open channel's group, per person by default
+   * (decisions.md, "Notices are per person"). Voice groups announce here
+   * too, under the voice channel's ID; those never match a text view. */
+  #onMembership(change: MembershipChange): void {
+    const v = this.#view;
+    if (!v || v.channel.id !== change.channelId || !v.channel.encrypted) return;
+    for (const p of change.people) v.notice(describePerson(p), "membership");
+  }
+
   /**
    * Revoke this device on the server and destroy its local keys and
    * archive. Called on sign-out once the backup is uploaded. 404 means it
@@ -515,6 +539,18 @@ export class Chat {
     this.close();
     await storage.wipe();
   }
+}
+
+/** "staff joined", "staff left", "staff joined on a new device". */
+export function describePerson(p: PersonChange): string {
+  const who = p.you ? "You" : p.username ?? null;
+  if (p.kind === "new_device") {
+    const label = p.devices.map((d) => d.label).filter(Boolean).join(", ");
+    return `${who ?? "An unknown account"} joined on a new device${label ? ` (${label})` : ""}.`;
+  }
+  const verb = p.kind === "joined" ? "joined" : "left";
+  if (!who) return `An unknown device ${verb} the encryption.`;
+  return `${who} ${verb}.`;
 }
 
 interface GlobalFrame {
@@ -546,7 +582,8 @@ export class ChannelView {
   #loadingOlder = false;
   #canPost: boolean;
   #crypto: CryptoState;
-  #notices: string[] = [];
+  #notices: Notice[] = [];
+  #noticeSeq = 0;
   #closed = false;
   /** Access lost or channel deleted: stays on screen, never reconnects. */
   #gone = false;
@@ -628,8 +665,9 @@ export class ChannelView {
   }
 
   /** @internal */
-  notice(text: string): void {
-    this.#notices = [...this.#notices, text];
+  notice(text: string, kind: Notice["kind"] = "info"): void {
+    const n: Notice = { id: ++this.#noticeSeq, at: new Date().toISOString(), text, kind };
+    this.#notices = [...this.#notices, n];
     this.#changed();
   }
 
@@ -1102,9 +1140,13 @@ export class ChannelView {
 
   // ----------------------------------------------------------- sending
 
-  /** Send a text message. Shown at once as pending; the echo replaces it. */
-  async send(text: string): Promise<void> {
-    if (!text.trim()) return;
+  /**
+   * Send a message. Shown at once as pending; the echo replaces it.
+   * attachments: already uploaded (a GIF from POST /channels/{id}/gifs);
+   * with one, the text may be empty.
+   */
+  async send(text: string, attachments: readonly AttachmentInfo[] = []): Promise<void> {
+    if (!text.trim() && !attachments.length) return;
     const ws = this.#socket;
     if (!ws || this.#connection !== "open") throw new Error("not connected");
     if (!this.#canPost) throw new Error("you can't post in this channel");
@@ -1134,10 +1176,11 @@ export class ChannelView {
       deleted: false,
       text,
       files: [],
-      attachments: [],
+      attachments: [...attachments],
       pending: true,
     });
-    ws.send(JSON.stringify({ type: "send", body, ref }));
+    const ids = attachments.map((a) => a.id);
+    ws.send(JSON.stringify({ type: "send", body, ref, ...(ids.length ? { attachments: ids } : {}) }));
   }
 
   #failPending(ref: string, why: string): void {

@@ -24,6 +24,7 @@ import {
   PersonMenu, ShareDialog, Stage, VoiceBar, VoiceRoster, VoiceSettingsDialog,
   usePushToTalk, useVoiceSnapshot,
 } from "./VoiceUI";
+import { useVoiceTones } from "./tones";
 
 const LAST_CHANNEL = (userId: string) => `lastChannel.${userId}`;
 
@@ -60,6 +61,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   const [voiceClient, setVoiceClient] = useState<VoiceClient | null>(null);
   const vsnap = useVoiceSnapshot(voiceClient);
   usePushToTalk(voiceClient, vsnap);
+  useVoiceTones(vsnap);
   const [stage, setStage] = useState<{ focus: string | null } | null>(null);
   const [person, setPerson] = useState<{ p: VoiceParticipant; at: { x: number; y: number } } | null>(null);
   const call = useMemo(() => apiCall(session.token, onExpired),
@@ -302,7 +304,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           <Stage voice={voiceClient} screens={screens} focus={stage.focus}
             setFocus={(focus) => setStage({ focus })} onBack={() => setStage(null)} />
         ) : view ? (
-          <ChannelPane key={view.channel.id} view={view} username={session.username} canDeleteAny={canDeleteAny} />
+          <ChannelPane key={view.channel.id} view={view} call={call} username={session.username} canDeleteAny={canDeleteAny} />
         ) : (
           <div className="pane-empty muted">{text.length ? "Opening…" : "Nothing to show yet."}</div>
         )}
@@ -400,7 +402,7 @@ function UserPanel({ session, backup, notice, busy, onLogout, onBackUpNow, onSet
         </span>
         {notice && <span className="muted small" role="status">{notice}</span>}
       </div>
-      <button className="icon" onClick={onVoiceSettings} title="Voice settings" aria-label="Voice settings">
+      <button className="icon" onClick={onVoiceSettings} title="Settings" aria-label="Settings">
         <GearIcon />
       </button>
       <button className="secondary" onClick={onLogout} disabled={!!busy}>{busy ?? "Log out"}</button>
