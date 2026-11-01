@@ -202,10 +202,14 @@ _Last updated: 2026-10-31, step 13 (real client) M1 in progress; see project doc
   5. Opt-in history sharing (Ryan wants it; see decisions.md Open items).
   6. Local storage encryption (blocked on recovery keys).
 - Step 13 M1 (signup/login + recovery key): part 1 `client-web` login and
-  register served at `/`, verified on Docker (T1). Part 2: recovery backup
-  storage, migration 0015 + `recovery.go`: `GET/PUT/DELETE /me/backup`
-  (PUT starts a new backup, drops old chunks, returns its id) and
-  `PUT/GET/DELETE /me/backup/chunks/{name}?backup=<id>` (raw bytes, 4 MB
-  each, 1000 chunks, 256 MB per account). Next: client-core recovery key.
+  register at `/`, verified (T1). Part 2 backup storage, verified (B1):
+  migration 0015 + `recovery.go`, `GET/PUT/DELETE /me/backup` (PUT starts
+  a new backup, drops old chunks, returns its id) and
+  `PUT/GET/DELETE /me/backup/chunks/{name}?backup=<id>` (raw bytes, 4 MB,
+  1000 chunks, 256 MB per account). Part 3 `client-core/src/recovery.ts`:
+  `RecoveryKey` (12 BIP-39 words via @scure/bip39, QR payload `OVRK1:<hex>`),
+  `Backup` (create/unlock/upload/restore/remove/status), derived key kept
+  in the device store. Sign-out wipes the archive: upload before it.
+  Next: client-web screens (part 4).
 - Other open items (revoked-device removal, recovery keys, etc.) live in
   decisions.md "Open items" — check there before proposing new work.

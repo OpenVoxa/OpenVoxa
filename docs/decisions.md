@@ -1200,6 +1200,19 @@ skip those event types while it is up.
       drops all chunks and issues a new backup id; uploads carry that id
       and get 409 if it is stale, so chunks sealed under two keys never
       mix. Limits: 4 MB per chunk, 1000 chunks, 256 MB per account.
+    - Recovery key and backup format (client-core `recovery.ts`): 128
+      random bits as 12 BIP-39 words (checksum catches typos; first four
+      letters of each word suffice) or a QR payload `OVRK1:<hex>`. The key
+      is random, not a password, so HKDF-SHA256 with a per-backup salt is
+      enough (no Argon2). Header holds format, salt and a key-check value
+      so a wrong key reads as wrong, not as damage. Each upload writes a
+      whole new generation `<gen>-<n>` then deletes the old one, so an
+      interrupted upload leaves one complete copy. Chunks are gzip'd JSON
+      under AES-256-GCM with the backup id and chunk name as additional
+      data. Restore only adds entries the device lacks. The derived key
+      (not the words) is kept on the device as a non-extractable
+      CryptoKey for later uploads; another device starting a new backup
+      locks the others until they enter the new key.
     - Device linking by QR (after M1): a logged-in device shows a QR of
       `https://server/link#<one-time secret>` (about 2 min, single use);
       the phone's camera opens it; the server only relays encrypted

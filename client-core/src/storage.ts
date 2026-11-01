@@ -76,7 +76,21 @@ export interface SharedBy {
 }
 
 /** Archive values: plain text, or text with who shared it. */
-type ArchivedValue = string | { text: string; sharedBy: SharedBy };
+export type ArchivedValue = string | { text: string; sharedBy: SharedBy };
+
+function isArchivedValue(v: unknown): v is ArchivedValue {
+  if (typeof v === "string") return true;
+  if (typeof v !== "object" || v === null) return false;
+  const o = v as { text?: unknown; sharedBy?: unknown };
+  return typeof o.text === "string" && typeof o.sharedBy === "object" && o.sharedBy !== null;
+}
+
+/** See storage.getBackupKey. `key` is a non-extractable AES-GCM CryptoKey. */
+export interface StoredBackupKey {
+  /** The server backup this key belongs to; a different id means replaced. */
+  readonly backupId: string;
+  readonly key: CryptoKey;
+}
 
 const ALL_STORES = [STORE_DEVICE, STORE_KEYPAIRS, STORE_GROUPS, STORE_SENT];
 
@@ -295,6 +309,80 @@ export const storage = {
 
   async deletePlaintext(messageId: string): Promise<void> {
     await run(STORE_SENT, "readwrite", (s) => s.delete(messageId));
+  },
+
+  /**
+   * Every archive entry, for the recovery backup (recovery.ts). Values
+   * are returned as stored: plain text, or text with who shared it.
+   */
+  async exportArchive(): Promise<Array<[string, ArchivedValue]>> {
+    const db = await open();
+    try {
+      const tx = db.transaction(STORE_SENT, "readonly");
+      const store = tx.objectStore(STORE_SENT);
+      const [keys, values] = await Promise.all([
+        request(store.getAllKeys()),
+        request(store.getAll() as IDBRequest<ArchivedValue[]>),
+      ]);
+      // getAllKeys and getAll walk the store in the same key order.
+      return keys.map((k, i) => [String(k), values[i] as ArchivedValue]);
+    } finally {
+      db.close();
+    }
+  },
+
+  /**
+   * Add restored archive entries this device does not already have, and
+   * return how many were added. A local copy always wins: it is this
+   * device's own reading, the backup is older or equal. Malformed
+   * entries are skipped rather than failing the whole restore.
+   */
+  async importArchive(entries: Array<[string, unknown]>): Promise<number> {
+    const db = await open();
+    try {
+      const existing = new Set(
+        (await request(
+          db.transaction(STORE_SENT, "readonly").objectStore(STORE_SENT).getAllKeys(),
+        )).map(String),
+      );
+      const tx = db.transaction(STORE_SENT, "readwrite");
+      const store = tx.objectStore(STORE_SENT);
+      let added = 0;
+      for (const [id, value] of entries) {
+        if (typeof id !== "string" || existing.has(id) || !isArchivedValue(value)) continue;
+        store.put(value, id);
+        existing.add(id);
+        added++;
+      }
+      await new Promise<void>((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error ?? new Error("indexeddb: import failed"));
+        tx.onabort = () => reject(tx.error ?? new Error("indexeddb: import aborted"));
+      });
+      return added;
+    } finally {
+      db.close();
+    }
+  },
+
+  /**
+   * The recovery backup key remembered on this device, so later uploads
+   * need no typing. Kept in the device store: it goes with everything
+   * else on sign-out, and it protects nothing the archive beside it does
+   * not already hold in plaintext.
+   */
+  async getBackupKey(): Promise<StoredBackupKey | undefined> {
+    return run<StoredBackupKey | undefined>(STORE_DEVICE, "readonly", (s) =>
+      s.get("backup") as IDBRequest<StoredBackupKey | undefined>,
+    );
+  },
+
+  async setBackupKey(value: StoredBackupKey): Promise<void> {
+    await run(STORE_DEVICE, "readwrite", (s) => s.put(value, "backup"));
+  },
+
+  async clearBackupKey(): Promise<void> {
+    await run(STORE_DEVICE, "readwrite", (s) => s.delete("backup"));
   },
 
   async getGroup(channelId: string): Promise<unknown> {

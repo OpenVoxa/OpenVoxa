@@ -56,7 +56,24 @@ export type {
   OpenResult,
   ReconcileResult,
 } from "./groups.js";
-export type { SharedBy, StoredDevice, StoredKeyPair } from "./storage.js";
+export type { ArchivedValue, SharedBy, StoredBackupKey, StoredDevice, StoredKeyPair } from "./storage.js";
+export {
+  Backup,
+  BackupDamaged,
+  BackupHttpError,
+  BackupLocked,
+  InvalidRecoveryKey,
+  NoBackup,
+  RecoveryKey,
+  WrongRecoveryKey,
+} from "./recovery.js";
+export type {
+  AuthedFetch,
+  BackupArchive,
+  BackupStatus,
+  RestoreResult,
+  UploadResult,
+} from "./recovery.js";
 
 export const VERSION = "0.1.0";
 
