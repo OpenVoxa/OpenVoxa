@@ -41,6 +41,7 @@ export { storage } from "./storage.js";
 export { Chat, ChannelView } from "./chat.js";
 export type {
   AttachmentInfo,
+  ChannelAccess,
   ChannelInfo,
   ChannelSnapshot,
   ChatEvent,

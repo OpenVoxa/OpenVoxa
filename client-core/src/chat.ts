@@ -37,6 +37,14 @@ export interface ChannelInfo {
   readonly history_sharing: boolean;
   readonly can_post: boolean;
   readonly last_message_at?: string;
+  /** The allow-list: groups that may view, and whether they may post. */
+  readonly access: readonly ChannelAccess[];
+}
+
+export interface ChannelAccess {
+  readonly group_id: string;
+  readonly group: string;
+  readonly can_post: boolean;
 }
 
 export interface AttachmentInfo {

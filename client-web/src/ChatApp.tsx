@@ -17,6 +17,7 @@ import type { Session } from "./api";
 import type { BackupManager } from "./backup";
 import { apiCall, cryptoSession, localStore, wsUrl } from "./core";
 import { ChannelPane } from "./ChannelPane";
+import { ChannelSettingsDialog, CreateChannelDialog } from "./ChannelDialogs";
 
 const LAST_CHANNEL = (userId: string) => `lastChannel.${userId}`;
 
@@ -38,13 +39,22 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   const [unread, setUnread] = useState<ReadonlySet<string>>(new Set());
   const [openId, setOpenId] = useState<string | null>(null);
   const [view, setView] = useState<ChannelView | null>(null);
+  // Permissions move while signed in (perms_changed); start from login's.
+  const [perms, setPerms] = useState<readonly string[]>(session.permissions);
+  const [dialog, setDialog] = useState<
+    | { k: "create"; kind: "text" | "voice" }
+    | { k: "settings"; id: string }
+    | null
+  >(null);
+  const call = useMemo(() => apiCall(session.token, onExpired),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [session.token]);
 
   // Start the crypto session (this tab takes over the account's device)
   // and the chat on top of it.
   useEffect(() => {
     let live = true;
     let started: Chat | null = null;
-    const call = apiCall(session.token, onExpired);
     cryptoSession(session.user_id, call)
       .then(async (crypto) => {
         if (!live) return;
@@ -59,6 +69,11 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
         c.on((e) => {
           if (e.type === "channels") setChannels(e.channels);
           else if (e.type === "unread") setUnread(e.unread);
+          else if (e.type === "me_changed") {
+            (call("/api/v1/me") as Promise<{ permissions: string[] }>)
+              .then((me) => live && setPerms(me.permissions ?? []))
+              .catch(() => {});
+          }
         });
         await c.start();
         if (!live) {
@@ -116,18 +131,38 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
     return <div className="auth-page"><p className="muted">Setting up encryption…</p></div>;
   }
 
-  const canDeleteAny = session.permissions.includes("delete_messages") ||
-    session.permissions.includes("administrator");
+  const can = (p: string) => perms.includes(p) || perms.includes("administrator");
+  const canDeleteAny = can("delete_messages");
+  const canManage = can("manage_channels");
+  const canForcePTT = can("force_ptt");
+  const settingsFor = (c: ChannelInfo) => canManage || (c.kind === "voice" && canForcePTT);
+  const dialogChannel = dialog?.k === "settings" ? channels.find((c) => c.id === dialog.id) : undefined;
+
+  const gear = (c: ChannelInfo) => settingsFor(c) && (
+    <button className="icon gear" onClick={() => setDialog({ k: "settings", id: c.id })}
+      title={`${c.name} settings`} aria-label={`${c.name} settings`}>
+      <GearIcon />
+    </button>
+  );
+  const heading = (label: string, kind: "text" | "voice") => (
+    <div className="list-head">
+      <h2>{label}</h2>
+      {canManage && (
+        <button className="icon" onClick={() => setDialog({ k: "create", kind })}
+          title={`Create a ${kind} channel`} aria-label={`Create a ${kind} channel`}>+</button>
+      )}
+    </div>
+  );
 
   return (
     <div className="app">
       <nav className="sidebar" aria-label="Channels">
         <header className="sidebar-head">OpenVoxa</header>
         <div className="channel-list">
-          <h2>Text channels</h2>
+          {heading("Text channels", "text")}
           <ul>
             {text.map((c) => (
-              <li key={c.id}>
+              <li key={c.id} className="channel-row">
                 <button
                   className={`channel${c.id === openId ? " active" : ""}${unread.has(c.id) ? " unread" : ""}`}
                   onClick={() => setOpenId(c.id)}
@@ -139,22 +174,26 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
                   {c.encrypted && <LockIcon />}
                   {unread.has(c.id) && <span className="dot" aria-label="unread" />}
                 </button>
+                {gear(c)}
               </li>
             ))}
             {!text.length && <li className="muted empty">No channels you can see.</li>}
           </ul>
-          {voice.length > 0 && (
+          {(voice.length > 0 || canManage) && (
             <>
-              <h2>Voice channels</h2>
+              {heading("Voice channels", "voice")}
               <ul>
                 {voice.map((c) => (
-                  <li key={c.id}>
+                  <li key={c.id} className="channel-row">
                     <button className="channel" disabled title="Voice arrives in a later version; use the debug page for now">
                       <SpeakerIcon />
                       <span className="name">{c.name}</span>
+                      {c.force_ptt && <span className="tag small" title="Push-to-talk required">PTT</span>}
                     </button>
+                    {gear(c)}
                   </li>
                 ))}
+                {!voice.length && <li className="muted empty">No voice channels yet.</li>}
               </ul>
             </>
           )}
@@ -170,7 +209,45 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           <div className="pane-empty muted">{text.length ? "Opening…" : "Nothing to show yet."}</div>
         )}
       </main>
+      {dialog?.k === "create" && (
+        <CreateChannelDialog
+          call={call}
+          kind={dialog.kind}
+          onClose={() => setDialog(null)}
+          onCreated={(c) => {
+            setDialog(null);
+            void chat.refreshChannels().then(() => {
+              if (c.kind === "text") setOpenId(c.id);
+            });
+          }}
+        />
+      )}
+      {dialogChannel && (
+        <ChannelSettingsDialog
+          key={dialogChannel.id}
+          call={call}
+          channel={dialogChannel}
+          canManage={canManage}
+          canForcePTT={canForcePTT}
+          onClose={() => {
+            setDialog(null);
+            void chat.refreshChannels().catch(() => {});
+          }}
+          onDeleted={() => {
+            setDialog(null);
+            void chat.refreshChannels().catch(() => {});
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function GearIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden>
+      <path fill="currentColor" d="M9.4 1l.3 1.8c.5.2.9.4 1.3.7l1.7-.7 1.4 2.4-1.4 1.1a5 5 0 0 1 0 1.5l1.4 1.1-1.4 2.4-1.7-.7c-.4.3-.8.5-1.3.7L9.4 15H6.6l-.3-1.8c-.5-.2-.9-.4-1.3-.7l-1.7.7-1.4-2.4 1.4-1.1a5 5 0 0 1 0-1.5L1.9 7.1l1.4-2.4 1.7.7c.4-.3.8-.5 1.3-.7L6.6 1h2.8zM8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z" />
+    </svg>
   );
 }
 

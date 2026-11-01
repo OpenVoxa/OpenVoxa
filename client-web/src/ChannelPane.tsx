@@ -12,6 +12,7 @@ import {
   type KeyboardEvent, type ReactNode,
 } from "react";
 import type { ChannelSnapshot, ChannelView, ChatMessage, CryptoState } from "@core/chat";
+import { describeRetention } from "./ChannelDialogs";
 
 function useSnapshot(view: ChannelView): ChannelSnapshot {
   const subscribe = useCallback((cb: () => void) => view.on(cb), [view]);
@@ -40,7 +41,7 @@ export function ChannelPane({ view, username, canDeleteAny }: {
         <h1><span className="hash" aria-hidden>#</span>{c.name}</h1>
         <CryptoBadge encrypted={c.encrypted} crypto={snap.crypto} />
         <span className="muted small">
-          kept {c.retention}
+          kept {describeRetention(c.retention)}
           {c.encrypted && c.history_sharing ? " · history shared with new members" : ""}
         </span>
         {snap.connection !== "open" && (
