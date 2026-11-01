@@ -5,82 +5,18 @@ package httpapi
 
 import (
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/openvoxa/openvoxa/server/internal/auth"
+	"github.com/openvoxa/openvoxa/server/internal/password"
 )
 
-// Password rules (decided with Ryan 2026-11-01): 12 to 256 characters,
-// using at least three of the four kinds: upper-case letter, lower-case
-// letter, digit, symbol. Applied when a password is set (registration, change),
-// never at login, so older accounts can still sign in and are asked to
-// meet the rules only when they next change it.
-//
-// Length counts runes, not bytes, so a passphrase in any script is
-// measured the way a person would measure it. A "symbol" is anything
-// that is not a letter, digit or whitespace. Letters without case (most
-// non-Latin scripts) count toward length only.
-//
-// client-web/src/password.ts mirrors this for live feedback; the server
-// is the one that decides.
-
-// passwordProblem returns a message fit to show the user, or "" when the
-// password meets the rules.
-func passwordProblem(p string) string {
-	if n := utf8.RuneCountInString(p); n < minPasswordLen || n > maxPasswordLen {
-		return "password must be between 12 and 256 characters"
-	}
-	var upper, lower, digit, symbol bool
-	for _, r := range p {
-		switch {
-		case unicode.IsUpper(r):
-			upper = true
-		case unicode.IsLower(r):
-			lower = true
-		case unicode.IsDigit(r):
-			digit = true
-		case unicode.IsLetter(r), unicode.IsSpace(r):
-		default:
-			symbol = true
-		}
-	}
-	var missing []string
-	if !upper {
-		missing = append(missing, "an upper-case letter")
-	}
-	if !lower {
-		missing = append(missing, "a lower-case letter")
-	}
-	if !digit {
-		missing = append(missing, "a number")
-	}
-	if !symbol {
-		missing = append(missing, "a symbol")
-	}
-	if len(missing) <= 4-requiredKinds {
-		return ""
-	}
-	return fmt.Sprintf("password needs at least %d of: upper-case letter, lower-case letter, "+
-		"number, symbol; add %s", requiredKinds, joinOr(missing))
-}
-
-// requiredKinds is how many of the four character kinds a password needs.
-const requiredKinds = 3
-
-// joinOr writes "a, b or c".
-func joinOr(items []string) string {
-	if len(items) == 1 {
-		return items[0]
-	}
-	return strings.Join(items[:len(items)-1], ", ") + " or " + items[len(items)-1]
-}
+// The password rules live in internal/password; this file holds the
+// change-password endpoint.
 
 type changePasswordRequest struct {
 	CurrentPassword string `json:"current_password"`
@@ -134,7 +70,7 @@ func (a *API) changeOwnPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	a.authUser.Reset(userKey)
 
-	if msg := passwordProblem(req.NewPassword); msg != "" {
+	if msg := password.Problem(req.NewPassword, session.Username); msg != "" {
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}

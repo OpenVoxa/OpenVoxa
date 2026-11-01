@@ -1123,8 +1123,21 @@ of the four kinds: upper-case letter, lower-case letter, number, symbol
 (anything not a letter, digit or space). First all four; relaxed to 3 of
 4 the same day as a middle ground. Checked when a password is set
 (registration, `PUT /api/v1/me/password`), never at login, so older
-accounts still sign in. Server: `password.go` `passwordProblem`; client-web
-mirrors it in `password.ts` for a live checklist. Changing the password
+accounts still sign in.
+
+Hardened the same day (Ryan: `Password12345` passes 3-of-4 but anyone
+guessing puts the capital first). Also refused: passwords containing the
+username; common passwords, including dressed-up ones (lower-cased,
+look-alikes like @/0/$ undone, digits and symbols stripped off both ends,
+so `Password12345`, `P@ssw0rd!2024`, `Sunshine2025!` all match); and
+passwords more than half made of runs of 3+ with the same predictable step
+(aaa, abc, 321, qwerty). The list is the UK NCSC top 100,000 (from HIBP
+breach data, via SecLists, MIT; `common-passwords.LICENSE`), gzipped and
+embedded (~430 KB), loaded on first use (~0.2 s): nothing is sent to a
+third party. On 20,000 random 12-character passwords that pass the kind
+rule, under 10 are refused. Code: `server/internal/password` (`Problem`);
+client-web `password.ts` mirrors everything but the list for the live
+checklist. Changing the password
 needs the current one, uses the login rate limit, signs out every other
 session and closes all sockets. There is no forgotten-password reset (no
 email by design); a host command would be the natural path if wanted.
@@ -1281,6 +1294,9 @@ to pick their own colours later, so every colour stays a variable.
       codes. No SMS, email or third-party service. After device linking.
 
 ## Open items
+
+- [ ] Password strength estimation with zxcvbn (server and client), on top
+      of the rules. Ryan asked to discuss later (2026-11-01).
 
 - [ ] Confirm whether screen sharing should have its own `min_role_stream`
       rather than reusing the voice publish permission
