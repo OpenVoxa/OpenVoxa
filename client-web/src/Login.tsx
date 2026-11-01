@@ -17,7 +17,7 @@ export function Login({ onSession }: { onSession: (s: Session) => void }) {
   const [setupCode, setSetupCode] = useState("");
 
   const registering = mode === "register";
-  const pw = checkPassword(password);
+  const pw = checkPassword(password, username);
   // Only once the password itself is acceptable is the confirmation worth
   // comparing; before that the checklist is what needs attention.
   const mismatch = registering && pw.ok && confirm !== "" && confirm !== password;
@@ -91,6 +91,9 @@ export function Login({ onSession }: { onSession: (s: Session) => void }) {
                   {i > 0 && ", "}{k.label}
                 </span>
               ))}
+            </li>
+            <li className={pw.predictableOk ? "ok" : undefined}>
+              {pw.predictableOk ? "✓" : "•"} not your username or a simple pattern
             </li>
           </ul>
         )}

@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/openvoxa/openvoxa/server/internal/auth"
+	"github.com/openvoxa/openvoxa/server/internal/password"
 	"github.com/openvoxa/openvoxa/server/internal/perm"
 )
 
@@ -35,17 +36,6 @@ func isInvalidInput(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && len(pgErr.Code) >= 2 && pgErr.Code[:2] == "22"
 }
-
-// Password length bounds. The lower bound is a floor, not a policy: no
-// complexity rules, no forced symbols. Length beats character classes, and
-// composition rules mostly push people toward "Password1!".
-//
-// The upper bound exists because argon2 hashes whatever you give it, and
-// without a cap a megabyte password becomes a cheap denial of service.
-const (
-	minPasswordLen = 12
-	maxPasswordLen = 256
-)
 
 type registerRequest struct {
 	Username   string `json:"username"`
@@ -104,7 +94,7 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Rules in password.go.
-	if msg := passwordProblem(req.Password); msg != "" {
+	if msg := password.Problem(req.Password, req.Username); msg != "" {
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
