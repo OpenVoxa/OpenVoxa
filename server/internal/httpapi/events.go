@@ -79,6 +79,19 @@ func (a *API) emitChannel(channelID string, v any) {
 	a.hub.Broadcast(channelID, payload)
 }
 
+// emitUsers sends an event only to the connections of the given accounts.
+func (a *API) emitUsers(users map[string]bool, v any) {
+	if len(users) == 0 {
+		return
+	}
+	payload, err := json.Marshal(v)
+	if err != nil {
+		slog.Error("marshalling event", "err", err)
+		return
+	}
+	a.hub.BroadcastUsers(users, payload)
+}
+
 // NotifyUserPurged tells every connected client that an account and its
 // content are gone, so open sessions replace that user's messages with
 // tombstones immediately rather than at next reconnect.

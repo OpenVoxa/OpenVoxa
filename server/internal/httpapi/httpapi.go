@@ -81,6 +81,10 @@ type API struct {
 
 	gifs     *gif.Client
 	gifLimit *ratelimit.Limiter
+
+	// Message edits, per user: 20 up front, then one a second. Sending is
+	// limited per connection in ws.go; edits come over HTTP.
+	editLimit *ratelimit.Limiter
 }
 
 // New returns the server's root handler. debugUIEnabled serves a bare-bones
@@ -128,6 +132,8 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 		// Searching is cheap for us and costs the provider, so this is
 		// looser than uploads: 30 up front, one every 2 seconds.
 		gifLimit: ratelimit.New(0.5, 30, 15*time.Minute),
+
+		editLimit: ratelimit.New(1, 20, 15*time.Minute),
 	}
 
 	if _, err := rand.Read(api.attachKey); err != nil {
@@ -145,6 +151,9 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 
 	mux.HandleFunc("GET /api/v1/me", api.requireAuth(api.me))
 	mux.HandleFunc("GET /api/v1/channels", api.requireAuth(api.listChannels))
+	// Older history, page by page (the websocket sends the newest page).
+	mux.HandleFunc("GET /api/v1/channels/{id}/messages",
+		withUUIDPath(api.requireAuth(api.listMessages)))
 
 	mux.HandleFunc("GET /api/v1/users",
 		api.requireStaff(api.listUsers))
@@ -182,6 +191,9 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 	// before allowing anyone else's.
 	mux.HandleFunc("DELETE /api/v1/messages/{id}",
 		withUUIDPath(api.requireAuth(api.deleteMessage)))
+	// Only the author edits; see messages.go.
+	mux.HandleFunc("PATCH /api/v1/messages/{id}",
+		withUUIDPath(api.requireAuth(api.editMessage)))
 	mux.HandleFunc("POST /api/v1/messages/{id}/report",
 		withUUIDPath(api.requireAuth(api.reportMessage)))
 
@@ -357,6 +369,12 @@ type channelResponse struct {
 	// CanPost saves every client from reimplementing the access rule.
 	// It is advisory only: the server checks again on the websocket.
 	CanPost bool `json:"can_post"`
+
+	// When the newest message (deleted ones included, so a deletion does
+	// not make a channel look older) was posted; absent for an empty or
+	// voice channel. Clients compare it with what they last read to mark
+	// channels unread.
+	LastMessageAt *time.Time `json:"last_message_at,omitempty"`
 }
 
 type channelAccessEntry struct {
@@ -382,7 +400,8 @@ func (a *API) listChannels(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.pool.Query(r.Context(),
 		`SELECT c.id, c.name, c.kind, c.encrypted,
 		        EXTRACT(EPOCH FROM c.retention)::float8,
-		        c.force_ptt, c.history_sharing, `+canPostSQL+`, `+channelAccessJSON+`
+		        c.force_ptt, c.history_sharing, `+canPostSQL+`, `+channelAccessJSON+`,
+		        (SELECT max(m.created_at) FROM messages m WHERE m.channel_id = c.id)
 		   FROM channels c, users u
 		  WHERE u.id = $1 AND `+canViewSQL+`
 		  ORDER BY c.name`,
@@ -402,7 +421,7 @@ func (a *API) listChannels(w http.ResponseWriter, r *http.Request) {
 		var retentionSeconds *float64
 
 		if err := rows.Scan(&c.ID, &c.Name, &c.Kind, &c.Encrypted, &retentionSeconds,
-			&c.ForcePTT, &c.HistorySharing, &c.CanPost, &c.Access); err != nil {
+			&c.ForcePTT, &c.HistorySharing, &c.CanPost, &c.Access, &c.LastMessageAt); err != nil {
 			slog.Error("scanning channel", "err", err)
 			writeError(w, http.StatusInternalServerError, "could not list channels")
 			return
