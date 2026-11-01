@@ -115,7 +115,7 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
 
 ## Current state (update every session)
 
-_Last updated: 2026-11-01, small items done and verified; next: real client (step 13)._
+_Last updated: 2026-10-31, step 13 (real client) M1 in progress; see project doc claude/handoff-step-13.md._
 
 - Build-order step 9 (MLS for text) is functionally working on Docker:
   messages in an encrypted channel are ciphertext in Postgres (only the
@@ -201,5 +201,11 @@ _Last updated: 2026-11-01, small items done and verified; next: real client (ste
      recovery keys built into the client.
   5. Opt-in history sharing (Ryan wants it; see decisions.md Open items).
   6. Local storage encryption (blocked on recovery keys).
+- Step 13 M1 (signup/login + recovery key): part 1 `client-web` login and
+  register served at `/`, verified on Docker (T1). Part 2: recovery backup
+  storage, migration 0015 + `recovery.go`: `GET/PUT/DELETE /me/backup`
+  (PUT starts a new backup, drops old chunks, returns its id) and
+  `PUT/GET/DELETE /me/backup/chunks/{name}?backup=<id>` (raw bytes, 4 MB
+  each, 1000 chunks, 256 MB per account). Next: client-core recovery key.
 - Other open items (revoked-device removal, recovery keys, etc.) live in
   decisions.md "Open items" — check there before proposing new work.

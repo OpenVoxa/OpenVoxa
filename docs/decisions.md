@@ -1193,6 +1193,13 @@ skip those event types while it is up.
       of it; it encrypts an uploaded backup of the local plaintext
       archive (server stores opaque chunks). Existing accounts are asked
       once. Local IndexedDB encryption reuses it later.
+    - Backup storage (server, migration 0015): one backup per account, a
+      small opaque header (format, KDF salt, key check) plus named opaque
+      chunks. Chunk names are client-chosen so the server does not learn
+      which channel a chunk covers. Starting a backup replaces the header,
+      drops all chunks and issues a new backup id; uploads carry that id
+      and get 409 if it is stale, so chunks sealed under two keys never
+      mix. Limits: 4 MB per chunk, 1000 chunks, 256 MB per account.
     - Device linking by QR (after M1): a logged-in device shows a QR of
       `https://server/link#<one-time secret>` (about 2 min, single use);
       the phone's camera opens it; the server only relays encrypted
