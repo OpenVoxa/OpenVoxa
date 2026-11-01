@@ -3,7 +3,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { call, guessDeviceName, type Session } from "./api";
-import { passwordRules } from "./password";
+import { checkPassword, MIN_PASSWORD, REQUIRED_KINDS } from "./password";
 
 export function Login({ onSession }: { onSession: (s: Session) => void }) {
   const [mode, setMode] = useState<"login" | "register">("login");
@@ -17,6 +17,10 @@ export function Login({ onSession }: { onSession: (s: Session) => void }) {
   const [setupCode, setSetupCode] = useState("");
 
   const registering = mode === "register";
+  const pw = checkPassword(password);
+  // Only once the password itself is acceptable is the confirmation worth
+  // comparing; before that the checklist is what needs attention.
+  const mismatch = registering && pw.ok && confirm !== "" && confirm !== password;
 
   useEffect(() => {
     if (!registering) return;
@@ -29,14 +33,12 @@ export function Login({ onSession }: { onSession: (s: Session) => void }) {
     e.preventDefault();
     setError(null);
     if (registering) {
-      if (passwordRules(password).some((r) => !r.ok)) {
+      if (!pw.ok) {
         setError("Password doesn't meet the requirements yet.");
         return;
       }
-      if (password !== confirm) {
-        setError("Passwords don't match.");
-        return;
-      }
+      // The confirm field already says so; retype until it matches.
+      if (password !== confirm) return;
     }
     setBusy(true);
     try {
@@ -69,35 +71,42 @@ export function Login({ onSession }: { onSession: (s: Session) => void }) {
 
         <label>
           Username
-          <input value={username} onChange={(e) => setUsername(e.target.value)}
+          <input value={username} onChange={(e) => { setUsername(e.target.value); setError(null); }}
             autoComplete="username" autoFocus required />
         </label>
         <label>
           Password
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+          <input type="password" value={password} onChange={(e) => { setPassword(e.target.value); setError(null); }}
             autoComplete={registering ? "new-password" : "current-password"} required />
         </label>
         {registering && (
           <ul className="rules" aria-label="Password requirements">
-            {passwordRules(password).map((r) => (
-              <li key={r.label} className={r.ok ? "ok" : undefined}>
-                {r.ok ? "✓" : "•"} {r.label}
-              </li>
-            ))}
+            <li className={pw.lengthOk ? "ok" : undefined}>
+              {pw.lengthOk ? "✓" : "•"} {MIN_PASSWORD}+ characters
+            </li>
+            <li className={pw.kindsOk ? "ok" : undefined}>
+              {pw.kindsOk ? "✓" : "•"} {REQUIRED_KINDS} of 4:{" "}
+              {pw.kinds.map((k, i) => (
+                <span key={k.label} className={k.ok ? "ok" : undefined}>
+                  {i > 0 && ", "}{k.label}
+                </span>
+              ))}
+            </li>
           </ul>
         )}
         {registering && (
           <label>
             Confirm password
-            <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)}
-              autoComplete="new-password" required />
+            <input type="password" value={confirm} onChange={(e) => { setConfirm(e.target.value); setError(null); }}
+              autoComplete="new-password" required aria-invalid={mismatch} />
+            {mismatch && <span className="error">Passwords don't match.</span>}
           </label>
         )}
 
         {registering && needsSetup && (
           <label>
             Setup code
-            <input value={setupCode} onChange={(e) => setSetupCode(e.target.value)}
+            <input value={setupCode} onChange={(e) => { setSetupCode(e.target.value); setError(null); }}
               placeholder="XXXX-XXXX-XXXX-XXXX" autoComplete="off" spellCheck={false} required />
             <span className="muted">
               This server has no accounts yet. The first one becomes the administrator,

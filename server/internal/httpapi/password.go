@@ -5,6 +5,7 @@ package httpapi
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -17,8 +18,8 @@ import (
 )
 
 // Password rules (decided with Ryan 2026-11-01): 12 to 256 characters,
-// with at least one upper-case letter, one lower-case letter, one digit
-// and one symbol. Applied when a password is set (registration, change),
+// using at least three of the four kinds: upper-case letter, lower-case
+// letter, digit, symbol. Applied when a password is set (registration, change),
 // never at login, so older accounts can still sign in and are asked to
 // meet the rules only when they next change it.
 //
@@ -63,18 +64,22 @@ func passwordProblem(p string) string {
 	if !symbol {
 		missing = append(missing, "a symbol")
 	}
-	if len(missing) == 0 {
+	if len(missing) <= 4-requiredKinds {
 		return ""
 	}
-	return "password needs at least " + joinAnd(missing)
+	return fmt.Sprintf("password needs at least %d of: upper-case letter, lower-case letter, "+
+		"number, symbol; add %s", requiredKinds, joinOr(missing))
 }
 
-// joinAnd writes "a, b and c".
-func joinAnd(items []string) string {
+// requiredKinds is how many of the four character kinds a password needs.
+const requiredKinds = 3
+
+// joinOr writes "a, b or c".
+func joinOr(items []string) string {
 	if len(items) == 1 {
 		return items[0]
 	}
-	return strings.Join(items[:len(items)-1], ", ") + " and " + items[len(items)-1]
+	return strings.Join(items[:len(items)-1], ", ") + " or " + items[len(items)-1]
 }
 
 type changePasswordRequest struct {
