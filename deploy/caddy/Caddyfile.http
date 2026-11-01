@@ -19,7 +19,7 @@
 	# URL it is given, so routing this prefix lets voice share one
 	# hostname and one certificate with the rest of the app.
 	handle /rtc* {
-		reverse_proxy livekit:7880
+		reverse_proxy host.docker.internal:7880
 	}
 
 	handle {

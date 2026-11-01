@@ -25,7 +25,7 @@
 
 {$OPENVOXA_DOMAIN} {
 	handle /rtc* {
-		reverse_proxy livekit:7880
+		reverse_proxy host.docker.internal:7880
 	}
 
 	handle {

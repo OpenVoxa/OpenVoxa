@@ -27,9 +27,16 @@ services:
       retries: 10
     restart: unless-stopped
 
-  # TODO: pin to a specific tag once we settle on a version.
+  # Pinned: advertise_internal_ip (livekit.yaml) needs 1.13.6 or later.
   livekit:
-    image: livekit/livekit-server:latest
+    image: livekit/livekit-server:v1.13.11
+    # Host networking, so LiveKit sees the host's own LAN address. It offers
+    # clients both that address and LIVEKIT_NODE_IP (advertise_internal_ip
+    # in livekit.yaml): people at home connect over the LAN, everyone else
+    # over the public IP, and the router never has to loop traffic back
+    # (hairpin NAT). Ports 7880 (signalling), 7881/tcp and 50000-50100/udp
+    # (media) open on the host itself; no `ports:` mapping applies.
+    network_mode: host
     # LIVEKIT_NODE_IP must be an address clients can actually reach, because
     # LiveKit advertises it as the destination for media. Media travels
     # directly over UDP and never passes through Caddy, so TLS does not
@@ -38,8 +45,6 @@ services:
     command: --config /etc/livekit.yaml --node-ip ${LIVEKIT_NODE_IP}
     environment:
       LIVEKIT_KEYS: "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"
-    ports:
-      - "50000-50100:50000-50100/udp"  # RTC media, always direct
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml:ro
     restart: unless-stopped
@@ -66,7 +71,9 @@ services:
       OPENVOXA_LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET}"
       # Where the server itself calls LiveKit, to remove someone from a
       # call when they lose access. Internal, so no TLS or proxy involved.
-      OPENVOXA_LIVEKIT_API_URL: "${OPENVOXA_LIVEKIT_API_URL:-http://livekit:7880}"
+      # LiveKit runs on the host's network, so containers reach it through
+      # host.docker.internal (extra_hosts below).
+      OPENVOXA_LIVEKIT_API_URL: "${OPENVOXA_LIVEKIT_API_URL:-http://host.docker.internal:7880}"
 
       # Per-file upload ceiling. Operators pay for the disk and the
       # bandwidth, so operators set it.
@@ -78,6 +85,8 @@ services:
       # what this server searches for.
       OPENVOXA_GIF_PROVIDER: "${OPENVOXA_GIF_PROVIDER:-}"
       OPENVOXA_GIF_API_KEY: "${OPENVOXA_GIF_API_KEY:-}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       # Attachment bytes. Losing this volume loses every uploaded file;
       # the database would still hold the references and downloads would
@@ -99,6 +108,8 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # LiveKit, on the host network
     environment:
       OPENVOXA_DOMAIN: "${OPENVOXA_DOMAIN}"
       CADDY_EMAIL: "${CADDY_EMAIL:-}"

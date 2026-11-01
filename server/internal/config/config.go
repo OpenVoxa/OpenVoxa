@@ -53,8 +53,9 @@ type LiveKitConfig struct {
 	APISecret string
 
 	// APIURL is where THIS SERVER reaches LiveKit's HTTP API, to remove a
-	// participant who lost access. Inside Docker that is the service name
-	// (http://livekit:7880); left empty it is derived from URL.
+	// participant who lost access. Under docker compose that is the host
+	// (http://host.docker.internal:7880, LiveKit being on the host network);
+	// left empty it is derived from URL.
 	APIURL string
 }
 
