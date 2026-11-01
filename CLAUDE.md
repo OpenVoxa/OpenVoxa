@@ -121,8 +121,8 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
 
 ## Current state (update every session)
 
-_Last updated: 2026-11-01. Step 13 M1 done; M2 (text in client-web) pushed,
-awaiting test M2-1. Full handoff: project doc claude/handoff-step-13.md._
+_Last updated: 2026-11-01. Step 13 M1-M3 and channel management done and
+verified on Docker; M4 next. Full handoff: project doc claude/handoff-step-13.md._
 
 Done and verified on Docker (details in decisions.md, Build order 9-12 and
 Implementation notes): MLS text encryption (ciphertext in Postgres, no
@@ -159,7 +159,10 @@ settings and admin panes:
   sidebar for manage_channels / force_ptt). Server: MLS handshake bodies
   now capped at 8 MB (`maxMLSBody`), was 64 KB and refused adds of ~10
   devices. Verified on Docker (C1) 2026-11-01.
-- M3 (voice + screen share in client-web) pushed, awaiting test V3:
+- M3 (voice + screen share in client-web) DONE, verified on Docker (V3)
+  2026-11-01: two accounts hear each other, mute/volume, streaming.
+  Known cosmetic bug: deafen doesn't highlight the mic button (VoiceBar
+  `vbtn on` only for explicit mute); fix in the next push.
   client-core `voice.ts` (`VoiceClient`, lazy-loaded), client-web
   `VoiceUI.tsx` (roster, voice bar, stage, share/settings/person
   dialogs), `voiceWorker.ts`; server `voicepresence.go`
@@ -171,5 +174,8 @@ settings and admin panes:
   Playwright, two and three accounts).
 - Pending tests from earlier: P3 password test, D1 list/delete-user.
 - Palette: variables in `client-web/src/styles.css` only.
-- Next: M4 (attachments, GIFs, unfurls, notices); Ryan asked about the
-  GIF button. Open items in decisions.md "Open items".
+- Next: M4, split over two sessions (Ryan, 2026-11-01):
+  (a) GIF button, join/leave notices + join/leave sounds (WebAudio tones,
+  on/off setting), link previews + markdown, the mic-button fix;
+  (b) attachments (upload, drag/paste, per-file encryption, inline
+  media). Open items in decisions.md "Open items".
