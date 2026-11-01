@@ -150,6 +150,16 @@ LiveKit advertises this address as the destination for RTP. Media travels over U
 
 LiveKit runs on the host's network and also offers the host's own addresses (`advertise_internal_ip` in `livekit.yaml`). So with the public IP set here, clients on your LAN still connect straight to the LAN address, and your router doesn't need hairpin NAT. Forward TCP 7881 too if some outside clients can't use UDP. Don't forward 7880: browsers reach it through Caddy at `/rtc`.
 
+### Home servers whose public IP changes
+
+LiveKit reads the node IP only when it starts. `scripts/update-node-ip.sh` checks the public IP (via Cloudflare's `1.1.1.1/cdn-cgi/trace`), and when it differs from `LIVEKIT_NODE_IP` it rewrites `.env` and recreates the `livekit` container. It does nothing while `LIVEKIT_NODE_IP` is a private address, so a LAN-only server is left alone. Run it from cron on the Docker host as a user who can run docker:
+
+```
+*/5 * * * * /home/you/OpenVoxa/deploy/scripts/update-node-ip.sh >> $HOME/openvoxa-node-ip.log 2>&1
+```
+
+Your DNS record still needs its own dynamic DNS updater; this only covers LiveKit.
+
 Getting it wrong gives you a connection that establishes successfully and then carries no audio. Signalling works, the participant list populates, and nobody hears anything. It is the most common self-hosted LiveKit failure by a wide margin.
 
 ## Attachments and storage
