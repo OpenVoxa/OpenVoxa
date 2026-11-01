@@ -61,6 +61,15 @@ docker compose exec server /openvoxa-server grant-admin <username>
 docker compose exec server /openvoxa-server list-admins
 ```
 
+Accounts can be listed and deleted from the host too. Deletion is
+permanent (messages emptied, sessions ended) and keeps the two-administrator
+floor unless you add `--force`:
+
+```bash
+docker compose exec server /openvoxa-server list-users
+docker compose exec server /openvoxa-server delete-user <username> [<username>...]
+```
+
 ## Why TLS is not optional
 
 Browsers refuse microphone and screen-capture access outside a secure context. Without TLS, `navigator.mediaDevices` is undefined on anything but `localhost`, and voice simply does not work. The failure is confusing rather than obvious: the page loads, the channel connects, and then the microphone call fails with a null reference.

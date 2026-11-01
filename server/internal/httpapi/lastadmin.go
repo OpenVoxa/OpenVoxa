@@ -78,6 +78,20 @@ func startAdminGuard(ctx context.Context, tx pgx.Tx) (adminGuard, error) {
 	return adminGuard{before: n}, err
 }
 
+// AdminGuard is adminGuard for the host commands (cli.go).
+type AdminGuard = adminGuard
+
+// StartAdminGuard is startAdminGuard for the host commands.
+func StartAdminGuard(ctx context.Context, tx pgx.Tx) (AdminGuard, error) {
+	return startAdminGuard(ctx, tx)
+}
+
+// Check is check for the host commands.
+func (g adminGuard) Check(ctx context.Context, tx pgx.Tx) error { return g.check(ctx, tx) }
+
+// IsTooFewAdmins reports whether err is the guard's refusal.
+func IsTooFewAdmins(err error) bool { return errors.Is(err, errLastAdmin) }
+
 // check returns errLastAdmin when tx's changes lowered the count below
 // MinAdmins.
 func (g adminGuard) check(ctx context.Context, tx pgx.Tx) error {
