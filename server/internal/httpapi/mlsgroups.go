@@ -122,6 +122,7 @@ func (a *API) ownDevice(
 		return false
 	}
 
+	a.touchDevice(r, deviceID)
 	return true
 }
 

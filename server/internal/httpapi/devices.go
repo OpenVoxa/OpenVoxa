@@ -317,6 +317,8 @@ func (a *API) publishKeyPackages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	a.touchDevice(r, deviceID)
+
 	// A device becomes addable once it has packages: a new device right
 	// after registering, or one that ran dry and was skipped. Members
 	// reconcile and pick it up.
@@ -326,13 +328,20 @@ func (a *API) publishKeyPackages(w http.ResponseWriter, r *http.Request) {
 }
 
 // keyPackageCount lets a client know when to replenish.
+//
+// Every client calls it at sign-in, which makes it the check for "is this
+// device still mine". A revoked device gets 410 Gone, so its owner's
+// client knows to discard the dead keys and register afresh (device
+// expiry, or "Forget" used from somewhere else).
 func (a *API) keyPackageCount(w http.ResponseWriter, r *http.Request) {
 	session := sessionFrom(r.Context())
 	deviceID := r.PathValue("id")
 
 	var owner string
+	var revoked bool
 	err := a.pool.QueryRow(r.Context(),
-		`SELECT user_id FROM devices WHERE id = $1`, deviceID).Scan(&owner)
+		`SELECT user_id, revoked_at IS NOT NULL FROM devices WHERE id = $1`,
+		deviceID).Scan(&owner, &revoked)
 
 	switch {
 	case errors.Is(err, pgx.ErrNoRows), err == nil && owner != session.UserID:
@@ -342,9 +351,29 @@ func (a *API) keyPackageCount(w http.ResponseWriter, r *http.Request) {
 		slog.Error("looking up device", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not count key packages")
 		return
+	case revoked:
+		writeError(w, http.StatusGone, "this device was revoked; register a new one")
+		return
 	}
 
+	a.touchDevice(r, deviceID)
 	a.writeKeyPackageCount(w, r, deviceID)
+}
+
+// touchDevice records that a device is in use, for expiry
+// (db.StartDeviceExpirySweep). Called wherever a request proves the
+// device is alive: sign-in (key package count and publish) and every MLS
+// operation it makes. Written at most once a minute per device so busy
+// channels do not turn into a write per request. Best effort: a failure
+// is logged and the request carries on.
+func (a *API) touchDevice(r *http.Request, deviceID string) {
+	if _, err := a.pool.Exec(r.Context(),
+		`UPDATE devices SET last_seen_at = now()
+		  WHERE id = $1 AND last_seen_at < now() - interval '1 minute'`,
+		deviceID,
+	); err != nil {
+		slog.Warn("updating device last_seen_at", "err", err)
+	}
 }
 
 func (a *API) writeKeyPackageCount(w http.ResponseWriter, r *http.Request, deviceID string) {

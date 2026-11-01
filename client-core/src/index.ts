@@ -84,8 +84,7 @@ export async function setUpIdentity(
   await mls.init();
 
   const identity = new Identity(mls, call);
-  await identity.ensureDevice(userId, label);
-  return identity.replenish();
+  return identity.start(userId, label);
 }
 
 /**
@@ -149,10 +148,9 @@ export async function startSession(
   await mls.init();
 
   const identity = new Identity(mls, call);
-  const device = await identity.ensureDevice(userId, label);
-  const status = await identity.replenish();
+  const status = await identity.start(userId, label);
 
-  return { identity, groups: new Groups(mls, call, device.id), status };
+  return { identity, groups: new Groups(mls, call, status.deviceId), status };
 }
 
 /** Destroy all local key material. Called on sign-out. */

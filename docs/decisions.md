@@ -1196,8 +1196,16 @@ skip those event types while it is up.
       ciphertext. The key has to be generated at signup and shown once.
 - [x] Removing a revoked device from the groups it belongs to is
       client-side work. Done: reconciliation removes it (step 11).
-- [ ] Inactive devices expire after 30 days. Decided by Ryan, 2026-10-31,
-      deferred so functionality comes first. A device whose keys are gone
+- [x] Inactive devices expire after 30 days. Decided by Ryan, 2026-10-31.
+      Done 2026-10-31: `touchDevice` updates `last_seen_at` (at most once a
+      minute) on the key package count/publish and every MLS call that
+      checks `ownDevice`; `db.StartDeviceExpirySweep` revokes idle devices
+      hourly and at startup, deletes their unclaimed packages and sends
+      `access_changed`; migration 0013 restarts every active device's
+      clock, since nothing had maintained it. The count check returns 410
+      for a revoked device, and `Identity.start` then wipes local storage
+      (the device's keys and its local plaintext archive) and registers a
+      new one. Original plan, kept for the record: A device whose keys are gone
       (a closed private window, a wiped browser) stays active forever, and
       members keep adding it and spending its key packages, last resort
       included. Plan: update `devices.last_seen_at` on group activity and
