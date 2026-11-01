@@ -216,6 +216,14 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 		withUUIDPath(api.requireAuth(api.listAllowedDevices)))
 	mux.HandleFunc("GET /api/v1/channels/{id}/mls/device-names",
 		withUUIDPath(api.requireAuth(api.listDeviceNames)))
+	mux.HandleFunc("GET /api/v1/channels/{id}/mls/history/message-ids",
+		withUUIDPath(api.requireAuth(api.listShareableMessageIDs)))
+	mux.HandleFunc("POST /api/v1/channels/{id}/mls/history",
+		withUUIDPath(api.requireAuth(api.shareHistory)))
+	mux.HandleFunc("GET /api/v1/channels/{id}/mls/history",
+		withUUIDPath(api.requireAuth(api.listHistoryShares)))
+	mux.HandleFunc("DELETE /api/v1/channels/{id}/mls/history/{share}",
+		withUUIDPath(api.requireAuth(api.ackHistoryShare)))
 
 	mux.HandleFunc("GET /api/v1/mls/welcomes", api.requireAuth(api.listWelcomes))
 	mux.HandleFunc("POST /api/v1/mls/welcomes/{id}/ack",
@@ -232,6 +240,8 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 		withUUIDPath(api.requirePerm(perm.ForcePTT, api.setForcePTT)))
 	mux.HandleFunc("PATCH /api/v1/channels/{id}/retention",
 		withUUIDPath(api.requirePerm(perm.ManageChannels, api.setChannelRetention)))
+	mux.HandleFunc("PATCH /api/v1/channels/{id}/history-sharing",
+		withUUIDPath(api.requirePerm(perm.ManageChannels, api.setHistorySharing)))
 	mux.HandleFunc("PUT /api/v1/channels/{id}/access",
 		withUUIDPath(api.requirePerm(perm.ManageChannels, api.setChannelAccess)))
 
@@ -314,6 +324,10 @@ type channelResponse struct {
 	Retention string `json:"retention"`
 	ForcePTT  bool   `json:"force_ptt"`
 
+	// HistorySharing: new members of this encrypted channel are sent the
+	// messages existing members hold. Shown beside retention.
+	HistorySharing bool `json:"history_sharing"`
+
 	// Access is the channel's allow-list: which groups may view it and
 	// which of those may post. Administrators see every channel without
 	// being listed.
@@ -347,7 +361,7 @@ func (a *API) listChannels(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.pool.Query(r.Context(),
 		`SELECT c.id, c.name, c.kind, c.encrypted,
 		        EXTRACT(EPOCH FROM c.retention)::float8,
-		        c.force_ptt, `+canPostSQL+`, `+channelAccessJSON+`
+		        c.force_ptt, c.history_sharing, `+canPostSQL+`, `+channelAccessJSON+`
 		   FROM channels c, users u
 		  WHERE u.id = $1 AND `+canViewSQL+`
 		  ORDER BY c.name`,
@@ -367,7 +381,7 @@ func (a *API) listChannels(w http.ResponseWriter, r *http.Request) {
 		var retentionSeconds *float64
 
 		if err := rows.Scan(&c.ID, &c.Name, &c.Kind, &c.Encrypted, &retentionSeconds,
-			&c.ForcePTT, &c.CanPost, &c.Access); err != nil {
+			&c.ForcePTT, &c.HistorySharing, &c.CanPost, &c.Access); err != nil {
 			slog.Error("scanning channel", "err", err)
 			writeError(w, http.StatusInternalServerError, "could not list channels")
 			return

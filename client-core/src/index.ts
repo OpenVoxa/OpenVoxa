@@ -50,12 +50,13 @@ export type {
   AutoEvent,
   DeviceInfo,
   GroupStatus,
+  ImportedHistory,
   MembershipChange,
   PersonChange,
   OpenResult,
   ReconcileResult,
 } from "./groups.js";
-export type { StoredDevice, StoredKeyPair } from "./storage.js";
+export type { SharedBy, StoredDevice, StoredKeyPair } from "./storage.js";
 
 export const VERSION = "0.1.0";
 

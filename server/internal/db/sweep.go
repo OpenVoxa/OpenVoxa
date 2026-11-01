@@ -52,4 +52,16 @@ func sweepSessions(ctx context.Context, pool *pgxpool.Pool) {
 	if n := tag.RowsAffected(); n > 0 {
 		slog.Info("expired sessions removed", "count", n)
 	}
+
+	// History bundles nobody collected: the device never came back, so
+	// the bundle is just ciphertext taking up space.
+	tag, err = pool.Exec(ctx,
+		`DELETE FROM mls_history_shares WHERE created_at < now() - interval '7 days'`)
+	if err != nil {
+		slog.Error("sweeping history shares", "err", err)
+		return
+	}
+	if n := tag.RowsAffected(); n > 0 {
+		slog.Info("uncollected history shares removed", "count", n)
+	}
 }
