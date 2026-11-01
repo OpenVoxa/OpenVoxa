@@ -79,7 +79,10 @@ export function LinkPreview({ call, url, fetch }: { call: ApiCall; url: string; 
             src={`https://www.youtube-nocookie.com/embed/${vid}?autoplay=1`}
             allow="accelerometer; encrypted-media; picture-in-picture"
             allowFullScreen
-            referrerPolicy="no-referrer"
+            // YouTube refuses to play without a Referer ("Error 153"), so
+            // send only this site's origin, never the page URL. It only
+            // happens after a click on play.
+            referrerPolicy="strict-origin"
             title={p.title ?? "YouTube video"}
           />
         ) : (
