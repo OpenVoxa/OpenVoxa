@@ -179,7 +179,7 @@ func (a *API) createGroup(w http.ResponseWriter, r *http.Request) {
 	channelID := r.PathValue("id")
 
 	var req createGroupRequest
-	if !decodeJSON(w, r, &req) {
+	if !decodeJSONLimit(w, r, &req, maxMLSBody) {
 		return
 	}
 
@@ -244,7 +244,7 @@ func (a *API) resetGroup(w http.ResponseWriter, r *http.Request) {
 	channelID := r.PathValue("id")
 
 	var req resetGroupRequest
-	if !decodeJSON(w, r, &req) {
+	if !decodeJSONLimit(w, r, &req, maxMLSBody) {
 		return
 	}
 	groupInfo, ok := decodeGroupInfo(w, req.GroupInfo)
@@ -406,7 +406,7 @@ func (a *API) putGroupInfo(w http.ResponseWriter, r *http.Request) {
 	channelID := r.PathValue("id")
 
 	var req putGroupInfoRequest
-	if !decodeJSON(w, r, &req) {
+	if !decodeJSONLimit(w, r, &req, maxMLSBody) {
 		return
 	}
 	groupInfo, ok := decodeGroupInfo(w, req.GroupInfo)
@@ -443,6 +443,13 @@ func (a *API) putGroupInfo(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// maxMLSBody caps MLS handshake requests (group creation, commits, resets,
+// GroupInfo). They outgrow maxRequestBody quickly: an add commit carries a
+// welcome and the whole ratchet tree for every device it adds, so its size
+// grows with the square of the devices added at once. 64 KB refused an add
+// of about ten devices (found 2026-11-01). 8 MB covers hundreds.
+const maxMLSBody = 8 << 20
 
 type welcomeEnvelope struct {
 	DeviceID    string `json:"device_id"`
@@ -496,7 +503,7 @@ func (a *API) submitCommit(w http.ResponseWriter, r *http.Request) {
 	channelID := r.PathValue("id")
 
 	var req commitRequest
-	if !decodeJSON(w, r, &req) {
+	if !decodeJSONLimit(w, r, &req, maxMLSBody) {
 		return
 	}
 

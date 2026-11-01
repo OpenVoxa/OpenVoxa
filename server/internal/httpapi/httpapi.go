@@ -467,7 +467,13 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // response and returns false if the body is unusable, so callers can simply
 // `if !decodeJSON(...) { return }`.
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+	return decodeJSONLimit(w, r, v, maxRequestBody)
+}
+
+// decodeJSONLimit is decodeJSON with a caller-chosen size cap, for the few
+// endpoints whose bodies legitimately outgrow maxRequestBody.
+func decodeJSONLimit(w http.ResponseWriter, r *http.Request, v any, limit int64) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
