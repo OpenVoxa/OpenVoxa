@@ -862,7 +862,9 @@ async function onGroupAdvanced() {
 
   try {
     const epoch = await session.groups.catchUp(channelId);
-    line("sys", `group advanced to epoch ${epoch}`);
+    // Epoch bookkeeping is detail: the status line already shows it, and
+    // the person-level notices say what actually changed.
+    if ($("noticeDetail")?.checked) line("sys", `group advanced to epoch ${epoch}`);
     cryptoStatus(`encrypted: ready (epoch ${epoch})`);
     session.groups.reconcileSoon(channelId);
   } catch (e) {
