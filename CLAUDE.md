@@ -211,6 +211,9 @@ _Last updated: 2026-10-31, step 13 (real client) M1 in progress; see project doc
   `Backup` (create/unlock/upload/restore/remove/status), derived key kept
   in the device store; verified (R1). Sign-out wipes the archive: upload
   before it. Next: client-web screens (part 4).
+- Password rules (decisions.md): 12+ chars, upper, lower, number, symbol;
+  `password.go` (register + `PUT /me/password`), mirrored in client-web
+  `password.ts`. Two-admin floor verified A2.
 - client-web palette (2026-11-01): #333333 background, #D96932 buttons,
   #FFFFFF text; derived shades in `styles.css` variables (user themes later).
 - Always an administrator (decisions.md, Permission groups): floor of two

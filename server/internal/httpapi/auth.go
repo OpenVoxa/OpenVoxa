@@ -103,11 +103,9 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 			"username must be 3-32 characters: letters, digits, underscore or hyphen")
 		return
 	}
-	// Count runes, not bytes, so a passphrase in any script is measured the
-	// way a person would measure it.
-	if n := utf8.RuneCountInString(req.Password); n < minPasswordLen || n > maxPasswordLen {
-		writeError(w, http.StatusBadRequest,
-			"password must be between 12 and 256 characters")
+	// Rules in password.go.
+	if msg := passwordProblem(req.Password); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
 
