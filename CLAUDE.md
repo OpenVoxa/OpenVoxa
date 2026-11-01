@@ -41,7 +41,9 @@ client-core/       TypeScript protocol + crypto, no UI
 deploy/            docker-compose.yml, Caddyfiles, livekit.yaml, .env.example
 ```
 
-`client-web` / `client-desktop` do not exist yet.
+`client-web/` (Vite + React + TS, plain CSS) is embedded into the server
+(`internal/httpapi/webui/`, `webui.go`) and served at `/`. Build check:
+`cd client-web && npm run build`. `client-desktop` does not exist yet.
 
 ## Stack
 

@@ -1178,6 +1178,28 @@ skip those event types while it is up.
     groups. Found on the way: retiring old voice keys switched every
     device onto junk keys 10 s after a key change (fixed `efc38c6`)
 13. ⬜ The real client: `client-web`, `client-desktop`
+    Decided with Ryan 2026-10-31:
+    - `client-web` is Vite + React + TypeScript with plain hand-written CSS
+      (dark, Discord-like). The Go binary embeds the build (`webui/`,
+      `webui.go`) and serves it at `/` as a single-page app; chat.html stays
+      at `/debug/`. Same origin keeps the LiveKit E2EE worker working and
+      lets the new client read the IndexedDB the debug page wrote.
+      `client-desktop` (Electron) later loads the same bundle.
+    - Order: M1 signup/login + recovery key, M2 text (history paging),
+      M3 voice/screen share, M4 attachments/GIFs/unfurls/notices,
+      M5 settings and admin panes.
+    - Recovery key v1 = history backup only: generated at signup, shown
+      once (words/characters AND a QR code), confirmed by retyping part
+      of it; it encrypts an uploaded backup of the local plaintext
+      archive (server stores opaque chunks). Existing accounts are asked
+      once. Local IndexedDB encryption reuses it later.
+    - Device linking by QR (after M1): a logged-in device shows a QR of
+      `https://server/link#<one-time secret>` (about 2 min, single use);
+      the phone's camera opens it; the server only relays encrypted
+      messages; the old device approves the login and hands over the
+      backup key. The typed recovery key is the fallback.
+    - 2FA: TOTP only (authenticator apps, RFC 6238) plus one-time backup
+      codes. No SMS, email or third-party service. After device linking.
 
 ## Open items
 
