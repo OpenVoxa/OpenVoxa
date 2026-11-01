@@ -1439,6 +1439,11 @@ to pick their own colours later, so every colour stays a variable.
       same subset as the debug page). Link previews (`previews.tsx`) for
       the first link in a message, via `POST /unfurl`, one request per
       link per page load; YouTube is click-to-load (youtube-nocookie).
+      The server asks YouTube's oEmbed endpoint for YouTube links
+      (`unfurl.fetchYouTube`): scraping watch pages failed on Docker
+      (huge pages, consent redirects). A YouTube link always gets its
+      click-to-play box, even when no card could be fetched or previews
+      are off (it contacts nobody until clicked).
       In encrypted channels previews are off unless the user opts in
       (Settings, "Link previews in encrypted channels", per browser):
       Ryan chose opt-in over never or always, since the server learns

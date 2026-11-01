@@ -322,7 +322,7 @@ function Message({ m, call, encrypted, previews, compact, username, canDelete, c
   else if (m.unreadable) body = <em>{UNREADABLE[m.unreadable]}</em>;
   else if (editing) body = <EditBox initial={m.text} onSave={onSaveEdit} onCancel={onCancelEdit} />;
   else body = m.text ? <Markdown text={m.text} /> : null;
-  const link = previews && !m.deleted && !m.unreadable && !m.pending && !editing ? firstLink(m.text) : null;
+  const link = !m.deleted && !m.unreadable && !m.pending && !editing ? firstLink(m.text) : null;
 
   return (
     <article className={classes} data-id={m.id} aria-label={`${name} at ${formatTime(m.createdAt)}`}>
@@ -345,7 +345,7 @@ function Message({ m, call, encrypted, previews, compact, username, canDelete, c
         )}
       </div>
       {!m.deleted && m.attachments.length > 0 && <Attachments m={m} encrypted={encrypted} />}
-      {link && <LinkPreview call={call} url={link} />}
+      {link && <LinkPreview call={call} url={link} fetch={previews} />}
       {m.sharedBy && !m.deleted && (
         <div className="muted small">
           Shared by {m.sharedBy.verified ? (m.sharedBy.username ?? "a member") : "an unverified member"}

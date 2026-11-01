@@ -556,3 +556,4 @@ details summary { cursor: pointer; color: var(--muted); }
 .gif-grid .gif { padding: 0; background: var(--input); border: 2px solid transparent; border-radius: 4px; height: 90px; overflow: hidden; }
 .gif-grid .gif:hover { border-color: var(--accent); }
 .gif-grid .gif img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.preview .embed .no-thumb { display: block; width: 400px; max-width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: var(--radius); }
