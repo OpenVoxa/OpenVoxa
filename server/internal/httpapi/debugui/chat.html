@@ -899,6 +899,11 @@ async function setUpIdentity() {
     const status = session.status;
     session.groups.onAuto(onAutoReconcile);
     session.groups.onMembership(onMembershipChange);
+    if (status.replaced) {
+      line("sys", "this browser's previous device had been revoked (unused for 30 days, " +
+        "or forgotten elsewhere); registered a new device. Members add it back " +
+        "automatically; older encrypted messages stay unreadable here.");
+    }
 
     $("idStatus").textContent =
       `device ${status.deviceId.slice(0, 8)} - ` +

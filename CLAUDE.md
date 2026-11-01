@@ -113,7 +113,7 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
 
 ## Current state (update every session)
 
-_Last updated: 2026-10-31, per-person notices verified; call-end wording pushed._
+_Last updated: 2026-10-31, notices + call-end wording verified; device expiry pushed._
 
 - Build-order step 9 (MLS for text) is functionally working on Docker:
   messages in an encrypted channel are ciphertext in Postgres (only the
@@ -188,8 +188,11 @@ _Last updated: 2026-10-31, per-person notices verified; call-end wording pushed.
      them by default, "per-device" checkbox for the old detail and epoch
      lines; DONE, verified on Docker N1-N2) -> call-end wording
      (`describeVoiceEnd` in chat.html: server kick or own MLS removal
-     both read as "removed", not "left voice"; pushed, awaiting Docker
-     test) -> 30-day device expiry -> history sharing -> client (step 13), with
+     both read as "removed", not "left voice"; DONE, verified V1) ->
+     30-day device expiry (`db/deviceexpiry.go`, migration 0013, 410 from
+     the key package count, `Identity.start` re-registers; pushed, awaiting
+     Docker test; Go could not be compiled this session, proxy.golang.org
+     blocked) -> history sharing -> client (step 13), with
      recovery keys built into the client.
   5. Opt-in history sharing (Ryan wants it; see decisions.md Open items).
   6. Local storage encryption (blocked on recovery keys).

@@ -38,6 +38,18 @@ export interface IdentityStatus {
   readonly available: number;
   readonly hasLastResort: boolean;
   readonly published: number;
+  /**
+   * The device stored here had been revoked (idle 30 days, or forgotten
+   * from somewhere else), so its keys were discarded and this is a newly
+   * registered device. Members add it back automatically; messages from
+   * before are unreadable to it, as on any new device.
+   */
+  readonly replaced?: boolean;
+}
+
+/** The server says this device was revoked (410 from the count check). */
+export function isDeviceRevoked(err: unknown): boolean {
+  return (err as { status?: unknown } | null)?.status === 410;
 }
 
 interface CountResponse {
@@ -116,6 +128,24 @@ export class Identity {
    * Returns how many were published, which is zero when the pool is
    * already healthy. Safe to call on every sign-in.
    */
+  /**
+   * ensureDevice, then replenish, replacing the device if the server says
+   * it was revoked. The stored keys are useless then: nobody will add the
+   * device to a group again, and every group has removed it.
+   */
+  async start(userId: string, label: string): Promise<IdentityStatus> {
+    await this.ensureDevice(userId, label);
+    try {
+      return await this.replenish();
+    } catch (err) {
+      if (!isDeviceRevoked(err)) throw err;
+    }
+    await storage.wipe();
+    this.#device = null;
+    await this.ensureDevice(userId, label);
+    return { ...(await this.replenish()), replaced: true };
+  }
+
   async replenish(force = false): Promise<IdentityStatus> {
     const device = this.#device;
     if (!device) throw new Error("identity: no device registered");

@@ -69,6 +69,10 @@ func run() error {
 	db.StartRetentionSweep(ctx, pool, api.NotifyChannelPurged)
 	db.StartBlobGC(ctx, pool, blobs)
 
+	// Revoking an idle device needs members to remove it from their
+	// groups, which the access_changed event asks them to do.
+	db.StartDeviceExpirySweep(ctx, pool, api.NotifyAccessChanged)
+
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           api,
