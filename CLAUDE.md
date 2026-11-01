@@ -115,7 +115,7 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
 
 ## Current state (update every session)
 
-_Last updated: 2026-11-01. Step 13 (real client) M1 parts 1-3 done; next is part 4 (recovery screens). Full handoff: project doc claude/handoff-step-13.md._
+_Last updated: 2026-11-01. Step 13 (real client) M1 parts 1-3 verified; part 4 (recovery screens) pushed, awaiting test K1. Full handoff: project doc claude/handoff-step-13.md._
 
 - Build-order step 9 (MLS for text) is functionally working on Docker:
   messages in an encrypted channel are ciphertext in Postgres (only the
@@ -210,7 +210,9 @@ _Last updated: 2026-11-01. Step 13 (real client) M1 parts 1-3 done; next is part
   `RecoveryKey` (12 BIP-39 words via @scure/bip39, QR payload `OVRK1:<hex>`),
   `Backup` (create/unlock/upload/restore/remove/status), derived key kept
   in the device store; verified (R1). Sign-out wipes the archive: upload
-  before it. Next: client-web screens (part 4).
+  before it. Part 4 client-web screens (`Recovery.tsx`, `backup.ts`
+  BackupManager, `@core/*` source import; decisions.md build order 13,
+  "Recovery screens"): pushed, NOT yet verified on Docker (test K1).
 - Password rules (decisions.md): 12+ chars, 3 of 4 kinds, not the
   username, not a (dressed-up) common password (embedded NCSC 100k list),
   not mostly a pattern. `server/internal/password` (register + `PUT

@@ -100,3 +100,42 @@ button.link:hover { text-decoration: underline; }
 }
 .rules .ok { color: var(--text); }
 label .error { font-size: 13px; font-weight: 400; text-transform: none; }
+
+/* Recovery key screens. */
+.auth-card.wide { max-width: 520px; }
+.word-grid {
+  margin: 0;
+  padding: 16px 16px 16px 40px;
+  background: var(--input);
+  border-radius: var(--radius);
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px 28px;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 16px;
+}
+.word-grid li::marker { color: var(--muted); font-size: 13px; }
+@media (max-width: 420px) { .word-grid { grid-template-columns: repeat(2, 1fr); } }
+.qr { width: 180px; height: 180px; align-self: center; border-radius: var(--radius); }
+textarea {
+  font: inherit;
+  font-size: 16px;
+  text-transform: none;
+  color: var(--text);
+  background: var(--input);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  padding: 10px;
+  resize: vertical;
+}
+textarea:focus { outline: none; border-color: var(--accent); }
+.panel-row {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px;
+  background: var(--input);
+  border-radius: var(--radius);
+  font-size: 14px;
+}
