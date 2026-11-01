@@ -1109,7 +1109,12 @@ held to). The Linux model is copied instead: root needs the machine.
   /openvoxa-server grant-admin <username>` puts the account in the
   top-positioned group with the switch, creating one above all others if
   needed, and writes the audit log (actor NULL, "server command line").
-  `list-admins` shows who holds it. Nothing is reachable over the network.
+  `list-admins` shows who holds it; `list-users` lists every account
+  (groups, banned, created, last seen); `delete-user <name>...` deletes
+  like self-deletion (shared `PurgeUserTx`), one transaction per name,
+  keeping the two-admin floor unless `--force`. A deleted user's already
+  open socket stays until it reconnects (the CLI can't reach the hub).
+  Nothing is reachable over the network.
 - **Setup code**: an empty server (no rows in `users`) is no longer
   claimed by whoever registers first. A random code is printed in the
   server log at startup (and again on a refused attempt) and the first

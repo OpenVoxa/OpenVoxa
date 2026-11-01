@@ -115,7 +115,7 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
 
 ## Current state (update every session)
 
-_Last updated: 2026-10-31, step 13 (real client) M1 in progress; see project doc claude/handoff-step-13.md._
+_Last updated: 2026-11-01. Step 13 (real client) M1 parts 1-3 done; next is part 4 (recovery screens). Full handoff: project doc claude/handoff-step-13.md._
 
 - Build-order step 9 (MLS for text) is functionally working on Docker:
   messages in an encrypted channel are ciphertext in Postgres (only the
@@ -219,8 +219,9 @@ _Last updated: 2026-10-31, step 13 (real client) M1 in progress; see project doc
   #FFFFFF text; derived shades in `styles.css` variables (user themes later).
 - Always an administrator (decisions.md, Permission groups): floor of two
   admins (`MinAdmins`, guard also on bans) in `lastadmin.go`, verified A1
-  for the one-admin version; host command `/openvoxa-server grant-admin
-  <user>` / `list-admins` (`cli.go`), setup code from the log for the
+  for the one-admin version; host commands `/openvoxa-server grant-admin
+  <user>` / `list-admins` / `list-users` / `delete-user <user>... [--force]`
+  (`cli.go`; list/delete not yet tested on Docker), setup code from the log for the
   first account on an empty server (`GET /api/v1/setup`).
 - Other open items (revoked-device removal, recovery keys, etc.) live in
   decisions.md "Open items" — check there before proposing new work.

@@ -146,7 +146,19 @@ func (a *API) purgeUser(ctx context.Context, userID string) error {
 	if err != nil {
 		return err
 	}
+	if err := PurgeUserTx(ctx, tx, userID); err != nil {
+		return err
+	}
+	if err := guard.check(ctx, tx); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
 
+// PurgeUserTx does the destruction itself inside tx, with no checks.
+// Shared with the host command `delete-user` (cli.go), which runs the
+// administrator guard itself.
+func PurgeUserTx(ctx context.Context, tx pgx.Tx, userID string) error {
 	// Empty the bodies rather than dropping the rows.
 	if _, err := tx.Exec(ctx,
 		`UPDATE messages SET body = ''::bytea, deleted = true WHERE author_id = $1`,
@@ -158,14 +170,8 @@ func (a *API) purgeUser(ctx context.Context, userID string) error {
 	// Deleting the user cascades to sessions, so every device is logged
 	// out immediately, and sets author_id to NULL on the tombstones above.
 	// The role_changes rows they were party to also lose their reference.
-	if _, err := tx.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID); err != nil {
-		return err
-	}
-
-	if err := guard.check(ctx, tx); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+	_, err := tx.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID)
+	return err
 }
 
 type setRetentionRequest struct {
