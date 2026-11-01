@@ -113,7 +113,7 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
 
 ## Current state (update every session)
 
-_Last updated: 2026-11-01, history sharing pushed; earlier items verified._
+_Last updated: 2026-11-01, small items done and verified; next: real client (step 13)._
 
 - Build-order step 9 (MLS for text) is functionally working on Docker:
   messages in an encrypted channel are ciphertext in Postgres (only the
@@ -194,7 +194,8 @@ _Last updated: 2026-11-01, history sharing pushed; earlier items verified._
      E1) -> history sharing (decided: everyone added, all the server
      holds, "shared by" marker; decisions.md Encryption; migration 0014,
      `historyshare.go`, `groups.importSharedHistory`, chat.html helper
-     `setHistorySharing(name, on)`; pushed, awaiting Docker test) -> client (step 13), with
+     `setHistorySharing(name, on)`; DONE, verified H1). Small items
+     finished; next is the real client (build-order 13). -> client (step 13), with
      recovery keys built into the client.
   5. Opt-in history sharing (Ryan wants it; see decisions.md Open items).
   6. Local storage encryption (blocked on recovery keys).
