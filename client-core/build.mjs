@@ -4,6 +4,9 @@
 import * as esbuild from "esbuild";
 import { copyFile } from "node:fs/promises";
 
+// ts-mls tree validation fix; see the script.
+await import("./scripts/patch-ts-mls.mjs");
+
 // Bundled as an IIFE exposing one global rather than as an ES module.
 //
 // The debug client is a plain HTML page with no module loader, and this
