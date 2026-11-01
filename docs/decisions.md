@@ -1290,6 +1290,23 @@ to pick their own colours later, so every colour stays a variable.
       (not the words) is kept on the device as a non-extractable
       CryptoKey for later uploads; another device starting a new backup
       locks the others until they enter the new key.
+    - Recovery screens (client-web, M1 part 4; decided with Ryan
+      2026-11-01): signup shows the 12 words and a QR, then asks for 3
+      random words (first four letters suffice, as in parse) before
+      `Backup.create`; no "Not now" at signup. An older account without a
+      backup is asked once per browser (remembered in localStorage). A
+      backup this device cannot use (never unlocked here, or replaced by
+      another device) gets the restore screen: restore merges and
+      remembers the key; "Skip for now" lasts the session; "I lost my key"
+      starts a new backup after a warning. Upload policy: always before
+      sign-out, and about a minute after the latest new message
+      (`BackupManager.scheduleUpload`, debounced; called by the chat view
+      from M2). client-web logout does not wipe the archive yet: the
+      device belongs to the debug page until M2, and wiping keys without
+      revoking the device was a known bug. QR scanning by camera is not
+      built; the `OVRK1:` text can be pasted. client-web imports
+      client-core as source (`@core/*` in tsconfig, `resolve.tsconfigPaths`
+      in Vite); the Dockerfile puts the client stage's tree beside it.
     - Device linking by QR (after M1): a logged-in device shows a QR of
       `https://server/link#<one-time secret>` (about 2 min, single use);
       the phone's camera opens it; the server only relays encrypted

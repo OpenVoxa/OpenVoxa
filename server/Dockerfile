@@ -20,9 +20,12 @@ RUN npm run build
 # ------------------------------------------------------------------- web
 # Builds client-web (React, Vite) into static files the server embeds and
 # serves at /. npm ci installs exactly what package-lock.json records.
+# client-web imports client-core as source ("@core/..." -> ../client-core/src),
+# so the client stage's tree, node_modules included, sits beside it.
 FROM node:22-alpine AS web
 
-WORKDIR /web
+WORKDIR /app/client-web
+COPY --from=client /client /app/client-core
 COPY client-web/package.json client-web/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 
@@ -53,7 +56,7 @@ COPY --from=client /client/dist/livekit-client.umd.js /client/dist/livekit-clien
 
 # The web client replaces the placeholder in webui/. Same rule: before
 # `go build`, or the embed holds the placeholder.
-COPY --from=web /web/dist/ ./internal/httpapi/webui/
+COPY --from=web /app/client-web/dist/ ./internal/httpapi/webui/
 
 RUN CGO_ENABLED=0 go build -o /out/openvoxa-server .
 

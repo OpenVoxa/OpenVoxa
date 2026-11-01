@@ -5,7 +5,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { call, guessDeviceName, type Session } from "./api";
 import { checkPassword, MIN_PASSWORD, REQUIRED_KINDS } from "./password";
 
-export function Login({ onSession }: { onSession: (s: Session) => void }) {
+export function Login({ onSession }: { onSession: (s: Session, registered: boolean) => void }) {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -49,7 +49,7 @@ export function Login({ onSession }: { onSession: (s: Session) => void }) {
           ...(registering && needsSetup ? { setup_code: setupCode } : {}),
         },
       });
-      onSession(s);
+      onSession(s, registering);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
