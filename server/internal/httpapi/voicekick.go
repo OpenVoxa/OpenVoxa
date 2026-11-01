@@ -69,6 +69,7 @@ func (a *API) kickFromLostVoice(userID string) {
 				continue
 			}
 			if removed {
+				a.notifyVoiceChanged(room)
 				slog.Info("removed from voice after losing access",
 					"channel_id", room, "user_id", userID)
 			}
@@ -119,6 +120,7 @@ func (a *API) kickLostFromAllVoice() {
 					slog.Error("removing voice participant", "err", err,
 						"channel_id", room, "user_id", userID)
 				} else if removed {
+					a.notifyVoiceChanged(room)
 					slog.Info("removed from voice after losing access",
 						"channel_id", room, "user_id", userID)
 				}
