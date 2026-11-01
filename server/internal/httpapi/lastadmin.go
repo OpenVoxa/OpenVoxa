@@ -15,21 +15,27 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// The server must never be left without an administrator
-// (docs/decisions.md, "There is always an administrator"). Three pieces:
+// The server keeps at least two administrators once it has two
+// (docs/decisions.md, "There is always an administrator"). One is not
+// enough: someone who takes over an administrator account could remove
+// every other administrator and be the sole controller. With a floor of
+// two there is always another who can act. Three pieces:
 //
-//  1. adminGuard, run inside every transaction that could take
-//     the administrator switch away from someone, refuses the change if
-//     it would leave nobody holding it.
+//  1. adminGuard, run inside every transaction that could take the
+//     administrator switch away from someone (including a ban), refuses
+//     the change if it would drop the count below MinAdmins.
 //  2. The command line on the server host can always grant it
 //     (`openvoxa-server grant-admin <username>`, cli.go). Control of the
 //     host is the real "root", as with a Linux console.
 //  3. An empty server is claimed with a setup code printed in the server
 //     log, not by whoever registers first.
 
-var errLastAdmin = errors.New("last administrator")
+// MinAdmins is the floor the guard keeps. Shared with cli.go.
+const MinAdmins = 2
 
-const lastAdminMessage = "this would leave the server without an administrator; " +
+var errLastAdmin = errors.New("too few administrators")
+
+const lastAdminMessage = "the server must keep at least two administrators; " +
 	"make someone else an administrator first"
 
 // ActiveAdminsSQL counts accounts that hold the administrator switch
@@ -56,10 +62,11 @@ const ActiveAdminsSQL = `
 // moment would otherwise each see the other still there and both
 // succeed.
 //
-// Only the transition is refused. A server that already has no
-// administrator (say, from before this guard existed) still lets people
-// delete their own accounts; the fix for that state is grant-admin on
-// the host, not trapping everyone else.
+// A change is refused only if it lowers the count AND ends below the
+// floor. So a server with one administrator (a new server, or one from
+// before this rule) cannot drop to none, but is not frozen either: the
+// fix for being under the floor is adding one (grant-admin, or the admin
+// pane), and nobody else is trapped meanwhile.
 type adminGuard struct{ before int }
 
 func startAdminGuard(ctx context.Context, tx pgx.Tx) (adminGuard, error) {
@@ -71,16 +78,14 @@ func startAdminGuard(ctx context.Context, tx pgx.Tx) (adminGuard, error) {
 	return adminGuard{before: n}, err
 }
 
-// check returns errLastAdmin when tx's changes left no administrator.
+// check returns errLastAdmin when tx's changes lowered the count below
+// MinAdmins.
 func (g adminGuard) check(ctx context.Context, tx pgx.Tx) error {
-	if g.before == 0 {
-		return nil
-	}
 	var n int
 	if err := tx.QueryRow(ctx, ActiveAdminsSQL).Scan(&n); err != nil {
 		return err
 	}
-	if n == 0 {
+	if n < g.before && n < MinAdmins {
 		return errLastAdmin
 	}
 	return nil
@@ -114,6 +119,7 @@ func (a *API) setupCodeMatches(typed string) bool {
 
 // LogSetupCodeIfEmpty prints the setup code when the server has no
 // accounts yet. Called at startup; the code changes on every restart.
+// It also warns when the server has fewer than MinAdmins administrators.
 func (a *API) LogSetupCodeIfEmpty(ctx context.Context) {
 	var exists bool
 	if err := a.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users)`).Scan(&exists); err != nil {
@@ -122,6 +128,16 @@ func (a *API) LogSetupCodeIfEmpty(ctx context.Context) {
 	}
 	if !exists {
 		a.logSetupCode()
+		return
+	}
+	var n int
+	if err := a.pool.QueryRow(ctx, ActiveAdminsSQL).Scan(&n); err != nil {
+		slog.Error("counting administrators", "err", err)
+		return
+	}
+	if n < MinAdmins {
+		slog.Warn("fewer than two administrators: if this account is lost or taken over, "+
+			"nobody else can act. Add one with grant-admin", "administrators", n)
 	}
 }
 

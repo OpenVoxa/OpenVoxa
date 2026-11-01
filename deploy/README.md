@@ -50,8 +50,10 @@ docker compose logs server | grep setup_code
 Open the site, choose Register, and enter the code with your username and
 password.
 
-The server refuses any change that would leave it with no administrator.
-If you are still locked out, grant it from the host. This works only from
+Give the server a second administrator soon after: it refuses any change
+that takes it below two (so a taken-over account cannot remove everyone
+else), and it warns in the log while it has fewer. If you are ever
+locked out, grant it from the host. This works only from
 the machine running Docker, never over the network:
 
 ```bash

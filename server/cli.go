@@ -183,6 +183,10 @@ func listAdmins(ctx context.Context, conn *pgx.Conn) error {
 		return err
 	}
 	fmt.Printf("%d administrator(s), %d not banned\n", n, active)
+	if active < httpapi.MinAdmins {
+		fmt.Printf("warning: the server should have at least %d; add one with grant-admin\n",
+			httpapi.MinAdmins)
+	}
 	return nil
 }
 

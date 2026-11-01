@@ -385,6 +385,15 @@ func (a *API) banUser(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 
+	// A banned administrator no longer counts (lastadmin.go), so a ban
+	// can take the server below its administrator floor.
+	guard, err := startAdminGuard(r.Context(), tx)
+	if err != nil {
+		slog.Error("checking administrators", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not ban the user")
+		return
+	}
+
 	// Lock the account row so two bans cannot race; see below.
 	_, err = tx.Exec(r.Context(),
 		`SELECT 1 FROM users WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
@@ -519,6 +528,16 @@ func (a *API) banUser(w http.ResponseWriter, r *http.Request) {
 	if err := logModeration(r.Context(), tx, actor.UserID,
 		action, subjectID, detail); err != nil {
 		slog.Error("recording moderation action", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not ban the user")
+		return
+	}
+
+	if err := guard.check(r.Context(), tx); err != nil {
+		if errors.Is(err, errLastAdmin) {
+			writeError(w, http.StatusConflict, lastAdminMessage)
+			return
+		}
+		slog.Error("checking administrators", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not ban the user")
 		return
 	}

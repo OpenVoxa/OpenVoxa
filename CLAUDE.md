@@ -211,8 +211,11 @@ _Last updated: 2026-10-31, step 13 (real client) M1 in progress; see project doc
   `Backup` (create/unlock/upload/restore/remove/status), derived key kept
   in the device store; verified (R1). Sign-out wipes the archive: upload
   before it. Next: client-web screens (part 4).
-- Always an administrator (decisions.md, Permission groups): last-admin
-  guard in `lastadmin.go`, host command `/openvoxa-server grant-admin
+- client-web palette (2026-11-01): #333333 background, #D96932 buttons,
+  #FFFFFF text; derived shades in `styles.css` variables (user themes later).
+- Always an administrator (decisions.md, Permission groups): floor of two
+  admins (`MinAdmins`, guard also on bans) in `lastadmin.go`, verified A1
+  for the one-admin version; host command `/openvoxa-server grant-admin
   <user>` / `list-admins` (`cli.go`), setup code from the log for the
   first account on an empty server (`GET /api/v1/setup`).
 - Other open items (revoked-device removal, recovery keys, etc.) live in
