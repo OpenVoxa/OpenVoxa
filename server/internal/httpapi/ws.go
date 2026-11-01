@@ -136,7 +136,17 @@ type clientFrame struct {
 	// message is sent; the server verifies each one belongs to this
 	// uploader, in this channel, and is not already attached elsewhere.
 	Attachments []string `json:"attachments"`
+
+	// Optional client-chosen tag, echoed on the resulting message (and on
+	// an error about this frame). The sender uses it to pair its own
+	// echo with what it sent: in an encrypted channel the sender cannot
+	// decrypt its own message, so it has to know which plaintext the echo
+	// belongs to. Opaque here; capped so it cannot bloat broadcasts.
+	Ref string `json:"ref"`
 }
+
+// maxRefLength caps clientFrame.Ref.
+const maxRefLength = 64
 
 type messageFrame struct {
 	Type      string    `json:"type"`
@@ -147,6 +157,10 @@ type messageFrame struct {
 	Body      string    `json:"body"`
 	Deleted   bool      `json:"deleted"`
 	CreatedAt time.Time `json:"created_at"`
+	// Set once the author has edited the message; see migration 0016.
+	EditedAt *time.Time `json:"edited_at,omitempty"`
+	// The sender's clientFrame.Ref, on live messages only.
+	Ref string `json:"ref,omitempty"`
 
 	Attachments []attachmentInfo `json:"attachments,omitempty"`
 }
@@ -155,11 +169,16 @@ type historyFrame struct {
 	Type     string         `json:"type"`
 	Messages []messageFrame `json:"messages"`
 	CanPost  bool           `json:"can_post"`
+	// More, older messages exist; fetch them with GET
+	// /channels/{id}/messages?before=<oldest id>.
+	HasMore bool `json:"has_more"`
 }
 
 type errorFrame struct {
 	Type  string `json:"type"`
 	Error string `json:"error"`
+	// The Ref of the frame this error is about, when it had one.
+	Ref string `json:"ref,omitempty"`
 }
 
 func (a *API) websocket(w http.ResponseWriter, r *http.Request) {
@@ -242,7 +261,7 @@ func (a *API) websocket(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if frame.Type != "send" {
-			sendFrame(ctx, client, errorFrame{Type: "error", Error: "unknown frame type"})
+			sendFrame(ctx, client, errorFrame{Type: "error", Error: "unknown frame type", Ref: frame.Ref})
 			continue
 		}
 
@@ -252,6 +271,7 @@ func (a *API) websocket(w http.ResponseWriter, r *http.Request) {
 			sendFrame(ctx, client, errorFrame{
 				Type:  "error",
 				Error: "you do not have permission to post in this channel",
+				Ref:   frame.Ref,
 			})
 			continue
 		}
@@ -261,7 +281,7 @@ func (a *API) websocket(w http.ResponseWriter, r *http.Request) {
 		}
 		windowCount++
 		if windowCount > rateLimitCount {
-			sendFrame(ctx, client, errorFrame{Type: "error", Error: "slow down"})
+			sendFrame(ctx, client, errorFrame{Type: "error", Error: "slow down", Ref: frame.Ref})
 			continue
 		}
 
@@ -272,29 +292,36 @@ func (a *API) websocket(w http.ResponseWriter, r *http.Request) {
 			sendFrame(ctx, client, errorFrame{
 				Type:  "error",
 				Error: "message must be at most 4000 characters",
+				Ref:   frame.Ref,
 			})
 			continue
 		}
 		if n == 0 && len(frame.Attachments) == 0 {
-			sendFrame(ctx, client, errorFrame{Type: "error", Error: "message is empty"})
+			sendFrame(ctx, client, errorFrame{Type: "error", Error: "message is empty", Ref: frame.Ref})
 			continue
 		}
 		if len(frame.Attachments) > maxAttachmentsPerMessage {
 			sendFrame(ctx, client, errorFrame{
 				Type:  "error",
 				Error: "too many attachments on one message",
+				Ref:   frame.Ref,
 			})
 			continue
 		}
 
-		if err := a.persistAndBroadcast(ctx, session, channelID, frame.Body, frame.Attachments); err != nil {
+		if len(frame.Ref) > maxRefLength {
+			sendFrame(ctx, client, errorFrame{Type: "error", Error: "ref is too long"})
+			continue
+		}
+
+		if err := a.persistAndBroadcast(ctx, session, channelID, frame.Body, frame.Attachments, frame.Ref); err != nil {
 			slog.Error("persisting message", "err", err)
-			sendFrame(ctx, client, errorFrame{Type: "error", Error: "could not send message"})
+			sendFrame(ctx, client, errorFrame{Type: "error", Error: "could not send message", Ref: frame.Ref})
 		}
 	}
 }
 
-func (a *API) persistAndBroadcast(ctx context.Context, s Session, channelID, body string, attachmentIDs []string) error {
+func (a *API) persistAndBroadcast(ctx context.Context, s Session, channelID, body string, attachmentIDs []string, ref string) error {
 	var out messageFrame
 
 	tx, err := a.pool.Begin(ctx)
@@ -360,6 +387,7 @@ func (a *API) persistAndBroadcast(ctx context.Context, s Session, channelID, bod
 	out.AuthorID = s.UserID
 	out.Username = s.Username
 	out.Body = body
+	out.Ref = ref
 
 	payload, err := json.Marshal(out)
 	if err != nil {
@@ -367,73 +395,18 @@ func (a *API) persistAndBroadcast(ctx context.Context, s Session, channelID, bod
 	}
 
 	a.hub.Broadcast(channelID, payload)
+	a.notifyActivity(channelID, out.ID, s.UserID, out.CreatedAt)
 	return nil
 }
 
 func (a *API) sendHistory(ctx context.Context, client *hub.Client, channelID string, canPost bool) error {
-	rows, err := a.pool.Query(ctx,
-		`SELECT m.id, m.author_id, COALESCE(u.username, ''), m.body, m.deleted, m.created_at,
-		        COALESCE(
-		          (SELECT json_agg(json_build_object(
-		                     'id', at.id,
-		                     'filename', at.filename,
-		                     'content_type', at.content_type,
-		                     'size', at.size) ORDER BY at.created_at)
-		             FROM attachments at WHERE at.message_id = m.id),
-		          '[]'::json)
-		   FROM messages m
-		   LEFT JOIN users u ON u.id = m.author_id
-		  WHERE m.channel_id = $1
-		  ORDER BY m.created_at DESC
-		  LIMIT $2`,
-		channelID, historyLimit,
-	)
+	messages, hasMore, err := a.loadMessages(ctx, channelID, nil, historyLimit)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-
-	messages := make([]messageFrame, 0, historyLimit)
-	for rows.Next() {
-		var m messageFrame
-		var authorID *string
-		var body []byte
-
-		if err := rows.Scan(&m.ID, &authorID, &m.Username, &body, &m.Deleted,
-			&m.CreatedAt, &m.Attachments); err != nil {
-			return err
-		}
-
-		m.Type = "message"
-		m.ChannelID = channelID
-		m.Body = string(body)
-		if authorID != nil {
-			m.AuthorID = *authorID
-		} else {
-			// Author was shredded. The message keeps its place in the
-			// thread with no attribution.
-			m.Username = "[deleted]"
-		}
-
-		// Links are minted per delivery, so a client that reconnects
-		// after a long gap gets fresh ones rather than expired ones.
-		for i := range m.Attachments {
-			m.Attachments[i].URL = a.signAttachmentURL(m.Attachments[i].ID)
-		}
-
-		messages = append(messages, m)
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-
-	// Queried newest-first for the LIMIT; reverse so the client renders
-	// oldest to newest.
-	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
-		messages[i], messages[j] = messages[j], messages[i]
-	}
-
-	sendFrame(ctx, client, historyFrame{Type: "history", Messages: messages, CanPost: canPost})
+	sendFrame(ctx, client, historyFrame{
+		Type: "history", Messages: messages, CanPost: canPost, HasMore: hasMore,
+	})
 	return nil
 }
 

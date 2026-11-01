@@ -147,6 +147,30 @@ func (h *Hub) BroadcastAll(payload []byte) {
 	}
 }
 
+// BroadcastUsers delivers payload to every connection belonging to one of
+// the given accounts. For events only some accounts may see, such as
+// activity in a channel others cannot view. Same non-blocking send.
+func (h *Hub) BroadcastUsers(users map[string]bool, payload []byte) {
+	h.mu.RLock()
+	stalled := make([]*Client, 0)
+	for c := range h.all {
+		if !users[c.UserID] {
+			continue
+		}
+		select {
+		case c.Send <- payload:
+		default:
+			stalled = append(stalled, c)
+		}
+	}
+	h.mu.RUnlock()
+
+	for _, c := range stalled {
+		slog.Warn("dropping stalled websocket client")
+		c.close()
+	}
+}
+
 // DisconnectUser closes every connection belonging to a user and reports
 // how many it closed.
 //
