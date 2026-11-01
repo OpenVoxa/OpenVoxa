@@ -92,6 +92,15 @@ export interface StoredBackupKey {
   readonly key: CryptoKey;
 }
 
+/** Key prefix of edit marks in the archive store; see putEdited. */
+export const EDIT_PREFIX = "edit:";
+
+/** Server timestamps compare by instant, not by how they were formatted. */
+export function normalizeTime(t: string): string {
+  const ms = Date.parse(t);
+  return Number.isNaN(ms) ? t : new Date(ms).toISOString();
+}
+
 const ALL_STORES = [STORE_DEVICE, STORE_KEYPAIRS, STORE_GROUPS, STORE_SENT];
 
 function open(name: string = dbName): Promise<IDBDatabase> {
@@ -309,6 +318,26 @@ export const storage = {
 
   async deletePlaintext(messageId: string): Promise<void> {
     await run(STORE_SENT, "readwrite", (s) => s.delete(messageId));
+    await run(STORE_SENT, "readwrite", (s) => s.delete(EDIT_PREFIX + messageId));
+  },
+
+  /**
+   * Store the plaintext of an edited message, replacing the earlier
+   * version, together with the server's edited_at for it. The mark lets a
+   * later history load tell whether the archive holds the latest edit or
+   * an older version (the message was edited again while this device was
+   * away). It lives in the same store under "edit:<id>", as a plain
+   * string, so backups carry it with no format change.
+   */
+  async putEdited(messageId: string, text: string, editedAt: string): Promise<void> {
+    await run(STORE_SENT, "readwrite", (s) => s.put(text, messageId));
+    await run(STORE_SENT, "readwrite", (s) => s.put(normalizeTime(editedAt), EDIT_PREFIX + messageId));
+  },
+
+  /** The edited_at of the version archived for a message, if it was edited. */
+  async getEditedAt(messageId: string): Promise<string | undefined> {
+    const v = await run<unknown>(STORE_SENT, "readonly", (s) => s.get(EDIT_PREFIX + messageId));
+    return typeof v === "string" ? v : undefined;
   },
 
   /**
@@ -345,14 +374,20 @@ export const storage = {
           db.transaction(STORE_SENT, "readonly").objectStore(STORE_SENT).getAllKeys(),
         )).map(String),
       );
+      const before = new Set(existing);
       const tx = db.transaction(STORE_SENT, "readwrite");
       const store = tx.objectStore(STORE_SENT);
       let added = 0;
       for (const [id, value] of entries) {
         if (typeof id !== "string" || existing.has(id) || !isArchivedValue(value)) continue;
+        // An edit mark only describes the text it was stored with: keep
+        // it only when that text is being imported too, never beside a
+        // version this device already had.
+        if (id.startsWith(EDIT_PREFIX) && before.has(id.slice(EDIT_PREFIX.length))) continue;
         store.put(value, id);
         existing.add(id);
-        added++;
+        // Edit marks ride along but are not messages.
+        if (!id.startsWith(EDIT_PREFIX)) added++;
       }
       await new Promise<void>((resolve, reject) => {
         tx.oncomplete = () => resolve();

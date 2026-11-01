@@ -7,9 +7,9 @@
  * Protocol and cryptography, with no user interface. Shared by the web
  * client, the desktop client, and for now the debug page.
  *
- * At this stage it contains only the MLS layer. The rest of the client
- * logic still lives inline in the debug page and moves here as
- * client-web is built.
+ * The MLS layer, identity, recovery backups and text chat (chat.ts).
+ * Voice and attachments still live inline in the debug page and move
+ * here as client-web is built.
  */
 
 import {
@@ -38,6 +38,18 @@ export { TsMlsProvider } from "./mls/tsmls.js";
 export { Identity } from "./identity.js";
 export { Groups, GroupReset, RemovedFromGroup } from "./groups.js";
 export { storage } from "./storage.js";
+export { Chat, ChannelView } from "./chat.js";
+export type {
+  AttachmentInfo,
+  ChannelInfo,
+  ChannelSnapshot,
+  ChatEvent,
+  ChatMessage,
+  ChatOptions,
+  CryptoState,
+  KeyValueStore,
+  Unreadable,
+} from "./chat.js";
 export {
   encryptFile,
   decryptFile,
