@@ -1443,7 +1443,9 @@ to pick their own colours later, so every colour stays a variable.
       (`unfurl.fetchYouTube`): scraping watch pages failed on Docker
       (huge pages, consent redirects). A YouTube link always gets its
       click-to-play box, even when no card could be fetched or previews
-      are off (it contacts nobody until clicked).
+      are off (it contacts nobody until clicked). The player iframe sends
+      `Referer` as our origin only (`strict-origin`): with no referrer at
+      all YouTube shows "Error 153" and won't play.
       In encrypted channels previews are off unless the user opts in
       (Settings, "Link previews in encrypted channels", per browser):
       Ryan chose opt-in over never or always, since the server learns
