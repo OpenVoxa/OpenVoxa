@@ -17,6 +17,18 @@ RUN npm install --no-audit --no-fund
 COPY client-core/ ./
 RUN npm run build
 
+# ------------------------------------------------------------------- web
+# Builds client-web (React, Vite) into static files the server embeds and
+# serves at /. npm ci installs exactly what package-lock.json records.
+FROM node:22-alpine AS web
+
+WORKDIR /web
+COPY client-web/package.json client-web/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+
+COPY client-web/ ./
+RUN npm run build
+
 # ---------------------------------------------------------------- server
 # Must be at least the version in go.mod's `go` directive. Running
 # `go mod tidy` with a newer local toolchain raises that directive, and the
@@ -38,6 +50,10 @@ COPY --from=client /client/dist/core.js ./internal/httpapi/debugui/core.js
 # LiveKit's browser bundle and its E2EE worker, served from our own origin.
 # See client-core/build.mjs for why they are not loaded from a CDN.
 COPY --from=client /client/dist/livekit-client.umd.js /client/dist/livekit-client.e2ee.worker.js ./internal/httpapi/debugui/
+
+# The web client replaces the placeholder in webui/. Same rule: before
+# `go build`, or the embed holds the placeholder.
+COPY --from=web /web/dist/ ./internal/httpapi/webui/
 
 RUN CGO_ENABLED=0 go build -o /out/openvoxa-server .
 

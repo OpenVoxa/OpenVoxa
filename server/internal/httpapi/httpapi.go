@@ -279,6 +279,11 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 		mux.Handle("GET /debug/", http.StripPrefix("/debug/", debugFileServer()))
 	}
 
+	// The web client, at the site root. Registered last only for reading
+	// order: "GET /" is the least specific pattern, so every route above
+	// wins regardless.
+	mux.Handle("GET /", webAppHandler())
+
 	api.handler = logRequests(mux)
 	return api
 }
