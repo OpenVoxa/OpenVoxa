@@ -130,7 +130,7 @@ Your proxy needs two routes on the same hostname:
 
 | Path | Upstream | Notes |
 | --- | --- | --- |
-| `/rtc*` | `livekit:7880` | WebSocket upgrade required |
+| `/rtc*` | `host:7880` (LiveKit uses the host network) | WebSocket upgrade required |
 | everything else | `server:8080` | WebSocket upgrade required on `/api/v1/ws` |
 
 Both need WebSocket support. Many default proxy configs do not pass the `Upgrade` header, which produces a connection that opens and immediately closes.
@@ -147,6 +147,8 @@ LiveKit advertises this address as the destination for RTP. Media travels over U
 | --- | --- |
 | LAN only | The server's LAN address, e.g. `192.168.1.9` |
 | Internet facing | Your public IP, with UDP 50000-50100 forwarded |
+
+LiveKit runs on the host's network and also offers the host's own addresses (`advertise_internal_ip` in `livekit.yaml`). So with the public IP set here, clients on your LAN still connect straight to the LAN address, and your router doesn't need hairpin NAT. Forward TCP 7881 too if some outside clients can't use UDP. Don't forward 7880: browsers reach it through Caddy at `/rtc`.
 
 Getting it wrong gives you a connection that establishes successfully and then carries no audio. Signalling works, the participant list populates, and nobody hears anything. It is the most common self-hosted LiveKit failure by a wide margin.
 
@@ -291,6 +293,8 @@ docker compose logs livekit | grep nodeIP
 ```
 
 If that address is not reachable from your clients, that is the problem. Also check UDP 50000-50100 is not blocked by a firewall between client and server.
+
+LiveKit listens on the host itself, and Caddy and the server reach it through `host.docker.internal`. If voice fails to connect at all and Caddy logs errors for `/rtc`, a firewall on the Docker host (ufw, firewalld) may be blocking containers from host port 7880.
 
 ### getUserMedia is undefined
 

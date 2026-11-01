@@ -836,7 +836,7 @@ audible. A LiveKit token only gates joining, and with `failureTolerance:
 -1` nothing ever retired the old epochs' keys, which are all a removed
 device can encrypt with. Two fixes. The server calls LiveKit's
 `RoomService.RemoveParticipant` (Twirp JSON, room-admin token, internal
-URL `OPENVOXA_LIVEKIT_API_URL`, default `http://livekit:7880`) for every
+URL `OPENVOXA_LIVEKIT_API_URL`, default `http://host.docker.internal:7880`) for every
 voice channel the account can no longer view, after a ban, a role change
 or an account deletion. And each client overwrites every key slot but the
 current one with random bytes 10 seconds after a new epoch key, so frames
@@ -1046,6 +1046,22 @@ voice group had collected many devices in the cloud test.
 `client-core/scripts/patch-ts-mls.mjs` fixes the check in node_modules,
 idempotently, from `build.mjs` and client-web's build, and fails the build
 if the code it expects is gone (re-check a new ts-mls before dropping it).
+
+**LAN clients and a public node IP (no hairpin NAT).** With
+`LIVEKIT_NODE_IP` set to the public IP for outside friends, a client on
+the server's own LAN was offered only the public address and got no
+audio unless the router hairpinned the traffic (it didn't on Ryan's
+UniFi: LiveKit logged `requestsReceived: 0`). Fix (2026-11-01): LiveKit
+runs with `network_mode: host` and `rtc.advertise_internal_ip: true`, so
+it offers the host's own addresses (the LAN IP, plus Docker bridge
+addresses nobody reaches) alongside the node IP. Verified in the cloud:
+the browser received both a host candidate for the internal address and
+one for the (unreachable) node IP, and audio flowed. Needs livekit-server
+1.13.6+ (the option is ignored with an explicit node IP before
+mediatransportutil f234b53), so the image is pinned to v1.13.11. Bridge
+networking can't do this: the "internal" address would be the
+container's. Caddy and the server reach LiveKit at
+`host.docker.internal:7880` (`extra_hosts: host-gateway`).
 
 **Old LiveKit servers hang publishing.** Against livekit-server 1.9.0 the
 2.23 client connected but publishing timed out in negotiation; 1.10.1

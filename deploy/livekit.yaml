@@ -15,5 +15,14 @@ rtc:
   # not try to discover an address via STUN.
   use_external_ip: false
 
+  # Offer the host's own addresses as well as the node IP. With LiveKit on
+  # the host network (docker-compose.yml) that includes the LAN address,
+  # so clients at home connect directly even when LIVEKIT_NODE_IP is the
+  # public IP; no hairpin NAT needed. Also lists Docker's bridge addresses,
+  # which clients simply fail to reach. To list only your LAN:
+  #   ips:
+  #     includes: [192.168.1.0/24]
+  advertise_internal_ip: true
+
 logging:
   level: info
