@@ -121,9 +121,10 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
 
 ## Current state (update every session)
 
-_Last updated: 2026-11-01. Step 13 M1-M3 and channel management done and
-verified on Docker; M4 session A pushed, awaiting Docker test; session B
-next. Full handoff: project doc claude/handoff-step-13.md._
+_Last updated: 2026-11-01. Step 13 M1-M3, channel management and M4
+session A done (G1 GIFs, Y1 YouTube verified on Docker; G2-G4 pending);
+LiveKit now on host networking for LAN + public clients; session B next.
+Full handoff: project doc claude/handoff-step-13.md._
 
 Done and verified on Docker (details in decisions.md, Build order 9-12 and
 Implementation notes): MLS text encryption (ciphertext in Postgres, no
@@ -173,13 +174,15 @@ settings and admin panes:
   Playwright, two and three accounts).
 - Pending tests from earlier: P3 password test, D1 list/delete-user.
 - Palette: variables in `client-web/src/styles.css` only.
-- M4 session A pushed, NOT yet verified on Docker (tests G1-G4 in the
-  handoff): markdown, link previews (encrypted channels opt-in per
-  user), GIF picker, join/leave notices in encrypted channels, voice
-  join/leave tones, one Settings dialog, mic-button-when-deafened fix.
-  New client-web files: `markdown.tsx`, `previews.tsx`, `gifs.tsx`,
-  `tones.ts`, `settings.ts`. Verified in the cloud container (real
-  server, Playwright, GIF and unfurl endpoints mocked); tones untested
-  there (no LiveKit run this time).
+- M4 session A DONE: markdown, link previews (encrypted channels opt-in
+  per user), GIF picker, join/leave notices, voice tones, one Settings
+  dialog, mic-button fix. `markdown.tsx`, `previews.tsx`, `gifs.tsx`,
+  `tones.ts`, `settings.ts`; server unfurl uses YouTube oEmbed. G1/Y1
+  verified on Docker; G2-G4 still to test.
+- Deploy: LiveKit `network_mode: host` + `advertise_internal_ip`, pinned
+  v1.13.11; containers reach it at `host.docker.internal:7880`.
+  `deploy/scripts/update-node-ip.sh` (cron on Docker) follows the public
+  IP. Ryan has it temporarily open to two friends (port 8443, see
+  handoff for teardown).
 - Next: M4 session B: attachments (upload, drag/paste, per-file
   encryption, inline media). Open items in decisions.md "Open items".
