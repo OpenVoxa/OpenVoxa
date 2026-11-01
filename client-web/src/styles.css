@@ -543,6 +543,8 @@ details summary { cursor: pointer; color: var(--muted); }
 .preview .embed .play { position: absolute; inset: 0; display: grid; place-items: center; font-size: 40px;
   color: #fff; text-shadow: 0 0 8px #000; }
 .preview iframe { width: 400px; max-width: 100%; aspect-ratio: 16 / 9; border: 0; margin-top: 6px; border-radius: var(--radius); }
+.preview.playing { max-width: 672px; }
+.preview.playing iframe { width: 640px; }
 
 /* GIF picker */
 .composer { position: relative; }
