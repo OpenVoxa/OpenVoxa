@@ -4,5 +4,7 @@ docs
 deploy/.env
 deploy/docker-compose.override.yml
 client-core/node_modules
+client-web/node_modules
+client-web/dist
 client-core/dist
 **/*.md
