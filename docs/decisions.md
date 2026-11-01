@@ -1033,6 +1033,24 @@ creation, commits, resets and GroupInfo uploads now allow 8 MB
 (`maxMLSBody`). Sending the tree once per commit instead of per welcome
 would make it linear; not needed at our scale yet.
 
+**ts-mls tree validation is patched.** ts-mls (1.6.2 to at least 1.6.4)
+checks unmerged leaves wrongly: for an unmerged leaf of a parent node it
+demands that every non-blank node on the leaf's whole direct path carry
+exactly the same unmerged list, where RFC 9420 7.9.1 only requires the
+nodes between the leaf and that parent to list the leaf. A higher node
+legitimately lists more (adds into its other subtree), so a group with two
+adds into different subtrees and no path update in between refused every
+new device ("non-blank intermediate node must list leaf node in its
+unmerged_leaves"), by welcome or external join. Found 2026-11-01 when a
+voice group had collected many devices in the cloud test.
+`client-core/scripts/patch-ts-mls.mjs` fixes the check in node_modules,
+idempotently, from `build.mjs` and client-web's build, and fails the build
+if the code it expects is gone (re-check a new ts-mls before dropping it).
+
+**Old LiveKit servers hang publishing.** Against livekit-server 1.9.0 the
+2.23 client connected but publishing timed out in negotiation; 1.10.1
+works. Docker runs `livekit/livekit-server:latest`.
+
 **Edits and the archive.** The archive is keyed by message id and MLS
 keys are single-use, so an edited message needs a second decryption and
 a way to know whether the archived text is the latest. An edit's
@@ -1385,6 +1403,36 @@ to pick their own colours later, so every colour stays a variable.
       promise to people who wrote it). Voice is always encrypted, so the
       dialog offers no switch for it. Permissions refresh on
       perms_changed.
+    - Voice and screen share in client-web (M3; decided with Ryan
+      2026-11-01): Discord-like. Clicking a voice channel joins its call;
+      the people in each call are listed under the channel (live for
+      your own call: speaking ring, mic off, LIVE when sharing; the
+      server's list for the others). A voice bar above the user panel has
+      mute, deafen, share screen, voice settings and leave. Screen shares
+      open in a stage in the main pane (grid, click to focus, fullscreen,
+      optional stats), "Back to chat" returns. Also in M3: mic and
+      speaker pickers, per-person volume and "mute for me" (right-click a
+      person; this device only), deafen, a push-to-talk key binding
+      (default the backquote key; a page only sees keys while focused, so
+      character keys are ignored while typing; the desktop app adds a
+      global key later). Share options: the debug page's presets,
+      detail/motion, audio, and under Advanced codec and simulcast; "pin
+      max quality" is a voice setting.
+    - Voice logic is client-core `voice.ts` (`VoiceClient`), the debug
+      page's code moved over (media key ring, `overwriteSlot`, PTT,
+      share encodings). It imports LiveKit, so it is not in client-core's
+      index: client-web loads it on first join (LiveKit is ~500 KB). The
+      E2EE worker is built by Vite from client-core's own livekit-client
+      copy (`voiceWorker.ts` imports it by relative path) so it is always
+      the library's exact build; nothing points at `/debug/`, which is off
+      in production.
+    - Who is in each call: `GET /voice/participants` asks LiveKit
+      (`ListParticipants`) for the voice channels the caller may view,
+      cached 2 s, names from our database. There are no LiveKit webhooks:
+      a client that joins or leaves posts `POST /channels/{id}/voice/
+      changed`, and the server sends `voice_changed` to the channel's
+      viewers only (as `channel_activity`), who ask again; kicks send it
+      too. Clients also poll every 20 s for people who vanish silently.
     - Device linking by QR (after M1): a logged-in device shows a QR of
       `https://server/link#<one-time secret>` (about 2 min, single use);
       the phone's camera opens it; the server only relays encrypted
