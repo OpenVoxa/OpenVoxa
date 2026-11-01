@@ -827,10 +827,15 @@ function onMembershipChange(change) {
  */
 function onRemovedFromGroup(channelId, replaced = false) {
   if (channelId === voiceChannelId) {
-    line("sys", replaced
-      ? "the voice channel's encryption group was replaced; leaving the call (join again)"
-      : "this device was removed from the voice channel's encryption group; leaving the call");
-    room?.disconnect();
+    // The Disconnected handler says why, once. Only set while a call is
+    // up: the server's kick often ends the call first, and a reason left
+    // over here would mislabel the next call's ending.
+    if (room) {
+      voiceEndReason = replaced
+        ? "the voice channel's encryption group was replaced; join again"
+        : "this device was removed from the voice channel's encryption group";
+      room.disconnect();
+    }
     return;
   }
   if (channelId !== currentChannel) return;
@@ -2337,6 +2342,30 @@ let voiceWorker = null;
 let voicePoll = null;
 let voiceLastError = 0;
 
+// Why this client is ending the call itself, when it is not the user's
+// choice. Read and cleared by the Disconnected handler.
+let voiceEndReason = null;
+
+// One line saying how a call ended. Losing access ends a call two ways
+// at once: the server asks LiveKit to remove the participant, and this
+// client finds itself removed from the voice encryption group and hangs
+// up. Whichever lands first, the line says it was not the user leaving.
+function describeVoiceEnd(reason) {
+  const R = LivekitClient.DisconnectReason || {};
+  if (reason === R.PARTICIPANT_REMOVED) {
+    return "removed from the call by the server (no longer allowed in this channel)";
+  }
+  if (voiceEndReason) return `removed from the call: ${voiceEndReason}`;
+  if (reason === R.DUPLICATE_IDENTITY) {
+    return "disconnected from voice: this device joined the call again elsewhere";
+  }
+  if (reason === R.SERVER_SHUTDOWN || reason === R.ROOM_DELETED) {
+    return "disconnected from voice: the voice server closed the call";
+  }
+  if (reason === undefined || reason === R.CLIENT_INITIATED) return "left voice";
+  return `disconnected from voice (reason ${reason})`;
+}
+
 // Every group operation on the voice channel goes through this chain, so
 // a poll and a join event never run against the same
 // group state at once (the later save would discard the earlier one).
@@ -2445,6 +2474,7 @@ async function startVoiceCrypto(channelId) {
 
 async function joinVoice() {
   const opt = $("voiceChannel").selectedOptions[0];
+  voiceEndReason = null;
 
   // Keys first. Joining unencrypted and switching later would put the
   // first moments of audio through the SFU in the clear.
@@ -2502,9 +2532,8 @@ async function joinVoice() {
     .on(LivekitClient.RoomEvent.TrackMuted, renderParticipants)
     .on(LivekitClient.RoomEvent.TrackUnmuted, renderParticipants)
     .on(LivekitClient.RoomEvent.Disconnected, (reason) => {
-      line("sys", reason === LivekitClient.DisconnectReason?.PARTICIPANT_REMOVED
-        ? "removed from the call by the server (no longer allowed in this channel)"
-        : "left voice");
+      line("sys", describeVoiceEnd(reason));
+      voiceEndReason = null;
       stopShare();
       stopVoiceCrypto();
       room = null; micTrack = null;
