@@ -67,7 +67,9 @@ export function LinkPreview({ call, url, fetch }: { call: ApiCall; url: string; 
   const href = safeUrl(p.url, url);
   const image = p.image && /^https?:\/\//i.test(p.image) ? p.image : null;
   return (
-    <div className="preview">
+    // Playing widens the card: below about 480px YouTube switches to a
+    // compact player with the volume at the top, which is hard to use.
+    <div className={`preview${playing ? " playing" : ""}`}>
       {p.site && <div className="site small muted">{p.site}</div>}
       {p.title && (
         <div className="title"><a href={href} target="_blank" rel="noopener noreferrer nofollow">{p.title}</a></div>
