@@ -1083,6 +1083,31 @@ never arrived and the channel list stayed stale until a reload. The
 debug client opens one at sign-in and reconnects it; channel sockets
 skip those event types while it is up.
 
+### There is always an administrator
+
+Decided with Ryan 2026-11-01, instead of a built-in "root" account with
+a long password (one internet-facing login with total power is a
+password-guessing and phishing target, and a shared secret nobody can be
+held to). The Linux model is copied instead: root needs the machine.
+
+- **Last-admin guard** (`lastadmin.go`, `adminGuard`): any transaction
+  that can take the administrator switch from someone (deleting an
+  account, either way; editing or deleting a group; removing a group
+  member) locks, counts active administrators (holding the switch through
+  any group, not deleted, not banned) before and after, and is refused
+  with 409 if it goes from some to none. Only the transition is refused,
+  so a server already without one does not trap everyone else.
+- **Host recovery** (`cli.go`): `docker compose exec server
+  /openvoxa-server grant-admin <username>` puts the account in the
+  top-positioned group with the switch, creating one above all others if
+  needed, and writes the audit log (actor NULL, "server command line").
+  `list-admins` shows who holds it. Nothing is reachable over the network.
+- **Setup code**: an empty server (no rows in `users`) is no longer
+  claimed by whoever registers first. A random code is printed in the
+  server log at startup (and again on a refused attempt) and the first
+  registration must carry it (`setup_code`); `GET /api/v1/setup` tells the
+  sign-up form to ask. The code changes on every restart.
+
 ## Build order
 
 1. ✅ Server skeleton, auth, one text channel

@@ -76,6 +76,9 @@ type API struct {
 	// secret to leak.
 	attachKey []byte
 
+	// Claims an empty server; see lastadmin.go.
+	setupCode string
+
 	gifs     *gif.Client
 	gifLimit *ratelimit.Limiter
 }
@@ -118,6 +121,8 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 
 		attachKey: make([]byte, 32),
 
+		setupCode: newSetupCode(),
+
 		gifs: gif.New(cfg.GIFProvider, cfg.GIFAPIKey),
 
 		// Searching is cheap for us and costs the provider, so this is
@@ -134,6 +139,7 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 	mux.HandleFunc("GET /health", api.health)
 
 	mux.HandleFunc("POST /api/v1/auth/register", api.limitByIP(api.register))
+	mux.HandleFunc("GET /api/v1/setup", api.setupStatus)
 	mux.HandleFunc("POST /api/v1/auth/login", api.limitByIP(api.login))
 	mux.HandleFunc("POST /api/v1/auth/logout", api.requireAuth(api.logout))
 

@@ -38,6 +38,27 @@ curl https://your.domain/health
 # {"status":"ok","database":"ok","channels":2}
 ```
 
+## First account and administrator recovery
+
+The first account becomes the administrator, so it needs a **setup code**
+from the server log (the code changes on every restart):
+
+```bash
+docker compose logs server | grep setup_code
+```
+
+Open the site, choose Register, and enter the code with your username and
+password.
+
+The server refuses any change that would leave it with no administrator.
+If you are still locked out, grant it from the host. This works only from
+the machine running Docker, never over the network:
+
+```bash
+docker compose exec server /openvoxa-server grant-admin <username>
+docker compose exec server /openvoxa-server list-admins
+```
+
 ## Why TLS is not optional
 
 Browsers refuse microphone and screen-capture access outside a secure context. Without TLS, `navigator.mediaDevices` is undefined on anything but `localhost`, and voice simply does not work. The failure is confusing rather than obvious: the page loads, the channel connects, and then the microphone call fails with a null reference.

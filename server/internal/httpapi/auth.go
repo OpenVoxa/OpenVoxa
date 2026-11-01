@@ -51,6 +51,8 @@ type registerRequest struct {
 	Username   string `json:"username"`
 	Password   string `json:"password"`
 	DeviceName string `json:"device_name"`
+	// Only for the first account on an empty server (lastadmin.go).
+	SetupCode string `json:"setup_code,omitempty"`
 }
 
 type sessionResponse struct {
@@ -142,6 +144,16 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		`SELECT EXISTS (SELECT 1 FROM users)`).Scan(&anyUsers); err != nil {
 		slog.Error("checking for existing users", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not create account")
+		return
+	}
+
+	// An empty server is claimed with the setup code from the server
+	// log, not by whoever happens to register first.
+	if !anyUsers && !a.setupCodeMatches(req.SetupCode) {
+		a.logSetupCode()
+		writeError(w, http.StatusForbidden,
+			"this server has no accounts yet: enter the setup code from the server log "+
+				"to create the first (administrator) account")
 		return
 	}
 
