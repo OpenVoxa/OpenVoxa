@@ -1016,6 +1016,26 @@ just as badly, so a Web Lock lets one tab per account and browser hold
 them; a second tab is refused with a message. And a client drops any
 stored group whose own leaf is not its device, whatever put it there.
 
+**Own echoes are paired by a ref, not by order.** The debug page paired
+its own echoed messages with what it sent by queue order, so a send the
+server refused ("slow down") left an orphan and every later own message
+in that session was archived with the previous one's text. A send frame
+now carries an optional client-chosen `ref` (up to 64 chars), echoed on
+the resulting message and on an error about that frame; client-core
+pairs by it. The debug page still sends none and is unaffected.
+
+**Edits and the archive.** The archive is keyed by message id and MLS
+keys are single-use, so an edited message needs a second decryption and
+a way to know whether the archived text is the latest. An edit's
+plaintext replaces the archived text and an `edit:<id>` entry in the same
+store records the `edited_at` it belongs to (a plain string, so backups
+carry it with no format change). On a history load, a matching mark means
+the archive is current; otherwise the body is decrypted; if that fails the
+older archived text is shown, labelled as not the newest version. The
+editor cannot decrypt its own edit, so the plaintext is kept from the
+PATCH until the `message_edited` echo or the response, whichever comes
+first. A backup restore only takes an edit mark together with its text.
+
 **Only a device removes its own duplicate leaves.** After rejoining from
 a GroupInfo a device can hold two leaves. Another member cannot tell
 which is live, and removing the wrong one would kick the device out, so
@@ -1301,12 +1321,49 @@ to pick their own colours later, so every colour stays a variable.
       starts a new backup after a warning. Upload policy: always before
       sign-out, and about a minute after the latest new message
       (`BackupManager.scheduleUpload`, debounced; called by the chat view
-      from M2). client-web logout does not wipe the archive yet: the
-      device belongs to the debug page until M2, and wiping keys without
-      revoking the device was a known bug. QR scanning by camera is not
+      from M2). QR scanning by camera is not
       built; the `OVRK1:` text can be pasted. client-web imports
       client-core as source (`@core/*` in tsconfig, `resolve.tsconfigPaths`
       in Vite); the Dockerfile puts the client stage's tree beside it.
+    - Text in client-web (M2; scope decided with Ryan 2026-11-01):
+      Discord-like layout (channel sidebar with text and voice channels,
+      voice inert until M3; message pane; composer; user panel with
+      backup status and Log out). M2 is core text (send/receive in plain
+      and encrypted channels, history paging, archive plus
+      `scheduleUpload` per archived message) plus editing and deleting
+      your own messages and unread markers. Attachments, GIFs, unfurls
+      and join/leave notices stay M4 (a message with attachments says so
+      and points at the debug page).
+    - client-web owns the device from M2: it runs `startSession`, so the
+      debug page in another tab of the same account gets the "already
+      open in another tab" refusal (Web Lock). Sign-out uploads the
+      backup, revokes the device on the server, then wipes the account's
+      local database (as the debug page's "Forget device"); with no usable
+      backup it asks first. If the revoke fails the keys stay (wiping keys
+      of a device the server still lists makes members keep adding a
+      device nobody holds). The next sign-in registers a new device and
+      restores the archive with the recovery key.
+    - Chat logic lives in client-core `chat.ts` (`Chat` per account:
+      event socket, channel list, unread; `ChannelView` per open channel:
+      socket, decrypt/archive queue, paging, send/edit/delete), so the
+      desktop client reuses it. client-web only draws snapshots.
+    - History paging: the websocket still sends the newest 50 on connect,
+      now with `has_more`; older pages come from `GET
+      /channels/{id}/messages?before=<message id>&limit=` (max 100),
+      walking (created_at, id) backwards (index from migration 0016).
+    - Edits: `PATCH /messages/{id}` `{body}`, author only, while they may
+      still post, never a deleted message; the body is replaced in place
+      (no server-side edit history) and `edited_at` set; event
+      `message_edited` carries the new body. In an encrypted channel the
+      new body is a fresh MLS ciphertext of an envelope that keeps the
+      old file keys (or the attachments would become unreadable).
+      Moderators delete; they do not edit others' words.
+    - Unread: `GET /channels` gives `last_message_at`; a new message
+      sends `channel_activity` (channel, message id, author, time, no
+      content) to the connected accounts that may view the channel and to
+      nobody else, since that a hidden channel is busy is itself a leak.
+      The client keeps the last-read time per channel in localStorage; a
+      channel seen for the first time counts as read.
     - Device linking by QR (after M1): a logged-in device shows a QR of
       `https://server/link#<one-time secret>` (about 2 min, single use);
       the phone's camera opens it; the server only relays encrypted

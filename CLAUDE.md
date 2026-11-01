@@ -35,6 +35,7 @@ client-core/       TypeScript protocol + crypto, no UI
   src/mls/tsmls.ts     ts-mls implementation (pinned 1.6.2)
   src/identity.ts      device keys, registration, key packages
   src/groups.ts        MLS group lifecycle (create/join/commit/persist)
+  src/chat.ts          text chat: Chat (account) + ChannelView (channel)
   src/storage.ts       IndexedDB persistence
   src/index.ts         exports -> global `OpenVoxaCore`
   build.mjs            esbuild IIFE -> dist/core.js
@@ -61,9 +62,12 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
   - `cd client-core && npm run build` (works in the device shell; run
     `npm install` first if `node_modules` is missing)
   - `cd server && go build ./...` — **Go is not installed in the
-    device shell and go.dev is blocked there.** Use the cloud container
-    (has Go; go.mod needs 1.26, so `GOTOOLCHAIN=auto` may be needed) or
-    ask Ryan to run it on Git-terminal.
+    device shell.** The cloud container has go1.24 and no Go module
+    proxy, but a type-check build works from a clone with a temporary
+    go.mod (go 1.24, `replace` golang.org/x/* etc. with their GitHub
+    mirrors at older versions, a protoyaml stub); recipe in the handoff
+    doc, "Working notes". Never commit that go.mod. The cloud container
+    also has Postgres 16 for running the real server end to end.
 - Commits: DCO sign-off required (`git commit -s`), author
   `rynd-automation <rynd_automation@outlook.com>`. Short imperative
   subject lines, one logical change per commit.
@@ -115,115 +119,41 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
 
 ## Current state (update every session)
 
-_Last updated: 2026-11-01. Step 13 (real client) M1 parts 1-3 verified; part 4 (recovery screens) pushed, awaiting test K1. Full handoff: project doc claude/handoff-step-13.md._
+_Last updated: 2026-11-01. Step 13 M1 done; M2 (text in client-web) pushed,
+awaiting test M2-1. Full handoff: project doc claude/handoff-step-13.md._
 
-- Build-order step 9 (MLS for text) is functionally working on Docker:
-  messages in an encrypted channel are ciphertext in Postgres (only the
-  MLS framing header — group ID, epoch — is in the clear); plaintext
-  channels show plaintext. Two-party test passed (ryan + staff): welcome
-  path works, pre-join messages unreadable, messages flow both ways.
-- Done and verified on Docker: device identity + key packages; group
-  create/join/catch-up; epoch-ordered commits with rebase; encrypted text
-  and attachments (per-file AES-256-GCM, key inside the MLS message;
-  Giphy GIFs stay unencrypted by Ryan's decision); local plaintext
-  archive in IndexedDB (MLS keys are single-use; own sent plaintext kept
-  since senders can't decrypt their own). Blob storage on Docker is a
-  bind mount: `/mnt/openvoxa-blobs`.
-- Media encryption (build-order step 10) verified on Docker 2026-10-30:
-  voice channels have their own MLS group; `groups.mediaKey()` feeds
-  LiveKit E2EE at key slot epoch mod 16; outsiders refused; audio and
-  screen share work both ways. LiveKit 2.23.0 served from our origin.
-- Decided 2026-10-30: encryption-group membership follows channel access
-  automatically, with every join/leave announced (decisions.md
-  Encryption + Known tensions). Custom permission groups replace the
-  fixed roles later.
-- Permission checks: `requirePerm(perm.X, ...)` / `requireStaff`;
-  `Session.Perms` + `Session.Rank`. No roles left in Go code.
-- Remaining, in order:
-  1. Automatic membership (step 11): server side done and verified
-     (`access.go`, `GET /channels/{id}/mls/allowed-devices`, welcome
-     check, channel-scoped claims; committing needs view, not post).
-     Client `groups.reconcile()` done and verified on Docker (step 4).
-     Triggers (step 5) done and verified on Docker 2026-10-31:
-     `groups.reconcileSoon()` (debounced, staggered by leaf; decisions.md
-     Implementation notes), server `access_changed` event, demotion
-     closes sockets to lost channels. Join/leave notices (step 6) done and
-     verified: `groups.onMembership()`, `mls/device-names` endpoint.
-     Real UI: per-person notices by default, per-device as an option,
-     mod and admin panes (decisions.md, "Notices are per person").
-     Step 7 done: "Add everyone" buttons and `groups.addMembers` gone.
-     Step 8 done and verified on Docker 2026-10-31: `groups.open` joins from
-     the published GroupInfo when no welcome waits, and resets the group
-     when there is no current GroupInfo (migration 0011: generation,
-     group_info; `mls/reset`, `mls/group-info` GET/PUT; commits carry
-     generation + GroupInfo). Proven end to end in Node against the real
-     server. Voice no longer waits for someone in the call. Forget
-     device now revokes server-side first.
-     Next: multi-party testing (item 2 below).
-     Group ops serialised per channel; commit keys wiped only after the
-     server accepts; removes and adds in separate commits. Never pass
-     `resync = true` (hangs). All in decisions.md Impl. notes.
-  2. Multi-party testing: DONE 2026-10-31 (ryan + staff + tester):
-     three-way text and voice, add/remove with two members watching (one
-     commit each), removal from a live call. Found and fixed: shared
-     browser storage between accounts (per-account DB + one tab per
-     account), ts-mls throwing on removal at the tree's end (catch-up
-     rejoins), banned users staying in calls (LiveKit RemoveParticipant +
-     old media keys retired after 10 s). Cosmetic "left voice" on a kick:
-     fixed, see item 4.
-  3. Custom permission groups (step 12): DONE, verified on Docker
-     2026-10-31 (D1-D5). Migration 0012 converts roles to groups
-     (Everyone, Member, Moderator, Administrator); switches decide what,
-     rank decides whom; channels carry an allow-list (decisions.md
-     "Permission groups"). API: `/groups`, `/users/{id}/groups/{group}`,
-     `PUT /channels/{id}/access`; event `perms_changed` replaces
-     `role_changed`. chat.html console helpers: `showGroups()`,
-     `showUsers()`, `newGroup()`, `editGroup()`, `deleteGroup()`,
-     `addToGroup()`, `removeFromGroup()`, `mkChannel()`, `setAccess()`.
-     No settings UI yet (real client).
-     Event socket (`/ws` without channel) added after D3 on Docker:
-     server-wide events reach a client with no channel open.
-     Voice keys: retired slots must not move LiveKit's current key
-     index (`overwriteSlot` in chat.html, fixed `efc38c6`).
-  4. Small items before the real client (order agreed 2026-10-31):
-     per-person notices (core `MembershipChange.people`, chat.html shows
-     them by default, "per-device" checkbox for the old detail and epoch
-     lines; DONE, verified on Docker N1-N2) -> call-end wording
-     (`describeVoiceEnd` in chat.html: server kick or own MLS removal
-     both read as "removed", not "left voice"; DONE, verified V1) ->
-     30-day device expiry (`db/deviceexpiry.go`, migration 0013, 410 from
-     the key package count, `Identity.start` re-registers; DONE, verified
-     E1) -> history sharing (decided: everyone added, all the server
-     holds, "shared by" marker; decisions.md Encryption; migration 0014,
-     `historyshare.go`, `groups.importSharedHistory`, chat.html helper
-     `setHistorySharing(name, on)`; DONE, verified H1). Small items
-     finished; next is the real client (build-order 13). -> client (step 13), with
-     recovery keys built into the client.
-  5. Opt-in history sharing (Ryan wants it; see decisions.md Open items).
-  6. Local storage encryption (blocked on recovery keys).
-- Step 13 M1 (signup/login + recovery key): part 1 `client-web` login and
-  register at `/`, verified (T1). Part 2 backup storage, verified (B1):
-  migration 0015 + `recovery.go`, `GET/PUT/DELETE /me/backup` (PUT starts
-  a new backup, drops old chunks, returns its id) and
-  `PUT/GET/DELETE /me/backup/chunks/{name}?backup=<id>` (raw bytes, 4 MB,
-  1000 chunks, 256 MB per account). Part 3 `client-core/src/recovery.ts`:
-  `RecoveryKey` (12 BIP-39 words via @scure/bip39, QR payload `OVRK1:<hex>`),
-  `Backup` (create/unlock/upload/restore/remove/status), derived key kept
-  in the device store; verified (R1). Sign-out wipes the archive: upload
-  before it. Part 4 client-web screens (`Recovery.tsx`, `backup.ts`
-  BackupManager, `@core/*` source import; decisions.md build order 13,
-  "Recovery screens"): pushed, NOT yet verified on Docker (test K1).
-- Password rules (decisions.md): 12+ chars, 3 of 4 kinds, not the
-  username, not a (dressed-up) common password (embedded NCSC 100k list),
-  not mostly a pattern. `server/internal/password` (register + `PUT
-  /me/password`), mirrored minus the list in client-web `password.ts`. Two-admin floor verified A2.
-- client-web palette (2026-11-01): #333333 background, #D96932 buttons,
-  #FFFFFF text; derived shades in `styles.css` variables (user themes later).
-- Always an administrator (decisions.md, Permission groups): floor of two
-  admins (`MinAdmins`, guard also on bans) in `lastadmin.go`, verified A1
-  for the one-admin version; host commands `/openvoxa-server grant-admin
-  <user>` / `list-admins` / `list-users` / `delete-user <user>... [--force]`
-  (`cli.go`; list/delete not yet tested on Docker), setup code from the log for the
-  first account on an empty server (`GET /api/v1/setup`).
-- Other open items (revoked-device removal, recovery keys, etc.) live in
-  decisions.md "Open items" — check there before proposing new work.
+Done and verified on Docker (details in decisions.md, Build order 9-12 and
+Implementation notes): MLS text encryption (ciphertext in Postgres, no
+pre-join history, local plaintext archive in IndexedDB), encrypted
+attachments (Giphy GIFs stay plain by Ryan's decision), voice/screen-share
+E2EE (own MLS group, LiveKit key slot epoch mod 16, LiveKit 2.23.0 from our
+origin), automatic membership following channel access (reconcile,
+`reconcileSoon`, GroupInfo external joins, resets, join/leave notices per
+person), multi-party tested (ryan + staff + tester), custom permission
+groups (migration 0012; switches decide what, rank decides whom; channel
+allow-lists; chat.html console helpers `showGroups()`, `newGroup()`,
+`addToGroup()`, `mkChannel()`, `setAccess()`, `setHistorySharing()` ...),
+30-day device expiry, history sharing, two-admin floor, password rules.
+Blob storage on Docker is a bind mount: `/mnt/openvoxa-blobs`.
+
+Step 13 (real client), order M1 signup/login + recovery key -> M2 text ->
+M3 voice/screen share -> M4 attachments/GIFs/unfurls/notices -> M5
+settings and admin panes:
+
+- M1 DONE (T1, B1, R1, K1 flow 1; K1 flows 2-5 deferred by Ryan):
+  `client-web` login/register, backup storage (migration 0015,
+  `recovery.go`), client-core `recovery.ts`, recovery screens
+  (`Recovery.tsx`, `backup.ts` BackupManager).
+- M2 pushed, NOT yet verified on Docker (test M2-1 in the handoff):
+  client-core `chat.ts` (`Chat`, `ChannelView`), client-web `ChatApp.tsx`,
+  `ChannelPane.tsx`, `core.ts`; server migration 0016 (`edited_at`),
+  `messages.go` (`GET /channels/{id}/messages?before=`, `PATCH
+  /messages/{id}`, `channel_activity` to viewers only), send frames carry a
+  `ref` echoed on the message. client-web now owns the device: sign-out
+  uploads the backup, revokes the device and wipes the local DB.
+  Verified end to end in the cloud container (real server + Postgres +
+  Playwright, two and three accounts).
+- Pending tests from earlier: P3 password test, D1 list/delete-user.
+- Palette: variables in `client-web/src/styles.css` only.
+- Next after M2: M3 voice in client-web (port voice from chat.html into
+  client-core). Open items in decisions.md "Open items".
