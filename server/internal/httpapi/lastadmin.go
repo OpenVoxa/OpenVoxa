@@ -1,0 +1,143 @@
+// Copyright (C) 2026 The OpenVoxa Authors
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+package httpapi
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"errors"
+	"log/slog"
+	"net/http"
+	"strings"
+
+	"github.com/jackc/pgx/v5"
+)
+
+// The server must never be left without an administrator
+// (docs/decisions.md, "There is always an administrator"). Three pieces:
+//
+//  1. adminGuard, run inside every transaction that could take
+//     the administrator switch away from someone, refuses the change if
+//     it would leave nobody holding it.
+//  2. The command line on the server host can always grant it
+//     (`openvoxa-server grant-admin <username>`, cli.go). Control of the
+//     host is the real "root", as with a Linux console.
+//  3. An empty server is claimed with a setup code printed in the server
+//     log, not by whoever registers first.
+
+var errLastAdmin = errors.New("last administrator")
+
+const lastAdminMessage = "this would leave the server without an administrator; " +
+	"make someone else an administrator first"
+
+// ActiveAdminsSQL counts accounts that hold the administrator switch
+// through any group and are neither deleted nor banned. A banned
+// administrator cannot sign in, so they do not count. Shared with cli.go.
+const ActiveAdminsSQL = `
+	SELECT count(DISTINCT u.id)
+	  FROM users u
+	  JOIN effective_groups eg ON eg.user_id = u.id
+	  JOIN perm_groups g ON g.id = eg.group_id
+	 WHERE 'administrator' = ANY(g.permissions)
+	   AND u.deleted_at IS NULL
+	   AND NOT EXISTS (
+	         SELECT 1 FROM bans b
+	          WHERE b.user_id = u.id
+	            AND (b.expires_at IS NULL OR b.expires_at > now()))`
+
+// adminGuard refuses a change that takes the server from having an
+// administrator to having none. Start it right after Begin, before any
+// change, and check it just before Commit.
+//
+// The advisory lock, held to the end of the transaction, serialises
+// these changes: two administrators deleting themselves at the same
+// moment would otherwise each see the other still there and both
+// succeed.
+//
+// Only the transition is refused. A server that already has no
+// administrator (say, from before this guard existed) still lets people
+// delete their own accounts; the fix for that state is grant-admin on
+// the host, not trapping everyone else.
+type adminGuard struct{ before int }
+
+func startAdminGuard(ctx context.Context, tx pgx.Tx) (adminGuard, error) {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(4243)`); err != nil {
+		return adminGuard{}, err
+	}
+	var n int
+	err := tx.QueryRow(ctx, ActiveAdminsSQL).Scan(&n)
+	return adminGuard{before: n}, err
+}
+
+// check returns errLastAdmin when tx's changes left no administrator.
+func (g adminGuard) check(ctx context.Context, tx pgx.Tx) error {
+	if g.before == 0 {
+		return nil
+	}
+	var n int
+	if err := tx.QueryRow(ctx, ActiveAdminsSQL).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		return errLastAdmin
+	}
+	return nil
+}
+
+// newSetupCode makes a code like "K7QM-3XPA-9FDT-WE2H": 80 random bits in
+// an alphabet without look-alike characters (no 0/O, 1/I/L).
+func newSetupCode() string {
+	const alphabet = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		panic("httpapi: could not generate setup code: " + err.Error())
+	}
+	var sb strings.Builder
+	for i, c := range b {
+		if i > 0 && i%4 == 0 {
+			sb.WriteByte('-')
+		}
+		sb.WriteByte(alphabet[int(c)%len(alphabet)])
+	}
+	return sb.String()
+}
+
+// setupCodeMatches compares ignoring case, spaces and dashes.
+func (a *API) setupCodeMatches(typed string) bool {
+	norm := func(s string) string {
+		return strings.NewReplacer("-", "", " ", "").Replace(strings.ToUpper(strings.TrimSpace(s)))
+	}
+	return subtle.ConstantTimeCompare([]byte(norm(typed)), []byte(norm(a.setupCode))) == 1
+}
+
+// LogSetupCodeIfEmpty prints the setup code when the server has no
+// accounts yet. Called at startup; the code changes on every restart.
+func (a *API) LogSetupCodeIfEmpty(ctx context.Context) {
+	var exists bool
+	if err := a.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users)`).Scan(&exists); err != nil {
+		slog.Error("checking for accounts", "err", err)
+		return
+	}
+	if !exists {
+		a.logSetupCode()
+	}
+}
+
+func (a *API) logSetupCode() {
+	slog.Warn("no accounts yet: register the first (administrator) account with this setup code",
+		"setup_code", a.setupCode)
+}
+
+// setupStatus tells the sign-up form whether to ask for the setup code.
+// Only reveals whether the server has any account at all.
+func (a *API) setupStatus(w http.ResponseWriter, r *http.Request) {
+	var exists bool
+	if err := a.pool.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM users)`).Scan(&exists); err != nil {
+		slog.Error("checking for accounts", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not check setup")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"needs_setup_code": !exists})
+}

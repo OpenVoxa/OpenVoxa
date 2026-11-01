@@ -25,6 +25,14 @@ func main() {
 	}))
 	slog.SetDefault(logger)
 
+	// Host-side commands (cli.go), e.g. grant-admin.
+	if ok, err := runCommand(os.Args[1:]); ok {
+		if err != nil {
+			exitWith(err)
+		}
+		return
+	}
+
 	if err := run(); err != nil {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
@@ -60,6 +68,7 @@ func run() error {
 		"max_attachment_mb", cfg.MaxAttachmentBytes/(1024*1024))
 
 	api := httpapi.New(pool, cfg, blobs)
+	api.LogSetupCodeIfEmpty(ctx)
 
 	db.StartSessionSweep(ctx, pool)
 

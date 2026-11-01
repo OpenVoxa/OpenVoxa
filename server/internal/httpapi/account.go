@@ -58,6 +58,10 @@ func (a *API) deleteOwnAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := a.purgeUser(r.Context(), session.UserID); err != nil {
+		if errors.Is(err, errLastAdmin) {
+			writeError(w, http.StatusConflict, lastAdminMessage)
+			return
+		}
 		slog.Error("deleting account", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not delete account")
 		return
@@ -104,6 +108,10 @@ func (a *API) deleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := a.purgeUser(r.Context(), subjectID); err != nil {
+		if errors.Is(err, errLastAdmin) {
+			writeError(w, http.StatusConflict, lastAdminMessage)
+			return
+		}
 		slog.Error("deleting account", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not delete account")
 		return
@@ -134,6 +142,11 @@ func (a *API) purgeUser(ctx context.Context, userID string) error {
 	}
 	defer tx.Rollback(ctx)
 
+	guard, err := startAdminGuard(ctx, tx)
+	if err != nil {
+		return err
+	}
+
 	// Empty the bodies rather than dropping the rows.
 	if _, err := tx.Exec(ctx,
 		`UPDATE messages SET body = ''::bytea, deleted = true WHERE author_id = $1`,
@@ -149,6 +162,9 @@ func (a *API) purgeUser(ctx context.Context, userID string) error {
 		return err
 	}
 
+	if err := guard.check(ctx, tx); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 

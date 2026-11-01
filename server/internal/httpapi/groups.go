@@ -234,7 +234,19 @@ func (a *API) editGroupPerm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	g, err := scanPermGroup(a.pool.QueryRow(r.Context(),
+	tx, err := a.pool.Begin(r.Context())
+	if err != nil {
+		slog.Error("editing group", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not edit group")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	guard, ok := a.startGuard(w, r, tx, "could not edit group")
+	if !ok {
+		return
+	}
+
+	g, err = scanPermGroup(tx.QueryRow(r.Context(),
 		`WITH g AS (
 		   UPDATE perm_groups SET
 		     name        = COALESCE($2, name),
@@ -251,6 +263,11 @@ func (a *API) editGroupPerm(w http.ResponseWriter, r *http.Request) {
 		}
 		slog.Error("editing group", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not edit group")
+		return
+	}
+	// Taking the administrator switch off a group can remove the last
+	// administrator.
+	if !a.commitKeepingAdmin(w, r, tx, guard, "could not edit group") {
 		return
 	}
 
@@ -279,10 +296,24 @@ func (a *API) deleteGroupPerm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := a.pool.Exec(r.Context(),
+	tx, err := a.pool.Begin(r.Context())
+	if err != nil {
+		slog.Error("deleting group", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not delete group")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	guard, ok := a.startGuard(w, r, tx, "could not delete group")
+	if !ok {
+		return
+	}
+	if _, err := tx.Exec(r.Context(),
 		`DELETE FROM perm_groups WHERE id = $1`, g.ID); err != nil {
 		slog.Error("deleting group", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not delete group")
+		return
+	}
+	if !a.commitKeepingAdmin(w, r, tx, guard, "could not delete group") {
 		return
 	}
 
@@ -376,7 +407,18 @@ func (a *API) changeMembership(w http.ResponseWriter, r *http.Request, add bool)
 		sql = `DELETE FROM user_perm_groups WHERE user_id = $1 AND group_id = $2`
 		action = "removed"
 	}
-	tag, err := a.pool.Exec(r.Context(), sql, subjectID, g.ID)
+	tx, err := a.pool.Begin(r.Context())
+	if err != nil {
+		slog.Error("changing group membership", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not change groups")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	guard, ok := a.startGuard(w, r, tx, "could not change groups")
+	if !ok {
+		return
+	}
+	tag, err := tx.Exec(r.Context(), sql, subjectID, g.ID)
 	if err != nil {
 		slog.Error("changing group membership", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not change groups")
@@ -385,6 +427,9 @@ func (a *API) changeMembership(w http.ResponseWriter, r *http.Request, add bool)
 	if tag.RowsAffected() == 0 {
 		// Already in (or already out of) the group: nothing changed.
 		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if !a.commitKeepingAdmin(w, r, tx, guard, "could not change groups") {
 		return
 	}
 
@@ -518,4 +563,39 @@ func (a *API) auditGroup(ctx context.Context, actorID, subjectID, groupID, group
 		actorID, subject, group, groupName, action, detail); err != nil {
 		slog.Error("recording group change", "err", err)
 	}
+}
+
+// startGuard starts an adminGuard (lastadmin.go) on tx, writing a 500 and
+// returning false on failure.
+func (a *API) startGuard(w http.ResponseWriter, r *http.Request, tx pgx.Tx, failMsg string) (adminGuard, bool) {
+	guard, err := startAdminGuard(r.Context(), tx)
+	if err != nil {
+		slog.Error("checking administrators", "err", err)
+		writeError(w, http.StatusInternalServerError, failMsg)
+		return guard, false
+	}
+	return guard, true
+}
+
+// commitKeepingAdmin commits tx unless it left the server without an
+// administrator. Writes the error response and returns false when it
+// does not commit.
+func (a *API) commitKeepingAdmin(
+	w http.ResponseWriter, r *http.Request, tx pgx.Tx, guard adminGuard, failMsg string,
+) bool {
+	if err := guard.check(r.Context(), tx); err != nil {
+		if errors.Is(err, errLastAdmin) {
+			writeError(w, http.StatusConflict, lastAdminMessage)
+			return false
+		}
+		slog.Error("checking administrators", "err", err)
+		writeError(w, http.StatusInternalServerError, failMsg)
+		return false
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		slog.Error("committing", "err", err)
+		writeError(w, http.StatusInternalServerError, failMsg)
+		return false
+	}
+	return true
 }
