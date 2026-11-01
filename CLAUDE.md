@@ -113,7 +113,7 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
 
 ## Current state (update every session)
 
-_Last updated: 2026-10-31, step 12 (permission groups) complete and verified on Docker._
+_Last updated: 2026-10-31, per-person notices verified; call-end wording pushed._
 
 - Build-order step 9 (MLS for text) is functionally working on Docker:
   messages in an encrypted channel are ciphertext in Postgres (only the
@@ -167,8 +167,8 @@ _Last updated: 2026-10-31, step 12 (permission groups) complete and verified on 
      browser storage between accounts (per-account DB + one tab per
      account), ts-mls throwing on removal at the tree's end (catch-up
      rejoins), banned users staying in calls (LiveKit RemoveParticipant +
-     old media keys retired after 10 s). Cosmetic: a kicked client says
-     "left voice", not "removed by the server".
+     old media keys retired after 10 s). Cosmetic "left voice" on a kick:
+     fixed, see item 4.
   3. Custom permission groups (step 12): DONE, verified on Docker
      2026-10-31 (D1-D5). Migration 0012 converts roles to groups
      (Everyone, Member, Moderator, Administrator); switches decide what,
@@ -185,9 +185,11 @@ _Last updated: 2026-10-31, step 12 (permission groups) complete and verified on 
      index (`overwriteSlot` in chat.html, fixed `efc38c6`).
   4. Small items before the real client (order agreed 2026-10-31):
      per-person notices (core `MembershipChange.people`, chat.html shows
-     them by default, "per-device" checkbox for the old detail; pushed,
-     awaiting Docker test) -> kicked client says "removed by the server"
-     -> 30-day device expiry -> history sharing -> client (step 13), with
+     them by default, "per-device" checkbox for the old detail and epoch
+     lines; DONE, verified on Docker N1-N2) -> call-end wording
+     (`describeVoiceEnd` in chat.html: server kick or own MLS removal
+     both read as "removed", not "left voice"; pushed, awaiting Docker
+     test) -> 30-day device expiry -> history sharing -> client (step 13), with
      recovery keys built into the client.
   5. Opt-in history sharing (Ryan wants it; see decisions.md Open items).
   6. Local storage encryption (blocked on recovery keys).
