@@ -54,7 +54,11 @@ func (a *API) loadMessages(
 		                     'id', at.id,
 		                     'filename', at.filename,
 		                     'content_type', at.content_type,
-		                     'size', at.size) ORDER BY at.created_at)
+		                     'size', at.size,
+		                     'uploader_id', at.uploader_id,
+		                     'blob_hash', encode(at.blob_hash, 'base64'),
+		                     'sealed_name', encode(at.sealed_name, 'base64'))
+		                   ORDER BY at.created_at)
 		             FROM attachments at WHERE at.message_id = m.id),
 		          '[]'::json),`+mentionsJSON+`
 		   FROM messages m
@@ -96,7 +100,7 @@ func (a *API) loadMessages(
 		// Links are minted per delivery, so a client that reconnects
 		// after a long gap gets fresh ones rather than expired ones.
 		for i := range m.Attachments {
-			m.Attachments[i].URL = a.signAttachmentURL(m.Attachments[i].ID)
+			a.finishAttachment(ctx, channelID, &m.Attachments[i])
 		}
 
 		messages = append(messages, m)

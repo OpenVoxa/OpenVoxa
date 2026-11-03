@@ -1780,9 +1780,20 @@ to pick their own colours later, so every colour stays a variable.
           copies are sealed under the accused's key in every channel kind.
           Verified on Docker: 17 messages and 4 reports sealed, old
           history, old reports and a new Checked report all read.
-    - [ ] S3 Plaintext-channel attachments sealed under the uploader's
+    - [x] S3 Plaintext-channel attachments sealed under the uploader's
           key (bytes and filename), no more dedup there; existing blobs
-          converted.
+          converted. Done 2026-11-03: `internal/sealedfile` (random key
+          per file, 64 KiB AES-GCM chunks, nonce = chunk index + last
+          flag, so range requests and video seeking work; tests cover
+          truncation and tampering), `httpapi/attachseal.go` (file key and
+          name sealed under the uploader's key, bound to channel, uploader
+          and blob hash; `storeAttachment` shared by uploads and GIFs;
+          download decrypts on the fly, 410 once the key is gone),
+          migration 0022 (`file_key`, `sealed_name`; drops leftover files
+          of already-deleted accounts). GIFs in plaintext channels are
+          sealed too (one rule; old ones cannot be told from uploaded
+          .gif files). Verified on Docker: 4 existing files converted,
+          old and new files, video seeking, GIF, size limit.
     - [ ] S4 Deletion destroys the key file and removes the account's
           attachments; reports show "content deleted".
     - [ ] S5 Delete-account dialog with the new wording (password and
@@ -1850,10 +1861,12 @@ to pick their own colours later, so every colour stays a variable.
       a new device and rejoin. Same idea as Signal unlinking idle devices.
       Until then: use "Forget this device" before closing a private
       window.
-- [ ] Attachments in PLAINTEXT channels are still content-addressed and
+- [x] Attachments in PLAINTEXT channels are still content-addressed and
       deduplicated across users, which reveals that someone else uploaded
       an identical file. Accepted there; encrypted channels no longer
       dedup.
+      Closed 2026-11-03 by crypto-shredding S3: every plaintext-channel
+      file has its own key, so nothing is shared.
 - [ ] Encrypted attachment sizes are visible to the server. Padding to
       size buckets would blur them at some storage cost.
 - [ ] The local plaintext archive is deleted per message on deletion

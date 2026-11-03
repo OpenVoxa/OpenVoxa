@@ -122,8 +122,13 @@ func (a *API) SealExisting(ctx context.Context) {
 	if err != nil {
 		slog.Error("sealing existing report copies", "err", err, "sealed_so_far", reports)
 	}
-	if messages > 0 || reports > 0 {
-		slog.Info("sealed existing plaintext", "messages", messages, "reports", reports)
+	files, err := a.sealExistingAttachments(ctx)
+	if err != nil {
+		slog.Error("sealing existing attachments", "err", err, "sealed_so_far", files)
+	}
+	if messages > 0 || reports > 0 || files > 0 {
+		slog.Info("sealed existing plaintext",
+			"messages", messages, "reports", reports, "attachments", files)
 	}
 }
 
