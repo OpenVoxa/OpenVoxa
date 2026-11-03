@@ -185,31 +185,38 @@ No `tls` profile = no Caddy (own proxy + `OPENVOXA_TRUST_PROXY=true`).
 
 ## Current state (update every session)
 
-_Last updated: 2026-11-03. **Local storage encryption DONE** (L1-L3,
-decisions.md Encryption, "Local storage is encrypted under the
-password..."): every IndexedDB value is AES-GCM under a per-account data
-key; Argon2id (hash-wasm, pinned) of the password unlocks it at login;
-refresh unlocks via the per-session server secret
-(`GET /api/v1/me/unlock-secret`, migration 0019) and a sessionStorage copy
-(`client-web/src/unlock.ts`). **Sign-out now keeps the device** (Ryan:
-ease of use first); the recovery key is needed only after 30-day expiry or
-removal in Settings > Devices. All verified by Ryan on Docker: sign-out/
-sign-in, password change rewrap, removed-device path (recovery screen
-gives the reason), refresh after session end. The storage layer was checked ad hoc in Node with
-fake-indexeddb (34 checks, not kept in the repo; no test setup exists).
-**Now: crypto-shredding** (build order 14, S1-S6; design agreed with
-Ryan 2026-11-03, decisions.md Encryption, "Account deletion is
-crypto-shredding"). Encrypted channels need no new key (MLS already
-makes server copies unreadable); plaintext channels get a per-account
-key file in `OPENVOXA_KEY_DIR` (outside Postgres), deleted on account
-deletion. Tick S-steps in decisions.md as they land. S1-S3 done
-(keystore, sealing plaintext bodies, report copies and attachments);
-next S4 (deletion destroys the key, removes attachments). Also added a
-"Jump to latest" button (sticky, with "N new") in the message list.
-Dev fill script (scratchpad, not in repo) put 300 chant messages from
-staff in #general; offer to delete them. Reports tab: Delete (now confirmed)
-or Ban from a report marks it Actioned; Dismiss is "No action needed"
-(tab "No action"; status value still `dismissed`). Verified by Ryan.
+_Last updated: 2026-11-03 (end of session). **Now: crypto-shredding**,
+build order 14, S1-S6 (design agreed with Ryan, decisions.md Encryption,
+"Account deletion is crypto-shredding"; tick S-steps there as they land).
+Encrypted channels need no new key (MLS already makes server copies
+unreadable); plaintext channels use a per-account key file in
+`OPENVOXA_KEY_DIR` (named volume `deploy_key-data`, outside Postgres).
+**S1-S3 DONE and verified by Ryan**: `internal/keystore` (Seal/Open,
+key made on first seal), `httpapi/sealing.go` (message bodies, report
+copies, `SealExisting` startup job), `internal/sealedfile` + `httpapi/
+attachseal.go` (chunked per-file encryption, key and name sealed under
+the uploader's key; downloads 410 when the key is gone), migrations
+0020-0022. Go unit tests run with
+`docker run --rm -v "$PWD":/src -w /src golang:1.26 go test ./internal/keystore/ ./internal/sealedfile/`
+from `server/`.
+**Next: S4** (deletion destroys the key). To do: add `keystore.Destroy`
+(unlink + drop cache); call it only AFTER the purge transaction commits
+(before would lose data on rollback) in `purgeUser` (`account.go`) and
+the `delete-user` host command (`cli.go`, which must open the key store
+from config); `PurgeUserTx` also deletes the user's attachments (it
+never did); report list gets a "content deleted" flag instead of empty
+text (`openReport` returns "" on ErrNoKey). Then S5 (delete-account
+dialog wording + typed username; clients delete stored copies on
+`user_purged`, `chat.ts` `userPurged` only tombstones today) and S6
+(`deploy/README.md`: back the key folder up separately, short-lived).
+Also this session: Reports tab (Delete now confirmed; Delete or Ban from
+a report marks it Actioned; Dismiss is "No action needed", tab "No
+action", status value still `dismissed`) and a "Jump to latest" button
+in the message list (sticky, "N new"). Test data: 300 chant messages
+from staff in #general (dev fill script in an old scratchpad, not in the
+repo); ask Ryan whether to delete them (by author staff, created
+2026-11-03 18:02-19:02 UTC).
+Earlier: local storage encryption (L1-L3) done; sign-out keeps the device.
 Older full handoff: project doc claude/handoff-step-13.md._
 
 Done and verified on Docker (details: decisions.md Build order 9-12):
