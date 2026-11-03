@@ -185,21 +185,18 @@ No `tls` profile = no Caddy (own proxy + `OPENVOXA_TRUST_PROXY=true`).
 
 ## Current state (update every session)
 
-_Last updated: 2026-11-03. @mentions done and verified (M1-M6), plus an
-Appearance settings tab (A1). **In progress: encrypt local IndexedDB.
-Design agreed with Ryan 2026-11-03** (decisions.md Encryption, "Local
-storage is encrypted under the password, with a server-held half for
-refreshes": Argon2id via hash-wasm wraps a per-database data key;
-refresh unlocks via a per-session server secret). Build in stages, one
-chat each, rebuild + Ryan tests between:
-L1 server: migration 0019 (`sessions` secret column) + endpoint returning
-it for the caller's own session. L2 client-core: keyring (Argon2id,
-wrap/unwrap, session-secret wrap) + every `storage.ts` value through
-AES-GCM with store+key AAD; in-place upgrade of plaintext DBs; backup key
-stored as encrypted raw bytes. L3 client-web: password into unlock at
-login (`Login.tsx`), silent unlock on refresh (`App.tsx`/`session.ts`),
-rewrap on password change (`SettingsDialog.tsx`), "changed elsewhere" =
-new device + recovery restore. Then a test plan and docs.
+_Last updated: 2026-11-03. **Local storage encryption DONE** (L1-L3,
+decisions.md Encryption, "Local storage is encrypted under the
+password..."): every IndexedDB value is AES-GCM under a per-account data
+key; Argon2id (hash-wasm, pinned) of the password unlocks it at login;
+refresh unlocks via the per-session server secret
+(`GET /api/v1/me/unlock-secret`, migration 0019) and a sessionStorage copy
+(`client-web/src/unlock.ts`). **Sign-out now keeps the device** (Ryan:
+ease of use first); the recovery key is needed only after 30-day expiry or
+removal in Settings > Devices. Ryan tested sign-out/sign-in. Not yet
+tested by Ryan: password change rewrap, removed-device path, refresh after
+session end. The storage layer was checked ad hoc in Node with
+fake-indexeddb (34 checks, not kept in the repo; no test setup exists).
 Older full handoff: project doc claude/handoff-step-13.md._
 
 Done and verified on Docker (details: decisions.md Build order 9-12):
@@ -236,8 +233,9 @@ period in `server_settings`, migration 0017).
 - Appearance tab: accent, unread dot, mention badge colours, per browser.
   More customisation goes in `COLOURS` in `appearance.ts`.
 - Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI).
+- @mentions and Appearance: done and verified (M1-M6, A1).
 - Next (Ryan to choose): crypto-shredding (unbuilt, not yet in Build
-  order, needs design); local IndexedDB encryption (in progress, above);
+  order, needs design); "shared computer: erase everything" on sign-out;
   local archive retention sweep; real force-PTT via LiveKit
   `MutePublishedTrack`; bitrate ceiling; zxcvbn (discuss first);
   Electron shell.
