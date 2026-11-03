@@ -1541,6 +1541,31 @@ to pick their own colours later, so every colour stays a variable.
       sends only changed fields, since an untouched switch list on a
       group holding a switch you lack would be refused. Membership
       changes save on each tick. Lists reload on perms_changed.
+    - Moderation in client-web (M5 session C, 2026-11-03). Report on
+      other people's messages (`ChannelPane.tsx` ReportDialog; sends the
+      text as shown, and in an encrypted channel says so, since that
+      reveals it to the server and it stays unchecked). Server settings
+      gains Reports (needs view_reports: Open/Actioned/Dismissed/Rejected,
+      Checked/Didn't match/Unchecked tag, Delete message, Ban author,
+      Dismiss, Mark actioned; deleting and banning stay separate calls
+      from closing a report), Bans (needs ban; Unban), and Log (Ban, View
+      reports or Delete messages). Members rows get Ban/Unban and, for
+      administrators, Delete (type the username). Ban durations are
+      presets (1 hour, 1/7/30 days, permanent; Ryan's pick); purge is
+      administrator only. Server: `GET /users` adds `banned` and
+      `banned_until`, reports add channel name and `message_gone`, admin
+      deletions now write `delete_user` to `moderation_log` (the username
+      in detail, since the row is gone), `GET /moderation-log`
+      (`modlog.go`, `?before=` paging, `?archived=1`).
+      Pending reports: a red dot on the Server settings gear for holders
+      of view_reports (Ryan asked for one). `reports_changed` goes only to
+      them (emitUsers) when a report is filed or resolved; the client
+      refetches the open list, also every 2 minutes and on focus as a
+      fallback; the dialog opens on Reports while any are open.
+      Log archive: entries older than `server_settings.modlog_archive_days`
+      (migration 0017, one-row typed table for server-wide settings,
+      default 30, 1 to 3650, administrator sets it in the Log tab) show
+      under Archived. A view only; nothing is deleted.
     - Device linking by QR (after M1): a logged-in device shows a QR of
       `https://server/link#<one-time secret>` (about 2 min, single use);
       the phone's camera opens it; the server only relays encrypted
@@ -1568,8 +1593,9 @@ to pick their own colours later, so every colour stays a variable.
       sockets to channels the account can no longer view are closed.
       A promotion still leaves an open read-only socket read-only until
       it reconnects (`can_post` is fixed at upgrade).
-- [ ] Nothing reads `moderation_log` yet. The data accumulates; a review
-      interface does not exist.
+- [x] Nothing reads `moderation_log` yet. Done 2026-11-03 (M5 session
+      C): `GET /moderation-log` and the Log tab in Server settings. Group
+      changes still go to `perm_group_changes`, which nothing reads.
 - [ ] Reports in encrypted channels will need MLS signature verification
       before `verified` can be anything but NULL there.
 - [ ] Group state persists to IndexedDB as bytes, but UNENCRYPTED. The

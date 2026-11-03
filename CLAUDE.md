@@ -52,7 +52,7 @@ server/            Go server (module root here; go.mod says go 1.26)
   Dockerfile          multi-stage: client-core -> client-web -> Go -> distroless
   internal/httpapi/   HTTP + WS; debugui/chat.html = old debug client
   internal/db/        Postgres, migrations/00NN_*.sql (embedded, ordered;
-                      latest 0016)
+                      latest 0017)
   internal/{auth,blob,config,gif,hub,password,perm,ratelimit,unfurl}
 client-core/       TypeScript protocol + crypto, no UI
   src/mls/provider.ts  MlsProvider interface (swappable)
@@ -183,9 +183,9 @@ No `tls` profile = no Caddy (own proxy + `OPENVOXA_TRUST_PROXY=true`).
 
 ## Current state (update every session)
 
-_Last updated: 2026-11-03. M5 session B (groups and members) done and
-verified (B1-B4); next M5 session C (moderation). External join was already done (2026-10-31). Older
-full handoff: project doc claude/handoff-step-13.md._
+_Last updated: 2026-11-03. M5 session C (moderation) done and verified
+(R1-R5, N1-N5); M5 is complete. Next: pick from decisions.md Open items.
+Older full handoff: project doc claude/handoff-step-13.md._
 
 Done and verified on Docker (details: decisions.md Build order 9-12):
 MLS text E2EE, encrypted attachments in core + chat.html (Giphy GIFs stay
@@ -195,53 +195,27 @@ channel access, permission groups (chat.html console helpers
 sharing, two-admin floor, password rules. Blobs on Docker: bind mount
 `/mnt/openvoxa-blobs`.
 
-Step 13 (real client): M1 login + recovery -> M2 text -> M3 voice ->
-M4 attachments/GIFs/unfurls/notices -> M5 settings and admin panes.
+Step 13 (real client) M1-M5 all DONE and verified on Docker by
+2026-11-03 (details per milestone: decisions.md Build order, step 13):
+M1 login + recovery (K1 flows 2-5 deferred), M2 text, M3 voice, channel
+management, M4 markdown/previews/GIFs/notices/attachments/image viewer,
+M5 A account settings (`SettingsDialog.tsx`), B groups + members and
+C moderation (both in `ServerSettings.tsx`, gear beside "OpenVoxa",
+staff only; C added Report on messages, Reports/Bans/Log tabs, a red
+dot for view_reports holders via `reports_changed`, and the Log archive
+period in `server_settings`, migration 0017).
 
-- M1 DONE (K1 flows 2-5 deferred by Ryan). M3 DONE (V3). Channel
-  management DONE (C1).
-- M2 DONE and verified 2026-11-03 (quillbrook + staff): paging,
-  unread markers incl. hidden channels, encrypted archive, scheduled
-  backup, sign-out/restore. Fix 7d91eb3: user panel now refreshes the
-  backup time after scheduled uploads (console logs `backup uploaded`).
-- M4 session A DONE (markdown, previews, GIFs, notices, tones, Settings).
-  G1/Y1 verified; G2-G4 to test. Also pending: P3 password, D1 delete-user.
+- Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
+  Everyone 0. Test accounts: quillbrook, staff, secondadmin.
 - Deploy: LiveKit on host networking (v1.13.11, `host.docker.internal:7880`),
   `update-node-ip.sh` on cron. Closed off: Ryan is the only user (port
   8443; friend-access teardown notes in handoff).
-- External join is DONE (built and verified 2026-10-31, `b550c95`,
-  `ccba824`; `groups.open`, used by client-web via `chat.ts`). A new
-  device joins encrypted channels and voice with nobody online. The
-  2026-11-03 handoff wrongly listed it as unbuilt; check git log and
+- External join is DONE (2026-10-31, `groups.open`): a new device joins
+  encrypted channels and voice with nobody online. Check git log and
   decisions.md Build order before calling something "not built".
-- M4 session B DONE and verified on Docker 2026-11-03: attachment
-  upload in client-web ("+" picker, paste, drag and drop, upload tray,
-  encrypted files decrypted inline; `client-web/src/attachments.tsx`,
-  `ChannelView.upload`). Test plan in the next item.
-- To test (A1-A4): A1 plain channel: picker with 2 images + a PDF, all
-  show for the other account. A2 encrypted channel: paste a screenshot,
-  drop a video; other account sees them decrypt; the PDF downloads with
-  its real name. A3 a video over 10 MB shows "Load". A4 an 11th file is
-  refused; a file over 25 MB fails in the tray and Send leaves it out.
-  A1-A4 PASSED 2026-11-03. Then added an image viewer + Settings toggle
-  "Open images in a new tab"; A5 (viewer + toggle) PASSED too.
-- M5 split (Ryan, 2026-11-03): A account settings, B admin groups and
-  members, C moderation (bans, reports, delete-user). A DONE and verified
-  on Docker 2026-11-03: Settings dialog with Account/Voice/Chat tabs
-  (`client-web/src/SettingsDialog.tsx`): change password, recovery key
-  incl. "Make a new key", devices list/remove, delete account. S5 found
-  that live views kept a deleted author's name; fixed (`userPurged`
-  clears it, client-web shows "Deleted user").
-- M5 session B DONE and verified on Docker 2026-11-03 (B1-B4): Server
-  settings dialog (`client-web/src/ServerSettings.tsx`), gear beside
-  "OpenVoxa" for staff only. Groups tab (create/edit/delete, rank as a
-  number with neighbour hint, switches) and Members tab (search, tick
-  groups per person). Mirrors the server's rank/switch rules as disabled
-  controls. Groups now: Administrator 30, Moderator 20, Member 10 (new
-  accounts), Everyone 0 (= guest level; Ryan dropped Bouncers/VIP/Guest).
-- Next: M5 session C (bans, reports, delete-user) as new tabs in Server
-  settings. Bans/reports endpoints exist (`/bans`, `/reports`,
-  `/users/{id}/ban`); `moderation_log` has no read endpoint yet.
-  Crypto-shredding is unbuilt, not
-  yet in Build order. Encrypting local IndexedDB keys is unblocked
-  (decisions.md Open items).
+- Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI).
+- Next (Ryan to choose): crypto-shredding (unbuilt, not yet in Build
+  order, needs design); encrypting local IndexedDB keys (unblocked);
+  local archive retention sweep; real force-PTT via LiveKit
+  `MutePublishedTrack`; bitrate ceiling; zxcvbn (discuss first);
+  Electron shell.
