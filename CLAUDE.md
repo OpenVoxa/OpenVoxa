@@ -204,7 +204,10 @@ makes server copies unreadable); plaintext channels get a per-account
 key file in `OPENVOXA_KEY_DIR` (outside Postgres), deleted on account
 deletion. Tick S-steps in decisions.md as they land. S1-S3 done
 (keystore, sealing plaintext bodies, report copies and attachments);
-next S4 (deletion destroys the key, removes attachments). Reports tab: Delete (now confirmed)
+next S4 (deletion destroys the key, removes attachments). Also added a
+"Jump to latest" button (sticky, with "N new") in the message list.
+Dev fill script (scratchpad, not in repo) put 300 chant messages from
+staff in #general; offer to delete them. Reports tab: Delete (now confirmed)
 or Ban from a report marks it Actioned; Dismiss is "No action needed"
 (tab "No action"; status value still `dismissed`). Verified by Ryan.
 Older full handoff: project doc claude/handoff-step-13.md._
