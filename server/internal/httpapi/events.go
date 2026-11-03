@@ -4,6 +4,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"time"
@@ -59,6 +60,10 @@ type accessChangedEvent struct {
 type permsChangedEvent struct {
 	Type   string `json:"type"`
 	UserID string `json:"user_id"`
+}
+
+type reportsChangedEvent struct {
+	Type string `json:"type"`
 }
 
 func (a *API) emitAll(v any) {
@@ -172,4 +177,36 @@ func (a *API) NotifyPermsChanged(userID string) {
 // perms_changed, which clients treat the same way.
 func (a *API) NotifyAccessChanged() {
 	a.emitAll(accessChangedEvent{Type: "access_changed"})
+}
+
+// NotifyReportsChanged tells everyone who can read reports that the open
+// queue changed (a report was filed or resolved), so their client can
+// refetch it and show or clear the pending-report dot. Sent only to
+// holders of View reports: ordinary accounts have no business knowing
+// when someone is reported. Carries nothing; the list is fetched.
+func (a *API) NotifyReportsChanged(ctx context.Context) {
+	rows, err := a.pool.Query(ctx,
+		`SELECT DISTINCT eg.user_id
+		   FROM effective_groups eg
+		   JOIN perm_groups g ON g.id = eg.group_id
+		  WHERE g.permissions && ARRAY['view_reports', 'administrator']::text[]`)
+	if err != nil {
+		slog.Error("finding report readers", "err", err)
+		return
+	}
+	defer rows.Close()
+	users := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			slog.Error("scanning report reader", "err", err)
+			return
+		}
+		users[id] = true
+	}
+	if rows.Err() != nil {
+		slog.Error("iterating report readers", "err", rows.Err())
+		return
+	}
+	a.emitUsers(users, reportsChangedEvent{Type: "reports_changed"})
 }

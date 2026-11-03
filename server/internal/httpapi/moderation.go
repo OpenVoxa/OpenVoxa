@@ -219,6 +219,7 @@ func (a *API) reportMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	a.NotifyReportsChanged(r.Context())
 	writeJSON(w, http.StatusCreated, map[string]string{"id": reportID})
 }
 
@@ -226,6 +227,10 @@ type reportSummary struct {
 	ID          string    `json:"id"`
 	MessageID   *string   `json:"message_id"`
 	ChannelID   *string   `json:"channel_id"`
+	// Channel is empty once the channel is gone. MessageGone is true when
+	// the message has since been deleted (or its row removed).
+	Channel     string    `json:"channel"`
+	MessageGone bool      `json:"message_gone"`
 	Reporter    string    `json:"reporter"`
 	Accused     string    `json:"accused"`
 	AccusedID   *string   `json:"accused_id"`
@@ -239,12 +244,19 @@ type reportSummary struct {
 // listReports returns the moderation queue, open reports first.
 func (a *API) listReports(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
-	if status == "" {
+	switch status {
+	case "":
 		status = "open"
+	case "open", "dismissed", "actioned", "rejected":
+	default:
+		writeError(w, http.StatusBadRequest,
+			"status must be open, dismissed, actioned or rejected")
+		return
 	}
 
 	rows, err := a.pool.Query(r.Context(),
 		`SELECT rp.id, rp.message_id, rp.channel_id,
+		        COALESCE(c.name, ''), COALESCE(m.deleted, true),
 		        COALESCE(ru.username, '[deleted]'),
 		        COALESCE(au.username, '[deleted]'),
 		        rp.accused_id, rp.reason, rp.claimed_body,
@@ -252,6 +264,8 @@ func (a *API) listReports(w http.ResponseWriter, r *http.Request) {
 		   FROM reports rp
 		   LEFT JOIN users ru ON ru.id = rp.reporter_id
 		   LEFT JOIN users au ON au.id = rp.accused_id
+		   LEFT JOIN channels c ON c.id = rp.channel_id
+		   LEFT JOIN messages m ON m.id = rp.message_id
 		  WHERE rp.status = $1
 		  ORDER BY rp.created_at DESC
 		  LIMIT 100`, status)
@@ -266,7 +280,7 @@ func (a *API) listReports(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var rs reportSummary
 		if err := rows.Scan(&rs.ID, &rs.MessageID, &rs.ChannelID,
-			&rs.Reporter, &rs.Accused, &rs.AccusedID, &rs.Reason,
+			&rs.Channel, &rs.MessageGone, &rs.Reporter, &rs.Accused, &rs.AccusedID, &rs.Reason,
 			&rs.ClaimedBody, &rs.Verified, &rs.Status, &rs.CreatedAt); err != nil {
 			slog.Error("scanning report", "err", err)
 			writeError(w, http.StatusInternalServerError, "could not list reports")
@@ -332,6 +346,7 @@ func (a *API) resolveReport(w http.ResponseWriter, r *http.Request) {
 		slog.Error("recording moderation action", "err", err)
 	}
 
+	a.NotifyReportsChanged(r.Context())
 	w.WriteHeader(http.StatusNoContent)
 }
 

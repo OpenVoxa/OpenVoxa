@@ -57,7 +57,7 @@ func (a *API) deleteOwnAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := a.purgeUser(r.Context(), session.UserID); err != nil {
+	if err := a.purgeUser(r.Context(), session.UserID, nil); err != nil {
 		if errors.Is(err, errLastAdmin) {
 			writeError(w, http.StatusConflict, lastAdminMessage)
 			return
@@ -107,7 +107,19 @@ func (a *API) deleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := a.purgeUser(r.Context(), subjectID); err != nil {
+	// The account row is about to disappear, so the log keeps its name in
+	// detail; subject_id alone would point at nothing.
+	var username string
+	if err := a.pool.QueryRow(r.Context(),
+		`SELECT username FROM users WHERE id = $1`, subjectID).Scan(&username); err != nil {
+		slog.Error("loading subject name for deletion", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not delete account")
+		return
+	}
+	logIt := func(tx pgx.Tx) error {
+		return logModeration(r.Context(), tx, actor.UserID, "delete_user", subjectID, username)
+	}
+	if err := a.purgeUser(r.Context(), subjectID, logIt); err != nil {
 		if errors.Is(err, errLastAdmin) {
 			writeError(w, http.StatusConflict, lastAdminMessage)
 			return
@@ -135,7 +147,10 @@ func (a *API) deleteUser(w http.ResponseWriter, r *http.Request) {
 // key material makes their ciphertext permanently unreadable without
 // rewriting rows at all, and the tombstone flag is set the same way. The
 // visible result is identical; only the mechanism differs.
-func (a *API) purgeUser(ctx context.Context, userID string) error {
+//
+// also, if not nil, runs inside the same transaction (the moderation log
+// entry when an administrator deletes someone else).
+func (a *API) purgeUser(ctx context.Context, userID string, also func(pgx.Tx) error) error {
 	tx, err := a.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -148,6 +163,11 @@ func (a *API) purgeUser(ctx context.Context, userID string) error {
 	}
 	if err := PurgeUserTx(ctx, tx, userID); err != nil {
 		return err
+	}
+	if also != nil {
+		if err := also(tx); err != nil {
+			return err
+		}
 	}
 	if err := guard.check(ctx, tx); err != nil {
 		return err

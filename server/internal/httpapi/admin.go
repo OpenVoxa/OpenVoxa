@@ -21,6 +21,10 @@ type userSummary struct {
 	Rank      int             `json:"rank"`
 	Groups    []userGroupName `json:"groups"`
 	CreatedAt time.Time       `json:"created_at"`
+	// Banned is set while a ban is in force; BannedUntil is nil for a
+	// permanent one.
+	Banned      bool       `json:"banned"`
+	BannedUntil *time.Time `json:"banned_until"`
 }
 
 type userGroupName struct {
@@ -42,8 +46,13 @@ func (a *API) listUsers(w http.ResponseWriter, r *http.Request) {
 		                    FROM user_perm_groups ug
 		                    JOIN perm_groups g ON g.id = ug.group_id
 		                   WHERE ug.user_id = u.id), '[]'::json),
-		        u.created_at
-		   FROM users u WHERE u.deleted_at IS NULL ORDER BY u.username`)
+		        u.created_at, b.user_id IS NOT NULL, b.expires_at
+		   FROM users u
+		   LEFT JOIN LATERAL (
+		        SELECT user_id, expires_at FROM bans
+		         WHERE user_id = u.id AND (expires_at IS NULL OR expires_at > now())
+		         ORDER BY expires_at DESC NULLS FIRST LIMIT 1) b ON true
+		  WHERE u.deleted_at IS NULL ORDER BY u.username`)
 	if err != nil {
 		slog.Error("listing users", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not list users")
@@ -54,7 +63,8 @@ func (a *API) listUsers(w http.ResponseWriter, r *http.Request) {
 	users := make([]userSummary, 0)
 	for rows.Next() {
 		var u userSummary
-		if err := rows.Scan(&u.ID, &u.Username, &u.Rank, &u.Groups, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.Rank, &u.Groups, &u.CreatedAt,
+			&u.Banned, &u.BannedUntil); err != nil {
 			slog.Error("scanning user", "err", err)
 			writeError(w, http.StatusInternalServerError, "could not list users")
 			return
