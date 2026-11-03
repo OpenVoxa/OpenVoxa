@@ -554,6 +554,9 @@ export class Chat {
   }
 }
 
+/** The server's username for messages whose author was deleted (messages.go). */
+export const DELETED_AUTHOR = "[deleted]";
+
 /** "staff joined", "staff left", "staff joined on a new device". */
 export function describePerson(p: PersonChange): string {
   const who = p.you ? "You" : p.username ?? null;
@@ -1014,10 +1017,21 @@ export class ChannelView {
     }
   }
 
-  /** @internal An account was deleted: its messages go. */
+  /**
+   * @internal An account was deleted: its messages go, and so does their
+   * attribution, as the server already does for history (author NULL,
+   * username "[deleted]"), so the live view matches a reload.
+   */
   userPurged(userId: string): void {
-    for (const m of this.#messages.values()) {
-      if (m.authorId === userId) void this.#enqueue(() => this.#tombstone(m.id));
+    for (const m of [...this.#messages.values()]) {
+      if (m.authorId !== userId) continue;
+      void this.#enqueue(async () => {
+        await this.#tombstone(m.id);
+        const raw = this.#raw.get(m.id);
+        if (raw) this.#raw.set(m.id, { ...raw, author_id: "", username: DELETED_AUTHOR });
+        const current = this.#messages.get(m.id);
+        if (current) this.#put({ ...current, authorId: "", username: DELETED_AUTHOR, own: false });
+      });
     }
   }
 
