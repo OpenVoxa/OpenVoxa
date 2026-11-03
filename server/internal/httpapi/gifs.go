@@ -179,7 +179,7 @@ type sendGifRequest struct {
 // attachment.
 //
 // This is the part that matters. A GIF posted to a channel becomes a file
-// in our own blob store, so it is deduplicated, governed by the channel's
+// in our own blob store, so it is governed by the channel's
 // retention policy, destroyed when the message is deleted, and served from
 // here. Linking to the provider's CDN instead would mean every viewer, for
 // as long as the message exists, quietly tells Giphy they are reading this
@@ -239,57 +239,21 @@ func (a *API) attachGif(w http.ResponseWriter, r *http.Request) {
 	}
 	defer body.Close()
 
-	hash, size, err := a.blobs.Put(body, a.maxAttachment)
-	if err != nil {
-		slog.Error("storing gif", "err", err)
-		writeError(w, http.StatusInternalServerError, "could not store the GIF")
-		return
-	}
-
 	filename := safeFilename(strings.TrimSpace(req.Description))
 	if filename == "file" || filename == "" {
 		filename = "animated"
 	}
 	filename += ".gif"
 
-	tx, err := a.pool.Begin(r.Context())
+	// Sealed in plaintext channels like any other file there (one rule,
+	// and older GIFs cannot be told apart from uploaded .gif files).
+	// Stored as fetched in encrypted channels; see the comment above.
+	info, err := a.storeAttachment(r.Context(), body, channelID, session.UserID, filename, "image/gif", !cp.Encrypted)
 	if err != nil {
-		slog.Error("starting gif transaction", "err", err)
+		slog.Error("storing gif", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not store the GIF")
 		return
 	}
-	defer tx.Rollback(r.Context())
-
-	if _, err := tx.Exec(r.Context(),
-		`INSERT INTO blobs (hash, size) VALUES ($1, $2) ON CONFLICT (hash) DO NOTHING`,
-		hash, size,
-	); err != nil {
-		slog.Error("recording gif blob", "err", err)
-		writeError(w, http.StatusInternalServerError, "could not store the GIF")
-		return
-	}
-
-	var info attachmentInfo
-	err = tx.QueryRow(r.Context(),
-		`INSERT INTO attachments
-		     (channel_id, uploader_id, blob_hash, filename, content_type, size)
-		 VALUES ($1, $2, $3, $4, 'image/gif', $5)
-		 RETURNING id, filename, content_type, size`,
-		channelID, session.UserID, hash, filename, size,
-	).Scan(&info.ID, &info.Filename, &info.ContentType, &info.Size)
-	if err != nil {
-		slog.Error("recording gif attachment", "err", err)
-		writeError(w, http.StatusInternalServerError, "could not store the GIF")
-		return
-	}
-
-	if err := tx.Commit(r.Context()); err != nil {
-		slog.Error("committing gif attachment", "err", err)
-		writeError(w, http.StatusInternalServerError, "could not store the GIF")
-		return
-	}
-
-	info.URL = a.signAttachmentURL(info.ID)
 	writeJSON(w, http.StatusCreated, info)
 }
 

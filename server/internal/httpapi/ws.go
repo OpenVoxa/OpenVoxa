@@ -379,7 +379,7 @@ func (a *API) persistAndBroadcast(
 			    AND channel_id = $3
 			    AND uploader_id = $4
 			    AND message_id IS NULL
-			  RETURNING id, filename, content_type, size`,
+			  RETURNING id, filename, content_type, size, uploader_id, blob_hash, sealed_name`,
 			out.ID, attachmentIDs, channelID, s.UserID)
 		if qerr != nil {
 			return qerr
@@ -387,11 +387,12 @@ func (a *API) persistAndBroadcast(
 
 		for rows.Next() {
 			var info attachmentInfo
-			if serr := rows.Scan(&info.ID, &info.Filename, &info.ContentType, &info.Size); serr != nil {
+			if serr := rows.Scan(&info.ID, &info.Filename, &info.ContentType, &info.Size,
+				&info.UploaderID, &info.BlobHash, &info.SealedName); serr != nil {
 				rows.Close()
 				return serr
 			}
-			info.URL = a.signAttachmentURL(info.ID)
+			a.finishAttachment(ctx, channelID, &info)
 			out.Attachments = append(out.Attachments, info)
 		}
 		rows.Close()

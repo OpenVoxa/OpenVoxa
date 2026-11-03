@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"mime"
 	"net/http"
@@ -54,6 +55,13 @@ type attachmentInfo struct {
 	// Signed, time-limited download link. Set when the attachment is sent
 	// to a client, never stored.
 	URL string `json:"url,omitempty"`
+
+	// What the server needs to unseal the filename (sealing.go). Read from
+	// the database and cleared by finishAttachment before anything is
+	// sent, so these never reach a client.
+	UploaderID *string `json:"uploader_id,omitempty"`
+	BlobHash   []byte  `json:"blob_hash,omitempty"`
+	SealedName []byte  `json:"sealed_name,omitempty"`
 }
 
 // attachmentURLTTL is how long a signed link stays valid. Long enough to
@@ -165,17 +173,6 @@ func (a *API) uploadAttachment(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	hash, size, err := a.blobs.Put(file, a.maxAttachment)
-	if err != nil {
-		if errors.Is(err, blob.ErrTooLarge) {
-			writeError(w, http.StatusRequestEntityTooLarge, a.sizeLimitMessage())
-			return
-		}
-		slog.Error("storing attachment", "err", err)
-		writeError(w, http.StatusInternalServerError, "could not store the file")
-		return
-	}
-
 	filename := safeFilename(header.Filename)
 	contentType := detectType(header.Header.Get("Content-Type"), filename)
 
@@ -189,45 +186,18 @@ func (a *API) uploadAttachment(w http.ResponseWriter, r *http.Request) {
 		contentType = "application/octet-stream"
 	}
 
-	tx, err := a.pool.Begin(r.Context())
+	// Plaintext channels store the file sealed under the uploader's key
+	// (attachseal.go); encrypted channels store the client's ciphertext.
+	info, err := a.storeAttachment(r.Context(), file, channelID, session.UserID, filename, contentType, !encrypted)
 	if err != nil {
-		slog.Error("starting attachment transaction", "err", err)
+		if errors.Is(err, blob.ErrTooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, a.sizeLimitMessage())
+			return
+		}
+		slog.Error("storing attachment", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not store the file")
 		return
 	}
-	defer tx.Rollback(r.Context())
-
-	// The blob may already exist from an earlier identical upload.
-	if _, err := tx.Exec(r.Context(),
-		`INSERT INTO blobs (hash, size) VALUES ($1, $2) ON CONFLICT (hash) DO NOTHING`,
-		hash, size,
-	); err != nil {
-		slog.Error("recording blob", "err", err)
-		writeError(w, http.StatusInternalServerError, "could not store the file")
-		return
-	}
-
-	var info attachmentInfo
-	err = tx.QueryRow(r.Context(),
-		`INSERT INTO attachments
-		     (channel_id, uploader_id, blob_hash, filename, content_type, size)
-		 VALUES ($1, $2, $3, $4, $5, $6)
-		 RETURNING id, filename, content_type, size`,
-		channelID, session.UserID, hash, filename, contentType, size,
-	).Scan(&info.ID, &info.Filename, &info.ContentType, &info.Size)
-	if err != nil {
-		slog.Error("recording attachment", "err", err)
-		writeError(w, http.StatusInternalServerError, "could not store the file")
-		return
-	}
-
-	if err := tx.Commit(r.Context()); err != nil {
-		slog.Error("committing attachment", "err", err)
-		writeError(w, http.StatusInternalServerError, "could not store the file")
-		return
-	}
-
-	info.URL = a.signAttachmentURL(info.ID)
 	writeJSON(w, http.StatusCreated, info)
 }
 
@@ -246,12 +216,17 @@ func (a *API) downloadAttachment(w http.ResponseWriter, r *http.Request) {
 		filename    string
 		contentType string
 		size        int64
+		channelID   string
+		uploaderID  *string
+		fileKey     []byte
+		sealedName  []byte
 	)
 
 	err := a.pool.QueryRow(r.Context(),
-		`SELECT blob_hash, filename, content_type, size
+		`SELECT blob_hash, filename, content_type, size,
+		        channel_id, uploader_id, file_key, sealed_name
 		   FROM attachments WHERE id = $1`, id,
-	).Scan(&hash, &filename, &contentType, &size)
+	).Scan(&hash, &filename, &contentType, &size, &channelID, &uploaderID, &fileKey, &sealedName)
 
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
@@ -271,6 +246,26 @@ func (a *API) downloadAttachment(w http.ResponseWriter, r *http.Request) {
 	}
 	defer f.Close()
 
+	// A sealed file (plaintext channel) is decrypted as it is served;
+	// see attachseal.go.
+	var content io.ReadSeeker = f
+	if fileKey != nil {
+		info := attachmentInfo{ID: id, Filename: filename, UploaderID: uploaderID, BlobHash: hash, SealedName: sealedName}
+		a.finishAttachment(r.Context(), channelID, &info)
+		filename = info.Filename
+
+		content, _, err = a.openSealedBlob(f, channelID, uploaderID, hash, fileKey)
+		if errors.Is(err, errAttachmentShredded) {
+			writeError(w, http.StatusGone, "this file was deleted")
+			return
+		}
+		if err != nil {
+			slog.Error("opening sealed blob", "err", err, "attachment_id", id)
+			writeError(w, http.StatusInternalServerError, "could not fetch the file")
+			return
+		}
+	}
+
 	disposition := "attachment"
 	served := "application/octet-stream"
 	if inlineTypes[contentType] {
@@ -288,7 +283,7 @@ func (a *API) downloadAttachment(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, max-age=86400")
 
 	// ServeContent handles range requests, which media playback needs.
-	http.ServeContent(w, r, filename, time.Time{}, f)
+	http.ServeContent(w, r, filename, time.Time{}, content)
 }
 
 // maxFormOverhead is the slack allowed above the file size for multipart
