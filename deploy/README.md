@@ -164,7 +164,7 @@ Getting it wrong gives you a connection that establishes successfully and then c
 
 ## Attachments and storage
 
-Uploaded files are stored by the SHA-256 of their contents, spread across two levels of hex directories, with identical files stored once. The database holds the references; the bytes live wherever `OPENVOXA_BLOB_DIR` points.
+Uploaded files are stored by the SHA-256 of their contents, spread across two levels of hex directories. In channels that are not end-to-end encrypted the server encrypts each file under its own key first (see [Account keys](#account-keys-and-backups)), so identical uploads are no longer stored once; in encrypted channels the browser has already encrypted them. The database holds the references; the bytes live wherever `OPENVOXA_BLOB_DIR` points.
 
 Two settings in `.env`:
 
@@ -183,6 +183,60 @@ docker compose --profile tls down
 docker volume rm deploy_blob-data
 docker compose --profile tls up -d --build
 ```
+
+## Account keys and backups
+
+Deleting an account must also make its messages unreadable in your **database backups**, not just in the live database. For channels that are not end-to-end encrypted, the server does this by storing each account's messages, report copies and files encrypted under a key belonging to that account. Deleting the account deletes the key, and every copy of its content, backups included, becomes permanently unreadable. Encrypted channels need none of this: the server could never read them in the first place.
+
+The keys live in their own folder, one small file per account, **deliberately outside Postgres**: a key kept in the database would be restored from a backup along with the data it exists to destroy.
+
+- Inside the container: `/var/lib/openvoxa/keys` (`OPENVOXA_KEY_DIR`).
+- On the host: the Docker named volume `deploy_key-data`.
+- Owned by UID 65532, mode 700. The server creates keys itself when first needed; there is nothing to set up.
+
+### Back it up, separately and briefly
+
+Without this folder, the server cannot read any message in a plaintext channel. So back it up, but **not alongside your database backups, and not for long**:
+
+- **Separately**, because a database backup plus a key backup from the same day can still show the messages of an account deleted since. Store them in different places so one leaked or stolen backup is not both.
+- **Short-lived**, because an account deletion is only complete once the last key backup holding that account's key has been deleted. Keep about a week of key backups and delete older ones. Database backups can be kept as long as you like.
+
+A key backup is a small archive of the folder. It holds the keys in the clear, so treat it like a password file:
+
+```bash
+cd ~/OpenVoxa/deploy
+docker run --rm -v deploy_key-data:/keys:ro -v /path/to/key-backups:/out alpine \
+  tar czf /out/openvoxa-keys-$(date +%F).tar.gz -C /keys .
+chmod 600 /path/to/key-backups/openvoxa-keys-*.tar.gz
+# delete key backups older than 7 days
+find /path/to/key-backups -name 'openvoxa-keys-*.tar.gz' -mtime +7 -delete
+```
+
+Run it daily from cron, the same way as `update-node-ip.sh`.
+
+### Restoring
+
+The server keeps keys in memory, so stop it while restoring:
+
+```bash
+docker compose stop server
+docker run --rm -v deploy_key-data:/keys -v /path/to/key-backups:/in alpine \
+  sh -c 'tar xzf /in/openvoxa-keys-YYYY-MM-DD.tar.gz -C /keys && chown -R 65532:65532 /keys'
+docker compose start server
+```
+
+A key backup may hold keys of accounts deleted after it was taken. Against the live database they unlock nothing (those accounts' rows are already blank), but they should not exist. To list key files that belong to no account:
+
+```bash
+docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "select id from users"' | sort > /tmp/users.txt
+docker run --rm -v deploy_key-data:/keys:ro alpine ls /keys | sed -n 's/\.key$//p' | sort | comm -13 /tmp/users.txt -
+```
+
+Delete each one it prints with `docker run --rm -v deploy_key-data:/keys alpine rm /keys/<id>.key`. The server never does this itself: pointed at the wrong database by mistake, it would delete every key.
+
+### If the folder is lost
+
+With no backup, everything already written in plaintext channels becomes unreadable for good: messages and report copies show as empty, and attachments fail to download (the server answers 410 Gone). New messages work at once, since the server makes new keys as needed. Encrypted channels, voice and screen share are unaffected.
 
 ## GIF search
 
@@ -373,4 +427,4 @@ Wipe everything including the database and attachments:
 docker compose down -v
 ```
 
-Accounts, messages, channels and uploaded files are gone. Certificates live in a separate volume and survive, which matters because Let's Encrypt rate-limits repeated issuance. A bind-mounted blob directory is not touched by `down -v`; remove its contents yourself if you want a clean slate.
+Accounts, messages, channels, uploaded files and account keys are gone. Certificates live in a separate volume and survive, which matters because Let's Encrypt rate-limits repeated issuance. A bind-mounted blob directory is not touched by `down -v`; remove its contents yourself if you want a clean slate.

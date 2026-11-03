@@ -65,7 +65,7 @@ If this project ever has a monetization strategy, something has gone wrong. Plea
 - **Rate limiting** on authentication, per IP and per account
 - **Rich text** (in the debug page for now): markdown, link previews with SSRF-hardened unfurling, file attachments with inline image, audio and video playback, and GIF search that never puts your users in front of a third party
 - **Moderation**: message removal, reports verified against the server's own copy (for unencrypted channels), and bans that cut off live connections and calls immediately
-- **Retention and deletion** that actually work: channels display their policy and a sweep enforces it, account deletion destroys content, and both propagate live to connected clients
+- **Retention and deletion** that actually work: channels display their policy and a sweep enforces it, account deletion destroys content (including in the server's backups, by destroying the account's key), and both propagate live to connected clients
 - **TLS** with three documented deployment paths
 
 Permissions are enforced where it counts. A user without post rights in a voice channel receives a token that physically cannot publish audio, refused by the media server rather than hidden by the UI.
@@ -136,8 +136,9 @@ We did not write our own cryptography, which is the single best decision in the 
 | Web client: sign-up, recovery, text chat | ✅ Done |
 | Web client: channel management | ✅ Done |
 | Web client: voice and screen sharing | ✅ Done |
-| Web client: attachments, GIFs, previews, notices | 🔶 Next |
-| Web client: settings and admin panes | ⬜ Not started |
+| Web client: attachments, GIFs, previews, notices | ✅ Done |
+| Web client: settings and admin panes | ✅ Done |
+| Account deletion that reaches backups (crypto-shredding) | ✅ Done |
 | Desktop client | ⬜ Not started |
 | Independent security review | ⬜ Not started |
 
