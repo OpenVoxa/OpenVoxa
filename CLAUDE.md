@@ -203,10 +203,12 @@ from `server/`.
 called after the purge commits in `purgeUser` and `delete-user`;
 `PurgeUserTx` deletes the account's attachments and blanks report
 copies; Reports tab shows "content deleted with the account".
-**Next: S5** (delete-account dialog wording + typed username; clients
-delete stored copies on `user_purged`, `chat.ts` `userPurged` only
-tombstones today), then S6 (`deploy/README.md`: back the key folder up
-separately, short-lived).
+**S5 DONE and verified by Ryan** (2026-11-03): agreed wording in the
+delete-account dialog; `POST /messages/archive-check` +
+`Chat.pruneArchive` (at start and 2 s after `user_purged`) delete local
+archive copies of gone messages, then re-upload the backup.
+**Next: S6** (`deploy/README.md`: back the key folder up separately,
+short-lived; what losing it means). That finishes crypto-shredding.
 Also this session: Reports tab (Delete now confirmed; Delete or Ban from
 a report marks it Actioned; Dismiss is "No action needed", tab "No
 action", status value still `dismissed`) and a "Jump to latest" button
