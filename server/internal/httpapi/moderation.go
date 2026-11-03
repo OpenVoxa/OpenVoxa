@@ -242,21 +242,24 @@ func (a *API) reportMessage(w http.ResponseWriter, r *http.Request) {
 }
 
 type reportSummary struct {
-	ID          string    `json:"id"`
-	MessageID   *string   `json:"message_id"`
-	ChannelID   *string   `json:"channel_id"`
+	ID        string  `json:"id"`
+	MessageID *string `json:"message_id"`
+	ChannelID *string `json:"channel_id"`
 	// Channel is empty once the channel is gone. MessageGone is true when
 	// the message has since been deleted (or its row removed).
-	Channel     string    `json:"channel"`
-	MessageGone bool      `json:"message_gone"`
-	Reporter    string    `json:"reporter"`
-	Accused     string    `json:"accused"`
-	AccusedID   *string   `json:"accused_id"`
-	Reason      string    `json:"reason"`
-	ClaimedBody string    `json:"claimed_body"`
-	Verified    *bool     `json:"verified"`
-	Status      string    `json:"status"`
-	CreatedAt   time.Time `json:"created_at"`
+	Channel     string  `json:"channel"`
+	MessageGone bool    `json:"message_gone"`
+	Reporter    string  `json:"reporter"`
+	Accused     string  `json:"accused"`
+	AccusedID   *string `json:"accused_id"`
+	Reason      string  `json:"reason"`
+	ClaimedBody string  `json:"claimed_body"`
+	// ContentDeleted means the copy was destroyed along with the accused's
+	// account (crypto-shredding), as opposed to a report with no text.
+	ContentDeleted bool      `json:"content_deleted"`
+	Verified       *bool     `json:"verified"`
+	Status         string    `json:"status"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // listReports returns the moderation queue, open reports first.
@@ -306,7 +309,7 @@ func (a *API) listReports(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "could not list reports")
 			return
 		}
-		rs.ClaimedBody = a.openReport(r.Context(), rs.AccusedID, claimed, claimedSealed)
+		rs.ClaimedBody, rs.ContentDeleted = a.openReport(r.Context(), rs.AccusedID, claimed, claimedSealed)
 		out = append(out, rs)
 	}
 	if err := rows.Err(); err != nil {

@@ -117,3 +117,37 @@ func TestConcurrentFirstUseMakesOneKey(t *testing.T) {
 		}
 	}
 }
+
+func TestDestroy(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := Open(dir)
+
+	sealed, _ := s.Seal(alice, []byte("gone soon"), nil)
+	kept, _ := s.Seal(bob, []byte("stays"), nil)
+
+	if err := s.Destroy(alice); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, alice+".key")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("key file still exists")
+	}
+	// The cached copy must go too, not just the file.
+	if _, err := s.Open(alice, sealed, nil); !errors.Is(err, ErrNoKey) {
+		t.Fatalf("Open after Destroy: %v", err)
+	}
+	// A late Seal must not bring the account back with a new key.
+	if _, err := s.Seal(alice, []byte("late"), nil); !errors.Is(err, ErrNoKey) {
+		t.Fatalf("Seal after Destroy: %v", err)
+	}
+	// Other accounts are untouched.
+	if got, err := s.Open(bob, kept, nil); err != nil || string(got) != "stays" {
+		t.Fatalf("bob after alice destroyed: %q, %v", got, err)
+	}
+	// Destroying twice is fine.
+	if err := s.Destroy(alice); err != nil {
+		t.Fatalf("second Destroy: %v", err)
+	}
+	if err := s.Destroy("../etc/passwd"); !errors.Is(err, errBadID) {
+		t.Fatalf("bad id: %v", err)
+	}
+}

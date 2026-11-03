@@ -143,10 +143,11 @@ func (a *API) deleteUser(w http.ResponseWriter, r *http.Request) {
 // point at nothing and counts would stop matching. The content is gone
 // either way, which is what was actually promised.
 //
-// Once channels are encrypted this changes shape. Destroying the user's
-// key material makes their ciphertext permanently unreadable without
-// rewriting rows at all, and the tombstone flag is set the same way. The
-// visible result is identical; only the mechanism differs.
+// Blanking covers the live database. Database backups still hold the
+// old rows, sealed under the user's key (sealing.go), so after the
+// transaction commits the key is destroyed and those copies become
+// permanently unreadable: crypto-shredding. Encrypted channels need no
+// step of their own; the server never could read them.
 //
 // also, if not nil, runs inside the same transaction (the moderation log
 // entry when an administrator deletes someone else).
@@ -172,12 +173,26 @@ func (a *API) purgeUser(ctx context.Context, userID string, also func(pgx.Tx) er
 	if err := guard.check(ctx, tx); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	// Only now: destroying the key before the commit, then rolling back,
+	// would leave a live account whose messages nobody can read again.
+	// A failure here is logged, not returned. The account is gone and the
+	// live rows are blank, so the request did succeed; what is left is a
+	// key that can still open old backups, which the host must remove.
+	if err := a.keys.Destroy(userID); err != nil {
+		slog.ErrorContext(ctx, "account deleted but its key was NOT destroyed; remove the key file by hand",
+			"err", err, "user_id", userID)
+	}
+	return nil
 }
 
 // PurgeUserTx does the destruction itself inside tx, with no checks.
 // Shared with the host command `delete-user` (cli.go), which runs the
-// administrator guard itself.
+// administrator guard itself. Both callers destroy the account's key
+// after committing; this function does not touch the key store.
 func PurgeUserTx(ctx context.Context, tx pgx.Tx, userID string) error {
 	// Who their messages mentioned goes with the messages. Mentions OF
 	// them go with the user row (cascade).
@@ -192,6 +207,27 @@ func PurgeUserTx(ctx context.Context, tx pgx.Tx, userID string) error {
 	// Empty the bodies rather than dropping the rows.
 	if _, err := tx.Exec(ctx,
 		`UPDATE messages SET body = ''::bytea, deleted = true WHERE author_id = $1`,
+		userID,
+	); err != nil {
+		return err
+	}
+
+	// Their files go entirely: there is no tombstone for a file. That
+	// covers files on their messages and their own uploads not yet sent.
+	// The blob collector then removes the bytes from disk.
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM attachments
+		  WHERE message_id IN (SELECT id FROM messages WHERE author_id = $1)
+		     OR uploader_id = $1`,
+		userID,
+	); err != nil {
+		return err
+	}
+
+	// Reports keep a copy of the accused's words; those go too. The
+	// report itself stays so moderators keep the record of what happened.
+	if _, err := tx.Exec(ctx,
+		`UPDATE reports SET claimed_body = ''::bytea WHERE accused_id = $1`,
 		userID,
 	); err != nil {
 		return err

@@ -85,20 +85,30 @@ func (a *API) sealReport(accusedID *string, claimed string) ([]byte, bool, error
 	return sealed, true, nil
 }
 
-// openReport is openBody for report copies.
-func (a *API) openReport(ctx context.Context, accusedID *string, body []byte, sealed bool) string {
-	if !sealed {
-		return string(body)
+// openReport is openBody for report copies. gone is true when the text
+// was destroyed with the accused's account (the key, or the account
+// itself, no longer exists), so the moderator sees why it is missing
+// rather than an empty quote.
+func (a *API) openReport(ctx context.Context, accusedID *string, body []byte, sealed bool) (text string, gone bool) {
+	if accusedID == nil {
+		// accused_id is cleared only by the account being deleted.
+		return "", true
 	}
-	if accusedID == nil || len(body) == 0 {
-		return ""
+	if !sealed {
+		return string(body), false
+	}
+	if len(body) == 0 {
+		return "", false
 	}
 	plain, err := a.keys.Open(*accusedID, body, reportSealContext(*accusedID))
+	if errors.Is(err, keystore.ErrNoKey) {
+		return "", true
+	}
 	if err != nil {
 		slog.WarnContext(ctx, "opening sealed report copy", "err", err, "accused_id", *accusedID)
-		return ""
+		return "", false
 	}
-	return string(plain)
+	return string(plain), false
 }
 
 // sealBatch is how many rows the upgrade converts per round trip.
