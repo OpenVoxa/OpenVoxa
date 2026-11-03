@@ -472,6 +472,56 @@ The "Add everyone" and "Add everyone to voice" buttons that stood in for
 this in the debug page were removed on 2026-10-31, along with the public
 `groups.addMembers`: reconciliation is the only way into a group.
 
+**Local storage is encrypted under the password, with a server-held
+half for refreshes.** Decided by Ryan, 2026-11-03 (design only; not
+built yet). Closes the open item "Group state persists to IndexedDB as
+bytes, but UNENCRYPTED".
+
+- *Data key.* Each account database gets one random 256-bit data key.
+  Every stored value (device record, key packages, group state, the
+  plaintext archive, the remembered backup key) is AES-256-GCM under it,
+  with the store name and record key as additional data so values cannot
+  be swapped between records. Record keys (channel and message ids) stay
+  readable: someone with the files can count messages and channels, not
+  read them.
+- *Unlock at login.* The data key is wrapped by a key derived from the
+  password with **Argon2id** (hash-wasm, pinned exactly, WebAssembly;
+  same algorithm as the server's password hashing but a local random
+  salt, so the result is unrelated to anything the server holds).
+  Parameters start at 64 MiB / 3 passes / 1 lane and get tuned by timing
+  on Ryan's machines (aim ~0.5 s). Salt, parameters and the wrapped key
+  sit unencrypted in the device store; they are useless without the
+  password. PBKDF2 was the alternative: built in, but much weaker against
+  GPU guessing.
+- *Refresh.* sessionStorage survives a refresh, memory does not. Each
+  login session gets a random 32-byte secret on the server (a column on
+  the `sessions` row, created on first request, gone with the row). The
+  tab keeps the data key in sessionStorage encrypted under that secret,
+  and a refresh fetches the secret to unlock silently. Logging out, a
+  revoked session, "end other sessions" after a password change, or the
+  30-day expiry makes any leftover copy (crash, "restore tabs") useless,
+  so signing out a lost laptop's session also locks its keys. The server
+  holds half of a tab's unlock for as long as that tab is signed in; it
+  never sees the wrapped data key itself. Rejected: keeping the plain
+  key in sessionStorage (on disk while the tab is open and after session
+  restore), and asking for the password on every refresh.
+- *Password change* in Settings rewraps the data key (old and new
+  password are both at hand). Changed from another browser: this one
+  cannot unwrap at its next login, so it is treated as a new device:
+  wipe, register, restore history with the recovery key. Rare enough
+  not to need a second wrapping under the recovery key (possible later).
+- *Upgrade.* Existing plaintext databases are encrypted in place at the
+  next password login. A refresh of an old tab with no data key yet goes
+  to the login screen. The remembered backup key is a non-extractable
+  CryptoKey and cannot be re-encrypted, so it is dropped once and the
+  existing "enter your recovery key" prompt brings it back.
+- *Limits, stated plainly.* Protects a stolen or powered-off machine,
+  copied disks and backups, and the browser profile after sign-out or
+  session end. Does not protect against malware or a hostile script in
+  the page while signed in, and a weak password can be guessed offline
+  from copied files (the password rules are the defence). Electron can
+  later add the OS keychain (`safeStorage`) on top.
+
 ## Implementation notes
 
 Things that cost real time to discover and will be invisible when the
@@ -1647,7 +1697,9 @@ to pick their own colours later, so every colour stays a variable.
       browser profile data on the device can read the keys. The fix needs
       recovery keys to exist first, since encrypting with a key also
       stored in IndexedDB would look like protection while providing
-      none. Unblocked: recovery keys exist since step 13 M1.
+      none. Unblocked: recovery keys exist since step 13 M1. Design
+      agreed 2026-11-03: Encryption, "Local storage is encrypted under
+      the password, with a server-held half for refreshes". Not built.
 - [ ] The `ratchet_tree` column in migration 0010 assumes the tree
       travels separately from the welcome. If the extension route is ever
       made to work, both that column and the custom serialiser go away.
