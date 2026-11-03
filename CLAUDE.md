@@ -52,7 +52,7 @@ server/            Go server (module root here; go.mod says go 1.26)
   Dockerfile          multi-stage: client-core -> client-web -> Go -> distroless
   internal/httpapi/   HTTP + WS; debugui/chat.html = old debug client
   internal/db/        Postgres, migrations/00NN_*.sql (embedded, ordered;
-                      latest 0017)
+                      latest 0018)
   internal/{auth,blob,config,gif,hub,password,perm,ratelimit,unfurl}
 client-core/       TypeScript protocol + crypto, no UI
   src/mls/provider.ts  MlsProvider interface (swappable)
@@ -179,12 +179,14 @@ No `tls` profile = no Caddy (own proxy + `OPENVOXA_TRUST_PROXY=true`).
 - LiveKit is self-hosted from `debugui/` and pinned exactly in
   client-core/package.json: the E2EE worker must be same-origin and the
   same build as the main library. Never point it back at a CDN tag.
-- Palette: variables in `client-web/src/styles.css` only.
+- Palette: variables in `client-web/src/styles.css` only. User colour
+  overrides go through `appearance.ts` (Settings > Appearance), which
+  sets those same variables on the root element.
 
 ## Current state (update every session)
 
-_Last updated: 2026-11-03. M5 session C (moderation) done and verified
-(R1-R5, N1-N5); M5 is complete. Next: pick from decisions.md Open items.
+_Last updated: 2026-11-03. @mentions done and verified (M1-M6), plus an
+Appearance settings tab (A1). Next: pick from decisions.md Open items.
 Older full handoff: project doc claude/handoff-step-13.md._
 
 Done and verified on Docker (details: decisions.md Build order 9-12):
@@ -213,6 +215,13 @@ period in `server_settings`, migration 0017).
 - External join is DONE (2026-10-31, `groups.open`): a new device joins
   encrypted channels and voice with nobody online. Check git log and
   decisions.md Build order before calling something "not built".
+- @mentions (2026-11-03, decisions.md Feature decisions "Mentions are
+  metadata the server sees"): server filters client-sent user IDs by the
+  viewer rule, `message_mentions` (0018), `mention` event, `last_mention_at`.
+  Desktop notifications are opt-in and off by default (Ryan: least
+  invasive defaults). Not built: @everyone/@group, counts, push.
+- Appearance tab: accent, unread dot, mention badge colours, per browser.
+  More customisation goes in `COLOURS` in `appearance.ts`.
 - Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI).
 - Next (Ryan to choose): crypto-shredding (unbuilt, not yet in Build
   order, needs design); encrypting local IndexedDB keys (unblocked);

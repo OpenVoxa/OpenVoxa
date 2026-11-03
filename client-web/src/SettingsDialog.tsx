@@ -22,8 +22,9 @@ import { checkPassword } from "./password";
 import { PasswordRules } from "./PasswordRules";
 import { IMAGES_IN_TAB, MENTION_NOTIFY, MENTION_SOUND, PREVIEWS_ENCRYPTED, setToggle, useToggle } from "./settings";
 import { VoiceSettings } from "./VoiceUI";
+import { COLOURS, getColour, setColour, useColour, type ColourSetting } from "./appearance";
 
-export type SettingsTab = "account" | "voice" | "chat";
+export type SettingsTab = "account" | "voice" | "chat" | "appearance";
 
 export interface AccountActions {
   onBackUpNow: () => void;
@@ -57,7 +58,7 @@ export function SettingsDialog({ tab: initialTab, session, call, deviceId, backu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, voice]);
 
-  const tabs: [SettingsTab, string][] = [["account", "Account"], ["voice", "Voice"], ["chat", "Chat"]];
+  const tabs: [SettingsTab, string][] = [["account", "Account"], ["voice", "Voice"], ["chat", "Chat"], ["appearance", "Appearance"]];
   return (
     <Modal title="Settings" onClose={onClose}>
       <div className="settings-tabs" role="tablist">
@@ -75,6 +76,7 @@ export function SettingsDialog({ tab: initialTab, session, call, deviceId, backu
           ? <VoiceSettings voice={voice} snap={snap} />
           : voiceError ? <p className="error" role="alert">{voiceError}</p> : <p className="muted">Loading…</p>)}
         {tab === "chat" && <ChatSettings />}
+        {tab === "appearance" && <AppearanceSettings />}
         <div className="modal-actions">
           <button className="primary" onClick={onClose}>Done</button>
         </div>
@@ -146,6 +148,38 @@ function ChatSettings() {
         </span>
       </label>
     </>
+  );
+}
+
+// ------------------------------------------------------------ appearance
+
+function AppearanceSettings() {
+  return (
+    <>
+      <p className="muted small">Saved in this browser only. Changes show straight away.</p>
+      {COLOURS.map((c) => <ColourRow key={c.cssVar} c={c} />)}
+      <div className="modal-actions">
+        <button className="secondary" onClick={() => COLOURS.forEach((c) => setColour(c, null))}>
+          Reset all to default
+        </button>
+      </div>
+    </>
+  );
+}
+
+function ColourRow({ c }: { c: ColourSetting }) {
+  const value = useColour(c);
+  const custom = getColour(c) !== null;
+  const id = `colour${c.cssVar}`;
+  return (
+    <div className="colour-row">
+      <input id={id} type="color" value={value} onChange={(e) => setColour(c, e.target.value)} />
+      <label htmlFor={id} className="grow">
+        {c.label}
+        {c.help && <span className="muted small block">{c.help}</span>}
+      </label>
+      {custom && <button className="link small" onClick={() => setColour(c, null)}>Default</button>}
+    </div>
   );
 }
 
