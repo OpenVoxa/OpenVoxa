@@ -353,7 +353,10 @@ function Message({ m, call, encrypted, previews, compact, username, canDelete, c
   onDelete: (skipConfirm: boolean) => void;
   onDismiss: () => void;
 }) {
-  const name = m.username || (m.own ? username : "unknown");
+  // No author: the account was deleted (the server sends author_id "" and
+  // username "[deleted]"; client-core does the same for the live view).
+  const gone = !m.authorId;
+  const name = gone ? "Deleted user" : m.username || (m.own ? username : "unknown");
   const classes = ["msg", compact ? "compact" : "", m.pending ? "pending" : "", m.failed ? "failed" : "",
     m.deleted || m.unreadable ? "faint" : ""].filter(Boolean).join(" ");
 
@@ -370,7 +373,7 @@ function Message({ m, call, encrypted, previews, compact, username, canDelete, c
         ? <time className="side-time small" dateTime={m.createdAt}>{formatTime(m.createdAt)}</time>
         : (
           <header>
-            <strong className={m.own ? "own" : undefined}>{name}</strong>
+            <strong className={m.own ? "own" : gone ? "muted" : undefined}>{name}</strong>
             <time className="muted small" dateTime={m.createdAt} title={new Date(m.createdAt).toLocaleString()}>
               {formatTime(m.createdAt)}
             </time>
