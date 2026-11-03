@@ -183,8 +183,8 @@ No `tls` profile = no Caddy (own proxy + `OPENVOXA_TRUST_PROXY=true`).
 
 ## Current state (update every session)
 
-_Last updated: 2026-11-03. M4 session B done and verified (A1-A5);
-next M5 or the open tests. External join was already done (2026-10-31). Older
+_Last updated: 2026-11-03. M5 session A (account settings) done and
+verified (S1-S5); next M5 session B (groups and members). External join was already done (2026-10-31). Older
 full handoff: project doc claude/handoff-step-13.md._
 
 Done and verified on Docker (details: decisions.md Build order 9-12):
@@ -225,6 +225,16 @@ M4 attachments/GIFs/unfurls/notices -> M5 settings and admin panes.
   refused; a file over 25 MB fails in the tray and Send leaves it out.
   A1-A4 PASSED 2026-11-03. Then added an image viewer + Settings toggle
   "Open images in a new tab"; A5 (viewer + toggle) PASSED too.
-- Then: M5 settings and admin panes. Crypto-shredding is unbuilt, not
+- M5 split (Ryan, 2026-11-03): A account settings, B admin groups and
+  members, C moderation (bans, reports, delete-user). A DONE and verified
+  on Docker 2026-11-03: Settings dialog with Account/Voice/Chat tabs
+  (`client-web/src/SettingsDialog.tsx`): change password, recovery key
+  incl. "Make a new key", devices list/remove, delete account. S5 found
+  that live views kept a deleted author's name; fixed (`userPurged`
+  clears it, client-web shows "Deleted user").
+- Next: M5 session B. Server endpoints exist (`/groups`, `/users`,
+  `/users/{id}/groups/{group}`); chat.html console helpers show usage.
+  `moderation_log` has no read endpoint yet (C needs server work).
+  Crypto-shredding is unbuilt, not
   yet in Build order. Encrypting local IndexedDB keys is unblocked
   (decisions.md Open items).
