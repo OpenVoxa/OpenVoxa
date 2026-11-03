@@ -210,10 +210,8 @@ separately, short-lived).
 Also this session: Reports tab (Delete now confirmed; Delete or Ban from
 a report marks it Actioned; Dismiss is "No action needed", tab "No
 action", status value still `dismissed`) and a "Jump to latest" button
-in the message list (sticky, "N new"). Test data: 300 chant messages
-from staff in #general (dev fill script in an old scratchpad, not in the
-repo); ask Ryan whether to delete them (by author staff, created
-2026-11-03 18:02-19:02 UTC).
+in the message list (sticky, "N new"). The 300 test messages from staff
+in #general were deleted (2026-11-03).
 Earlier: local storage encryption (L1-L3) done; sign-out keeps the device.
 Older full handoff: project doc claude/handoff-step-13.md._
 
