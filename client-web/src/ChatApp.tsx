@@ -121,6 +121,9 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
               const n = new Notification(`${e.username || "Someone"} mentioned you`, {
                 body: name ? `in #${name}` : undefined,
                 tag: `mention:${e.messageId}`,
+                // Our own mention tone already played; without this the
+                // OS adds its notification sound on top.
+                silent: true,
               });
               n.onclick = () => {
                 window.focus();
