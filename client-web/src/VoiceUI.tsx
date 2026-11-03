@@ -14,7 +14,7 @@ import type {
 } from "@core/voice";
 import { Modal } from "./ChannelDialogs";
 import { localStore } from "./core";
-import { PREVIEWS_ENCRYPTED, setToggle, useToggle, VOICE_TONES } from "./settings";
+import { IMAGES_IN_TAB, PREVIEWS_ENCRYPTED, setToggle, useToggle, VOICE_TONES } from "./settings";
 
 // The presets are duplicated from client-core's SHARE_PRESETS so this
 // file needs no runtime import of the (lazy) voice module.
@@ -406,6 +406,7 @@ export function VoiceSettingsDialog({ voice, snap, onClose }: {
   const [error, setError] = useState<string | null>(null);
   const tones = useToggle(VOICE_TONES);
   const previews = useToggle(PREVIEWS_ENCRYPTED);
+  const imagesInTab = useToggle(IMAGES_IN_TAB);
 
   useEffect(() => {
     voice.listDevices().then(setDevices).catch((err) => setError(String(err?.message ?? err)));
@@ -509,6 +510,13 @@ export function VoiceSettingsDialog({ voice, snap, onClose }: {
               Messages stay encrypted, but to build a preview the server fetches the link, so it learns which
               links you see there. Preview images load from the linked site. Plain channels always show previews.
             </span>
+          </span>
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={imagesInTab} onChange={(e) => setToggle(IMAGES_IN_TAB, e.target.checked)} />
+          <span>
+            Open images in a new tab
+            <span className="muted small block">Off: clicking an image shows it larger in a viewer on this page.</span>
           </span>
         </label>
         {error && <p className="error" role="alert">{error}</p>}
