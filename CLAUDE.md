@@ -185,30 +185,21 @@ No `tls` profile = no Caddy (own proxy + `OPENVOXA_TRUST_PROXY=true`).
 
 ## Current state (update every session)
 
-_Last updated: 2026-11-03 (S4 session). **Now: crypto-shredding**,
-build order 14, S1-S6 (design agreed with Ryan, decisions.md Encryption,
-"Account deletion is crypto-shredding"; tick S-steps there as they land).
-Encrypted channels need no new key (MLS already makes server copies
-unreadable); plaintext channels use a per-account key file in
-`OPENVOXA_KEY_DIR` (named volume `deploy_key-data`, outside Postgres).
-**S1-S3 DONE and verified by Ryan**: `internal/keystore` (Seal/Open,
-key made on first seal), `httpapi/sealing.go` (message bodies, report
-copies, `SealExisting` startup job), `internal/sealedfile` + `httpapi/
-attachseal.go` (chunked per-file encryption, key and name sealed under
-the uploader's key; downloads 410 when the key is gone), migrations
-0020-0022. Go unit tests run with
+_Last updated: 2026-11-03 (end of session). **Crypto-shredding is DONE**
+(build order 14, S1-S6, all verified by Ryan; decisions.md Encryption,
+"Account deletion is crypto-shredding"). Plaintext channels: per-account
+key file in `OPENVOXA_KEY_DIR` (volume `deploy_key-data`, outside
+Postgres): `internal/keystore` (Seal/Open/Destroy), `httpapi/sealing.go`,
+`internal/sealedfile` + `httpapi/attachseal.go`, migrations 0020-0022.
+Deletion destroys the key after the purge commits (`purgeUser`,
+`delete-user`). Clients prune their local archive via
+`POST /messages/archive-check` (`Chat.pruneArchive`, at start and after
+`user_purged`). Operator guidance: `deploy/README.md` "Account keys and
+backups". Go unit tests:
 `docker run --rm -v "$PWD":/src -w /src golang:1.26 go test ./internal/keystore/ ./internal/sealedfile/`
-from `server/`.
-**S4 DONE and verified by Ryan** (2026-11-03): `keystore.Destroy`,
-called after the purge commits in `purgeUser` and `delete-user`;
-`PurgeUserTx` deletes the account's attachments and blanks report
-copies; Reports tab shows "content deleted with the account".
-**S5 DONE and verified by Ryan** (2026-11-03): agreed wording in the
-delete-account dialog; `POST /messages/archive-check` +
-`Chat.pruneArchive` (at start and 2 s after `user_purged`) delete local
-archive copies of gone messages, then re-upload the backup.
-**Next: S6** (`deploy/README.md`: back the key folder up separately,
-short-lived; what losing it means). That finishes crypto-shredding.
+from `server/`. Ryan has not set up the key-folder backup cron on Docker
+yet; offer it.
+**Next: Ryan to choose** (list at the end of this section).
 Also this session: Reports tab (Delete now confirmed; Delete or Ban from
 a report marks it Actioned; Dismiss is "No action needed", tab "No
 action", status value still `dismissed`) and a "Jump to latest" button
@@ -253,7 +244,7 @@ period in `server_settings`, migration 0017).
 - Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI;
   now also destroys the key).
 - @mentions and Appearance: done and verified (M1-M6, A1).
-- After crypto-shredding (Ryan to choose): emoji picker, custom
+- Next (Ryan to choose): emoji picker, custom
   stickers (mods/admins, server-wide, survive account deletion; limits
   still to agree) and later a server browser (decisions.md Open items); "shared computer: erase everything" on sign-out;
   local archive retention sweep; real force-PTT via LiveKit

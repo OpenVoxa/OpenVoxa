@@ -1758,7 +1758,7 @@ to pick their own colours later, so every colour stays a variable.
     - 2FA: TOTP only (authenticator apps, RFC 6238) plus one-time backup
       codes. No SMS, email or third-party service. After device linking.
 
-14. **Crypto-shredding** (design agreed with Ryan 2026-11-03; see
+14. **Crypto-shredding** (DONE 2026-11-03; design agreed with Ryan the same day; see
     Encryption, "Account deletion is crypto-shredding"). One commit per
     step, each tested on Docker:
     - [x] S1 Key folder (`OPENVOXA_KEY_DIR`, own volume, created by the
@@ -1825,8 +1825,12 @@ to pick their own colours later, so every colour stays a variable.
           also catches single deletes, retention and deleted channels.
           Verified on Docker: check at start and 2 s after a deletion,
           each followed by a backup re-upload.
-    - [ ] S6 `deploy/README.md`: key folder, separate short-lived
-          backups, what losing it means.
+    - [x] S6 `deploy/README.md`: key folder, separate short-lived
+          backups, what losing it means. Done 2026-11-03: section
+          "Account keys and backups" (back up separately from the
+          database, keep about a week; backup, restore and
+          leftover-key commands, tested on Docker; what a lost folder
+          does). Also corrected the storage section's dedup claim.
 
 ## Open items
 
