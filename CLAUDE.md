@@ -200,8 +200,9 @@ default, `WrapExisting` upgrades in place): server-only, added this
 session. Operator guidance: `deploy/README.md` "Account keys and
 backups". Go unit tests:
 `docker run --rm -v "$PWD":/src -w /src golang:1.26 go test ./internal/keystore/ ./internal/sealedfile/`
-from `server/`. Ryan has not set up the key-folder backup cron on Docker
-yet; offer it.
+from `server/`. Key-folder backup cron is set up on Docker
+(`deploy/scripts/backup-keys.sh`, daily 03:30 -> `~/openvoxa-key-backups`,
+7-day prune) and the KEK is enabled (Ryan holds the only copies).
 **Next: Ryan to choose** (list at the end of this section).
 Also this session: Reports tab (Delete now confirmed; Delete or Ban from
 a report marks it Actioned; Dismiss is "No action needed", tab "No

@@ -233,18 +233,21 @@ Without this folder, the server cannot read any message in a plaintext channel. 
 - **Separately**, because a database backup plus a key backup from the same day can still show the messages of an account deleted since. Store them in different places so one leaked or stolen backup is not both.
 - **Short-lived**, because an account deletion is only complete once the last key backup holding that account's key has been deleted. Keep about a week of key backups and delete older ones. Database backups can be kept as long as you like.
 
-A key backup is a small archive of the folder. Without a KEK it holds the keys in the clear; with a KEK the keys are wrapped, but keep storing the archive carefully and keep the KEK out of it. Either way, treat it like a password file:
+A key backup is a small archive of the folder. Without a KEK it holds the keys in the clear; with a KEK the keys are wrapped, but keep storing the archive carefully and keep the KEK out of it. Either way, treat it like a password file.
+
+`scripts/backup-keys.sh` does the archive, the ownership and the pruning. Point it somewhere off your database backups and run it daily from cron, the same way as `update-node-ip.sh`:
 
 ```bash
-cd ~/OpenVoxa/deploy
-docker run --rm -v deploy_key-data:/keys:ro -v /path/to/key-backups:/out alpine \
-  tar czf /out/openvoxa-keys-$(date +%F).tar.gz -C /keys .
-chmod 600 /path/to/key-backups/openvoxa-keys-*.tar.gz
-# delete key backups older than 7 days
-find /path/to/key-backups -name 'openvoxa-keys-*.tar.gz' -mtime +7 -delete
+# writes to $HOME/openvoxa-key-backups, keeps 7 days
+30 3 * * * /home/you/OpenVoxa/deploy/scripts/backup-keys.sh >> $HOME/openvoxa-key-backup.log 2>&1
 ```
 
-Run it daily from cron, the same way as `update-node-ip.sh`.
+Override `OPENVOXA_KEY_BACKUP_DIR` (destination) or `OPENVOXA_KEY_BACKUP_DAYS` (retention) in the cron line if the defaults don't suit. Equivalent by hand:
+
+```bash
+docker run --rm -v deploy_key-data:/keys:ro -v /path/to/key-backups:/out alpine \
+  tar czf /out/openvoxa-keys-$(date +%F).tar.gz -C /keys .
+```
 
 ### Restoring
 
