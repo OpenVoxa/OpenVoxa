@@ -18,7 +18,7 @@
  * can schedule a backup upload.
  */
 
-import { decodeEnvelope, encodeEnvelope, type FileKey } from "./attachments.js";
+import { decodeEnvelope, encodeEnvelope, encryptFile, type FileKey } from "./attachments.js";
 import type { ApiCall } from "./identity.js";
 import type { AutoEvent, MembershipChange, PersonChange } from "./groups.js";
 import { normalizeTime, storage, type SharedBy } from "./storage.js";
@@ -45,6 +45,15 @@ export interface ChannelAccess {
   readonly group_id: string;
   readonly group: string;
   readonly can_post: boolean;
+}
+
+/**
+ * A file uploaded for the next message (ChannelView.upload). key is set
+ * in encrypted channels: what readers need to decrypt it.
+ */
+export interface Upload {
+  readonly info: AttachmentInfo;
+  readonly key?: FileKey;
 }
 
 export interface AttachmentInfo {
@@ -236,8 +245,12 @@ const MAX_BODY = 4000;
 /** Refuse a body the server would refuse, with a clearer reason. In an
  * encrypted channel the body is base64 ciphertext, about 4/3 of the
  * text plus some overhead, so the room for text is smaller. */
-function checkBodyLength(body: string, encrypted: boolean): void {
+function checkBodyLength(body: string, encrypted: boolean, files = 0): void {
   if ([...body].length <= MAX_BODY) return;
+  // Each encrypted file's key and name ride inside the message.
+  if (encrypted && files > 0) {
+    throw new Error("That message is too long for an encrypted channel. Each file takes room too; send fewer files at once or shorten the text.");
+  }
   throw new Error(encrypted
     ? "That message is too long for an encrypted channel (about 2,800 characters at most)."
     : `That message is too long (${MAX_BODY} characters at most).`);
@@ -1141,12 +1154,55 @@ export class ChannelView {
   // ----------------------------------------------------------- sending
 
   /**
-   * Send a message. Shown at once as pending; the echo replaces it.
-   * attachments: already uploaded (a GIF from POST /channels/{id}/gifs);
-   * with one, the text may be empty.
+   * Upload one file for the next message in this channel. The server
+   * holds it until a message claims it (unclaimed uploads are swept after
+   * an hour), so pass the result to send().
+   *
+   * In an encrypted channel the file is encrypted here first with its own
+   * key (attachments.ts). The server gets ciphertext under a placeholder
+   * name; `key` carries the real name, type and the key itself, and
+   * travels inside the MLS message. The returned `info` shows the real
+   * name and size, so the composer and the pending message can show them.
+   *
+   * The ApiCall must leave Content-Type alone for a FormData body: the
+   * browser sets it, multipart boundary included.
    */
-  async send(text: string, attachments: readonly AttachmentInfo[] = []): Promise<void> {
+  async upload(file: Blob, name: string): Promise<Upload> {
+    if (!this.#canPost) throw new Error("you can't post in this channel");
+    const form = new FormData();
+    let key: Omit<FileKey, "id"> | undefined;
+    if (this.#encrypted) {
+      if (!this.#groups.isMember(this.#channel.id)) {
+        throw new Error("this device hasn't been added to this channel's encryption yet");
+      }
+      // The name rides in the message, which has a size limit; the server
+      // keeps 120 characters of a plain upload's name, so match it.
+      const enc = await encryptFile(await file.arrayBuffer(), [...name].slice(0, 120).join(""), file.type);
+      key = enc.key;
+      form.append("file", new Blob([enc.ciphertext as Uint8Array<ArrayBuffer>]), "encrypted");
+    } else {
+      form.append("file", file, name);
+    }
+    const info = (await this.#opts.call(`/api/v1/channels/${this.#channel.id}/attachments`, {
+      method: "POST",
+      body: form,
+    })) as AttachmentInfo;
+    if (!key) return { info };
+    return {
+      info: { ...info, filename: key.name, content_type: key.type, size: key.size },
+      key: { ...key, id: info.id },
+    };
+  }
+
+  /**
+   * Send a message. Shown at once as pending; the echo replaces it.
+   * attachments: already uploaded (a GIF from POST /channels/{id}/gifs,
+   * or upload() results); with one, the text may be empty.
+   */
+  async send(text: string, attachments: readonly (AttachmentInfo | Upload)[] = []): Promise<void> {
     if (!text.trim() && !attachments.length) return;
+    const infos = attachments.map((a) => ("info" in a ? a.info : a));
+    const files = attachments.flatMap((a) => ("info" in a && a.key ? [a.key] : []));
     const ws = this.#socket;
     if (!ws || this.#connection !== "open") throw new Error("not connected");
     if (!this.#canPost) throw new Error("you can't post in this channel");
@@ -1158,11 +1214,11 @@ export class ChannelView {
       if (!this.#groups.isMember(this.#channel.id)) {
         throw new Error("this device hasn't been added to this channel's encryption yet");
       }
-      plain = encodeEnvelope({ text, files: [] });
-      checkBodyLength(b64encode(new TextEncoder().encode(plain)), true); // before spending a key
+      plain = encodeEnvelope({ text, files });
+      checkBodyLength(b64encode(new TextEncoder().encode(plain)), true, files.length); // before spending a key
       body = b64encode(await this.#groups.encrypt(this.#channel.id, new TextEncoder().encode(plain)));
     }
-    checkBodyLength(body, this.#encrypted);
+    checkBodyLength(body, this.#encrypted, files.length);
     // Plaintext channels need the ref too, to swap out the pending entry.
     this.#pendingSends.set(ref, plain);
 
@@ -1175,11 +1231,11 @@ export class ChannelView {
       own: true,
       deleted: false,
       text,
-      files: [],
-      attachments: [...attachments],
+      files,
+      attachments: infos,
       pending: true,
     });
-    const ids = attachments.map((a) => a.id);
+    const ids = infos.map((a) => a.id);
     ws.send(JSON.stringify({ type: "send", body, ref, ...(ids.length ? { attachments: ids } : {}) }));
   }
 

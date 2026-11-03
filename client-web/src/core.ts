@@ -21,7 +21,8 @@ export function apiCall(token: string, onUnauthorized?: () => void): ApiCall {
   return async (path, init = {}) => {
     const headers = new Headers(init.headers);
     headers.set("Authorization", `Bearer ${token}`);
-    if (init.body !== undefined && !headers.has("Content-Type")) {
+    // FormData (an upload) needs the browser's own multipart Content-Type.
+    if (init.body !== undefined && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
       headers.set("Content-Type", "application/json");
     }
     const res = await fetch(path, { ...init, headers });

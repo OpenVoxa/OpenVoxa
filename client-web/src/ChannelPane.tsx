@@ -11,13 +11,14 @@ import {
   useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore,
   type KeyboardEvent, type ReactNode,
 } from "react";
-import type { AttachmentInfo, ChannelSnapshot, ChannelView, ChatMessage, CryptoState, Notice } from "@core/chat";
+import type { AttachmentInfo, ChannelSnapshot, ChannelView, ChatMessage, CryptoState, Notice, Upload } from "@core/chat";
 import type { ApiCall } from "@core/identity";
 import { describeRetention } from "./ChannelDialogs";
 import { firstLink, Markdown } from "./markdown";
 import { LinkPreview } from "./previews";
 import { GifPicker, useGifsEnabled } from "./gifs";
 import { PREVIEWS_ENCRYPTED, useToggle } from "./settings";
+import { PlainAttachment, SealedAttachment, UploadTray, useUploads } from "./attachments";
 
 function useSnapshot(view: ChannelView): ChannelSnapshot {
   const subscribe = useCallback((cb: () => void) => view.on(cb), [view]);
@@ -42,9 +43,47 @@ export function ChannelPane({ view, call, username, canDeleteAny }: {
   const previews = !c.encrypted || previewsEncrypted;
 
   const lastOwn = [...snap.messages].reverse().find((m) => m.own && !m.deleted && !m.pending && !m.unreadable);
+  const uploads = useUploads(view, setError);
+  const canAttach = composeBlocker(snap) === null;
+
+  // Drag and drop anywhere on the pane. dragenter/leave fire for every
+  // child element crossed, so count them rather than trusting one event.
+  const [dragging, setDragging] = useState(false);
+  const depth = useRef(0);
+  const hasFiles = (e: React.DragEvent) => e.dataTransfer.types.includes("Files");
 
   return (
-    <section className="channel-pane" aria-label={`#${c.name}`}>
+    <section className="channel-pane" aria-label={`#${c.name}`}
+      onDragEnter={(e) => {
+        if (!hasFiles(e)) return;
+        e.preventDefault();
+        depth.current++;
+        setDragging(true);
+      }}
+      onDragOver={(e) => {
+        if (!hasFiles(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = canAttach ? "copy" : "none";
+      }}
+      onDragLeave={(e) => {
+        if (!hasFiles(e)) return;
+        if (--depth.current <= 0) {
+          depth.current = 0;
+          setDragging(false);
+        }
+      }}
+      onDrop={(e) => {
+        if (!hasFiles(e)) return;
+        e.preventDefault();
+        depth.current = 0;
+        setDragging(false);
+        if (canAttach) uploads.add(e.dataTransfer.files);
+      }}>
+      {dragging && (
+        <div className="drop-overlay" aria-hidden>
+          {canAttach ? `Drop to attach to #${c.name}` : composeBlocker(snap)}
+        </div>
+      )}
       <header className="pane-head">
         <h1><span className="hash" aria-hidden>#</span>{c.name}</h1>
         <CryptoBadge encrypted={c.encrypted} crypto={snap.crypto} />
@@ -80,6 +119,7 @@ export function ChannelPane({ view, call, username, canDeleteAny }: {
       <Composer
         snap={snap}
         call={call}
+        uploads={uploads}
         onSend={async (text, attachments) => {
           setError(null);
           try {
@@ -370,54 +410,24 @@ function Message({ m, call, encrypted, previews, compact, username, canDelete, c
   );
 }
 
-// Types shown inline. SVG is left out: it can carry script. Everything
-// else is a download link, which the server serves as an attachment.
-const INLINE = /^(image\/(png|jpeg|gif|webp)|video\/(mp4|webm)|audio\/(mpeg|ogg|wav))$/;
-
 /**
  * A message's files. What the server stores as-is (anything in a plain
- * channel, and provider GIFs in any channel) shows inline from its signed
- * URL. Files encrypted by their sender come in M4 session B.
+ * channel, and provider GIFs in any channel) shows from its signed URL;
+ * files encrypted by their sender are decrypted here (attachments.tsx).
  */
 function Attachments({ m, encrypted }: { m: ChatMessage; encrypted: boolean }) {
-  const keyed = new Set(m.files.map((f) => f.id));
+  const keys = new Map(m.files.map((f) => [f.id, f]));
   return (
     <div className="attachments">
       {m.attachments.map((a) => {
-        const sealed = encrypted && (keyed.has(a.id) ||
+        const sealed = encrypted && (keys.has(a.id) ||
           (a.filename === "encrypted" && a.content_type === "application/octet-stream"));
-        if (sealed) {
-          return <span key={a.id} className="muted small">Encrypted file (not shown in this client yet; open the debug page)</span>;
-        }
-        return <PlainAttachment key={a.id} a={a} />;
+        return sealed
+          ? <SealedAttachment key={a.id} a={a} k={keys.get(a.id)} />
+          : <PlainAttachment key={a.id} a={a} />;
       })}
     </div>
   );
-}
-
-function PlainAttachment({ a }: { a: AttachmentInfo }) {
-  if (!a.url) return <span className="muted small">{a.filename} (still sending…)</span>;
-  const kind = INLINE.test(a.content_type) ? a.content_type.split("/")[0] : null;
-  if (kind === "image") {
-    return (
-      <a href={a.url} target="_blank" rel="noopener noreferrer" className="att-media">
-        <img src={a.url} alt={a.filename} loading="lazy" />
-      </a>
-    );
-  }
-  if (kind === "video") return <video className="att-media" src={a.url} controls preload="metadata" />;
-  if (kind === "audio") return <audio src={a.url} controls preload="metadata" />;
-  return (
-    <a href={a.url} target="_blank" rel="noopener noreferrer" className="att-file">
-      {a.filename} <span className="muted small">({formatSize(a.size)})</span>
-    </a>
-  );
-}
-
-function formatSize(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function EditBox({ initial, onSave, onCancel }: {
@@ -467,10 +477,19 @@ function EditBox({ initial, onSave, onCancel }: {
 
 // ----------------------------------------------------------- composer
 
-function Composer({ snap, call, onSend, onEditLast }: {
+/** Why nothing can be sent or attached right now, or null. */
+function composeBlocker(snap: ChannelSnapshot): string | null {
+  return !snap.canPost ? "You can't post in this channel."
+    : snap.connection !== "open" ? "Connecting…"
+    : snap.channel.encrypted && snap.crypto.kind !== "ready" ? "Waiting for encryption…"
+    : null;
+}
+
+function Composer({ snap, call, uploads, onSend, onEditLast }: {
   snap: ChannelSnapshot;
   call: ApiCall;
-  onSend: (text: string, attachments?: AttachmentInfo[]) => Promise<boolean>;
+  uploads: ReturnType<typeof useUploads>;
+  onSend: (text: string, attachments?: (AttachmentInfo | Upload)[]) => Promise<boolean>;
   onEditLast: () => void;
 }) {
   const [text, setText] = useState("");
@@ -478,11 +497,12 @@ function Composer({ snap, call, onSend, onEditLast }: {
   const gifsEnabled = useGifsEnabled(call);
   const closeGifs = useCallback(() => setGifs(false), []);
   const ref = useRef<HTMLTextAreaElement>(null);
-  const encryptedNotReady = snap.channel.encrypted && snap.crypto.kind !== "ready";
-  const reason = !snap.canPost ? "You can't post in this channel."
-    : snap.connection !== "open" ? "Connecting…"
-    : encryptedNotReady ? "Waiting for encryption…"
-    : null;
+  const picker = useRef<HTMLInputElement>(null);
+  const reason = composeBlocker(snap);
+  const files = uploads.items;
+  const uploading = files.some((f) => f.status === "uploading");
+  const ready = files.flatMap((f) => (f.status === "ready" && f.result ? [f.result] : []));
+  const canSend = !reason && !uploading && (!!text.trim() || ready.length > 0);
 
   // Focus follows the channel.
   useEffect(() => {
@@ -490,10 +510,12 @@ function Composer({ snap, call, onSend, onEditLast }: {
   }, [snap.channel.id]);
 
   async function send() {
-    if (reason || !text.trim()) return;
+    if (!canSend) return;
     const value = text;
     setText("");
-    if (!(await onSend(value))) setText(value);
+    // A failed upload in the tray is left out; the user sees it marked.
+    if (await onSend(value, ready)) uploads.clear();
+    else setText(value);
   }
 
   function onKey(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -507,6 +529,8 @@ function Composer({ snap, call, onSend, onEditLast }: {
   }
 
   return (
+    <div className="composer-wrap">
+    <UploadTray items={files} onRemove={uploads.remove} />
     <div className="composer">
       {gifs && !reason && (
         <GifPicker call={call} channelId={snap.channel.id} onClose={closeGifs}
@@ -517,11 +541,24 @@ function Composer({ snap, call, onSend, onEditLast }: {
             ref.current?.focus();
           }} />
       )}
+      <input ref={picker} type="file" multiple hidden onChange={(e) => {
+        if (e.target.files) uploads.add(e.target.files);
+        e.target.value = ""; // so picking the same file again still fires
+        ref.current?.focus();
+      }} />
+      <button className="secondary attach-btn" disabled={!!reason}
+        onClick={() => picker.current?.click()} title="Attach files" aria-label="Attach files">+</button>
       <AutoTextarea
         ref={ref}
         value={text}
         onChange={setText}
         onKeyDown={onKey}
+        onPaste={(e) => {
+          // A pasted screenshot or copied file. Text pastes as usual.
+          if (reason || !e.clipboardData.files.length) return;
+          e.preventDefault();
+          uploads.add(e.clipboardData.files);
+        }}
         disabled={!!reason}
         placeholder={reason ?? `Message #${snap.channel.name}`}
         label={`Message #${snap.channel.name}`}
@@ -531,17 +568,20 @@ function Composer({ snap, call, onSend, onEditLast }: {
           onMouseDown={(e) => e.stopPropagation()}
           onClick={() => setGifs((g) => !g)} title="Send a GIF" aria-expanded={gifs}>GIF</button>
       )}
-      <button className="primary" onClick={() => void send()} disabled={!!reason || !text.trim()}>Send</button>
+      <button className="primary" onClick={() => void send()} disabled={!canSend}
+        title={uploading ? "Waiting for uploads to finish" : undefined}>Send</button>
+    </div>
     </div>
   );
 }
 
 /** A textarea that grows with its content, up to a limit (CSS). */
-function AutoTextarea({ ref, value, onChange, onKeyDown, disabled, placeholder, label }: {
+function AutoTextarea({ ref, value, onChange, onKeyDown, onPaste, disabled, placeholder, label }: {
   ref: React.Ref<HTMLTextAreaElement>;
   value: string;
   onChange: (v: string) => void;
   onKeyDown: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
+  onPaste?: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
   disabled?: boolean;
   placeholder?: string;
   label: string;
@@ -564,6 +604,7 @@ function AutoTextarea({ ref, value, onChange, onKeyDown, disabled, placeholder, 
       value={value}
       onChange={(e) => onChange(e.target.value)}
       onKeyDown={onKeyDown}
+      onPaste={onPaste}
       disabled={disabled}
       placeholder={placeholder}
       aria-label={label}

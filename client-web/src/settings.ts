@@ -23,6 +23,9 @@ export const VOICE_TONES: Toggle = { key: "voice.tones", fallback: true };
  */
 export const PREVIEWS_ENCRYPTED: Toggle = { key: "chat.previewsEncrypted", fallback: false };
 
+/** Clicking an image in chat opens it in a new tab instead of the in-page viewer. */
+export const IMAGES_IN_TAB: Toggle = { key: "chat.imagesInTab", fallback: false };
+
 const listeners = new Set<() => void>();
 
 export function getToggle(t: Toggle): boolean {
