@@ -604,9 +604,9 @@ unaffected either way.
 
 *What it cannot do.* Other people's devices hold their own copies: the
 local plaintext archive, their recovery backups, screenshots. Honest
-clients delete stored copies of a deleted account's messages when they
-receive `user_purged` (they used to only hide them); a modified client
-need not. The user-facing text says so. Usernames in the moderation log
+clients delete stored copies of a deleted account's messages (they used
+to only hide them): they ask the server which archived ids are gone, at
+start and after `user_purged`; a modified client need not. The user-facing text says so. Usernames in the moderation log
 for administrator deletions stay (that record is the point of the log).
 
 *Not covered, deliberately.* Single message deletion and retention
@@ -1809,9 +1809,22 @@ to pick their own colours later, so every colour stays a variable.
           no account, since a server pointed at the wrong database would
           destroy every key. Verified on Docker: two accounts deleted,
           files and report text gone, no leftover key files.
-    - [ ] S5 Delete-account dialog with the new wording (password and
+    - [x] S5 Delete-account dialog with the new wording (password and
           typed username); other clients delete stored copies of a
-          deleted account's messages on `user_purged`.
+          deleted account's messages on `user_purged`. Done 2026-11-03:
+          the typed username and password already existed (M5 A); the
+          paragraph is now the agreed one. The archive is keyed by
+          message id alone and an offline device never sees
+          `user_purged`, so the client asks instead:
+          `POST /messages/archive-check` (up to 500 ids, answers which
+          are deleted or no longer exist; `archivecheck.go`).
+          `Chat.pruneArchive` runs at every start (which also covers a
+          backup restore, since the chat restarts after one) and 2 s
+          after `user_purged`, deletes the gone copies, then schedules a
+          backup upload so the server-held backup drops them too. It
+          also catches single deletes, retention and deleted channels.
+          Verified on Docker: check at start and 2 s after a deletion,
+          each followed by a backup re-upload.
     - [ ] S6 `deploy/README.md`: key folder, separate short-lived
           backups, what losing it means.
 
