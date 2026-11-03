@@ -147,15 +147,15 @@ func (a *API) reportMessage(w http.ResponseWriter, r *http.Request) {
 	var authorID *string
 	var channelID string
 	var storedBody []byte
-	var encrypted bool
+	var sealed, encrypted bool
 
 	err := a.pool.QueryRow(r.Context(),
-		`SELECT m.author_id, m.channel_id, m.body, c.encrypted
+		`SELECT m.author_id, m.channel_id, m.body, m.sealed, c.encrypted
 		   FROM messages m
 		   JOIN channels c ON c.id = m.channel_id
 		  WHERE m.id = $1 AND m.deleted = false`,
 		messageID,
-	).Scan(&authorID, &channelID, &storedBody, &encrypted)
+	).Scan(&authorID, &channelID, &storedBody, &sealed, &encrypted)
 
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
@@ -179,7 +179,7 @@ func (a *API) reportMessage(w http.ResponseWriter, r *http.Request) {
 	// reads as "could not be checked" rather than "checked and passed".
 	var verified *bool
 	if !encrypted {
-		match := string(storedBody) == req.Body
+		match := a.openBody(r.Context(), channelID, authorID, storedBody, sealed) == req.Body
 		verified = &match
 
 		if !match {

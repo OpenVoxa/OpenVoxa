@@ -92,6 +92,12 @@ services:
       # the database would still hold the references and downloads would
       # fail.
       - blob-data:/var/lib/openvoxa/blobs
+      # One key per account (crypto-shredding). Deleting an account
+      # deletes its key, which makes its plaintext-channel messages
+      # unreadable even in database backups. Back this up SEPARATELY
+      # from the database and keep those backups short-lived; losing it
+      # makes plaintext channel history unreadable. See deploy/README.md.
+      - key-data:/var/lib/openvoxa/keys
     depends_on:
       postgres:
         condition: service_healthy
@@ -130,3 +136,4 @@ volumes:
   caddy-data:
   caddy-config:
   blob-data:
+  key-data:

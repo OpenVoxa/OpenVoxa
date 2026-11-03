@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/openvoxa/openvoxa/server/internal/blob"
+	"github.com/openvoxa/openvoxa/server/internal/keystore"
 	"github.com/openvoxa/openvoxa/server/internal/config"
 	"github.com/openvoxa/openvoxa/server/internal/gif"
 	"github.com/openvoxa/openvoxa/server/internal/hub"
@@ -68,6 +69,10 @@ type API struct {
 
 	blobs         *blob.Store
 	maxAttachment int64
+
+	// One key per account for what the server can read; destroyed on
+	// account deletion (crypto-shredding). See sealing.go.
+	keys *keystore.Store
 	uploadLimit   *ratelimit.Limiter
 
 	// Signs attachment download links. Generated per process: a restart
@@ -98,7 +103,7 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	a.handler.ServeHTTP(w, r)
 }
 
-func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
+func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keystore.Store) *API {
 	debugUIEnabled := cfg.DebugUI
 	trustProxy := cfg.TrustProxy
 	livekit := cfg.LiveKit
@@ -122,6 +127,7 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 
 		blobs:         blobs,
 		maxAttachment: cfg.MaxAttachmentBytes,
+		keys:          keys,
 
 		// Uploads cost disk and bandwidth, so they are tighter than
 		// previews: 10 up front, then one every 5 seconds.

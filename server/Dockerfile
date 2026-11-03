@@ -61,8 +61,8 @@ COPY --from=web /app/client-web/dist/ ./internal/httpapi/webui/
 RUN CGO_ENABLED=0 go build -o /out/openvoxa-server .
 
 # --------------------------------------------------------------- blobdir
-# The blob directory has to exist in the image, owned by the user the
-# server runs as.
+# The blob and key directories have to exist in the image, owned by the
+# user the server runs as.
 #
 # Docker copies the ownership and permissions of the image's directory onto
 # a named volume the first time that volume is mounted. Without this stage
@@ -70,7 +70,9 @@ RUN CGO_ENABLED=0 go build -o /out/openvoxa-server .
 # create anything inside it. Distroless has no shell, so mkdir and chown
 # have to happen somewhere that does.
 FROM alpine:3 AS blobdir
-RUN mkdir -p /var/lib/openvoxa/blobs && chown -R 65532:65532 /var/lib/openvoxa
+RUN mkdir -p /var/lib/openvoxa/blobs /var/lib/openvoxa/keys \
+ && chmod 700 /var/lib/openvoxa/keys \
+ && chown -R 65532:65532 /var/lib/openvoxa
 
 # ----------------------------------------------------------------- final
 # Distroless: no shell, no package manager, minimal attack surface.
