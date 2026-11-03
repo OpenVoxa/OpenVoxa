@@ -1823,12 +1823,37 @@ to pick their own colours later, so every colour stays a variable.
       data and images ourselves (no CDN, same reason as LiveKit) or use
       the system font; whether reactions on messages come with it.
 - [ ] Custom stickers (Ryan, 2026-11-03): images uploaded to the server
-      and sent like a GIF. To settle before building: who may upload
-      (a new permission, or `manage_channels`), size and type limits,
-      server-wide or per channel. Stickers are a shared server set, not
-      anyone's personal content, so they may stay unsealed like Giphy
-      GIFs; and what happens to a sticker when its uploader deletes their
-      account.
+      and sent like a GIF. Decided with Ryan:
+      - Server-wide: one set for the whole server, not per channel.
+      - Moderators and administrators only. Done as a new permission
+        (`manage_stickers`) given to the Moderator and Administrator
+        groups by default, not a check on group names, so it follows the
+        permission-group system like everything else.
+      - Stickers stay when their uploader deletes their account. They
+        are a contribution to the server, not the uploader's own
+        content, so they are not sealed under the uploader's key and
+        are not crypto-shredded; the uploader reference just becomes
+        NULL. The upload dialog says so before the first upload.
+      Proposed, not yet agreed (Ryan wants recommendations):
+      - Types: PNG, APNG, GIF, WebP (static or animated). Not SVG: it can
+        carry script. The server checks the file's real type from its
+        bytes, not the name or what the browser claims.
+      - At most 512 KB per file and 320 x 320 pixels; shown at about
+        160 px. Small enough that a message full of stickers loads fast.
+      - At most 100 stickers per server, both limits in server settings
+        so an operator can raise them.
+      - Name per sticker (for search and `:name:` style picking) and
+        alt text for screen readers.
+      In encrypted channels the message carries only the sticker's id,
+      inside the ciphertext; fetching the image still tells the server
+      who viewed which sticker, as with GIFs.
+- [ ] Server browser (Ryan, 2026-11-03, "if this takes off"): a column
+      on the left of the window to switch between OpenVoxa servers. Fits
+      "no federation in v1": each server is still an island with its own
+      account and device keys, and the client just keeps several sign-ins
+      side by side. Worth keeping in mind now so per-server state in
+      client-core (storage, keys, settings) is keyed by server, not
+      global.
 
 - [ ] Password strength estimation with zxcvbn (server and client), on top
       of the rules. Ryan asked to discuss later (2026-11-01).
