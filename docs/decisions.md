@@ -473,8 +473,9 @@ this in the debug page were removed on 2026-10-31, along with the public
 `groups.addMembers`: reconciliation is the only way into a group.
 
 **Local storage is encrypted under the password, with a server-held
-half for refreshes.** Decided by Ryan, 2026-11-03 (design only; not
-built yet). Closes the open item "Group state persists to IndexedDB as
+half for refreshes.** Decided by Ryan, 2026-11-03; built the same day
+(server `sessionsecret.go` + migration 0019, client-core `localkey.ts`,
+`codec.ts`, `storage.ts`, client-web `unlock.ts`). Closes the open item "Group state persists to IndexedDB as
 bytes, but UNENCRYPTED".
 
 - *Data key.* Each account database gets one random 256-bit data key.
@@ -515,9 +516,23 @@ bytes, but UNENCRYPTED".
   to the login screen. The remembered backup key is a non-extractable
   CryptoKey and cannot be re-encrypted, so it is dropped once and the
   existing "enter your recovery key" prompt brings it back.
+- *Sign-out keeps the device.* Decided by Ryan, 2026-11-03, after
+  testing: wiping on sign-out meant typing the recovery key after every
+  sign-out ("ease of use, simplicity and clarity" for end users). Sign-out
+  now uploads the backup, locks storage and ends the session; keys,
+  groups, archive and backup key stay, encrypted, and the password alone
+  unlocks them next time. The recovery key is needed only when the device
+  is revoked: unused for 30 days (server expiry) or removed in Settings,
+  Devices. Its next sign-in wipes it (`Identity.start`, before client-web
+  picks a recovery screen) and goes to the recovery-key screen. A signed
+  out device stays in its groups, like a closed tab. Account deletion
+  still wipes everything. Possible later: a "shared computer, erase
+  everything" choice on sign-out.
 - *Limits, stated plainly.* Protects a stolen or powered-off machine,
-  copied disks and backups, and the browser profile after sign-out or
-  session end. Does not protect against malware or a hostile script in
+  copied disks and backups, and the browser profile while signed out.
+  Someone with this browser AND the password can read the history kept
+  here; with the password alone they could already sign in, though they
+  would then need the recovery key for history. Does not protect against malware or a hostile script in
   the page while signed in, and a weak password can be guessed offline
   from copied files (the password rules are the defence). Electron can
   later add the OS keychain (`safeStorage`) on top.
@@ -1457,13 +1472,11 @@ to pick their own colours later, so every colour stays a variable.
       and points at the debug page).
     - client-web owns the device from M2: it runs `startSession`, so the
       debug page in another tab of the same account gets the "already
-      open in another tab" refusal (Web Lock). Sign-out uploads the
-      backup, revokes the device on the server, then wipes the account's
-      local database (as the debug page's "Forget device"); with no usable
-      backup it asks first. If the revoke fails the keys stay (wiping keys
-      of a device the server still lists makes members keep adding a
-      device nobody holds). The next sign-in registers a new device and
-      restores the archive with the recovery key.
+      open in another tab" refusal (Web Lock). Sign-out originally
+      revoked the device and wiped the local database, so every sign-in
+      after it needed the recovery key. Replaced 2026-11-03: sign-out
+      keeps the device (Encryption, "Local storage is encrypted under
+      the password", sign-out bullet).
     - Chat logic lives in client-core `chat.ts` (`Chat` per account:
       event socket, channel list, unread; `ChannelView` per open channel:
       socket, decrypt/archive queue, paging, send/edit/delete), so the
@@ -1692,14 +1705,13 @@ to pick their own colours later, so every colour stays a variable.
       changes still go to `perm_group_changes`, which nothing reads.
 - [ ] Reports in encrypted channels will need MLS signature verification
       before `verified` can be anything but NULL there.
-- [ ] Group state persists to IndexedDB as bytes, but UNENCRYPTED. The
+- [x] Group state persists to IndexedDB as bytes, but UNENCRYPTED. The
       protection today is browser origin isolation; anyone able to read
       browser profile data on the device can read the keys. The fix needs
       recovery keys to exist first, since encrypting with a key also
       stored in IndexedDB would look like protection while providing
-      none. Unblocked: recovery keys exist since step 13 M1. Design
-      agreed 2026-11-03: Encryption, "Local storage is encrypted under
-      the password, with a server-held half for refreshes". Not built.
+      none. Done 2026-11-03: Encryption, "Local storage is encrypted
+      under the password, with a server-held half for refreshes".
 - [ ] The `ratchet_tree` column in migration 0010 assumes the tree
       travels separately from the welcome. If the extension route is ever
       made to work, both that column and the custom serialiser go away.
