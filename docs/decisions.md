@@ -602,6 +602,30 @@ holding that key has expired. Lose the folder with no backup and every
 plaintext channel's history is unreadable. Encrypted channels are
 unaffected either way.
 
+*Encrypting the keys at rest (envelope encryption).* Added 2026-11-03.
+On its own the key folder stores each account key in the clear, so the
+folder (or any backup of it) is enough to read every plaintext channel.
+An operator can set a 32-byte key-encryption key (`OPENVOXA_KEK`, base64,
+or `OPENVOXA_KEK_FILE` for a mounted secret); the server then wraps every
+account key under it (AES-256-GCM, the account id as associated data so a
+wrapped file cannot be moved between accounts) where it rests on disk.
+A stolen key folder, key-folder backup or disk image is then inert
+without the KEK, which the operator keeps off both backups. It is opt-in
+and off by default: existing deployments keep working, and
+`keystore.WrapExisting` upgrades clear-text key files in place at startup
+(readers accept both forms, like `SealExisting`). Crypto-shredding is
+unchanged — deletion still unlinks the account's (wrapped) key file — and
+the KEK can never un-shred, since it wraps keys, it does not escrow them.
+
+Chosen over the alternatives discussed with Ryan: a separate keys
+database (reintroduces the "keys in a backup" problem and adds a
+networked service holding every key) and a boot-time unseal passphrase
+(defends a live-server compromise too, but breaks unattended restart —
+noted as a possible opt-in "sealed mode" later). The hard limit, stated
+in the README: nothing here defends against a compromise of the
+*running* server, which must hold the unwrapped keys in memory to read
+messages at all. This layer is about backups and offline theft only.
+
 *What it cannot do.* Other people's devices hold their own copies: the
 local plaintext archive, their recovery backups, screenshots. Honest
 clients delete stored copies of a deleted account's messages (they used
