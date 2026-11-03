@@ -1509,6 +1509,25 @@ to pick their own colours later, so every colour stays a variable.
       "Download", Esc or a click outside closes); Settings, "Open images
       in a new tab", switches to tabs (per browser, off by default; Ryan
       asked for the choice after A1). Ctrl/middle-click always opens a tab.
+    - Account settings in client-web (M5 session A, 2026-11-03; M5 split
+      into A account, B groups and members, C moderation, at Ryan's pick).
+      Settings is one dialog with Account, Voice and Chat tabs
+      (`SettingsDialog.tsx`); the user-panel gear opens Account without
+      loading LiveKit, the voice-bar cog opens Voice. Account: username and
+      groups; change password (current + new with the signup checklist;
+      the server signs out every other session and says how many); the
+      recovery key (status, Back up now, Set up / Enter key, and "Make a
+      new key" for a working key, which re-uploads this browser's history
+      under the new key, so nothing is lost: `RecoverySetup rotating`);
+      devices (`GET /devices`, this browser first and not removable here,
+      since Log out does that with a backup first; removing another one
+      revokes it and members take it out of encrypted channels); delete
+      account (type the username and the password, `DELETE /me`; the
+      server deletes first, then this browser's keys are wiped, so a
+      refusal such as the two-admin floor leaves everything intact).
+      Calls that check a password use api.ts `call`, not the ApiCall
+      that signs out on any 401, because a 401 there means a wrong
+      password.
     - Device linking by QR (after M1): a logged-in device shows a QR of
       `https://server/link#<one-time secret>` (about 2 min, single use);
       the phone's camera opens it; the server only relays encrypted

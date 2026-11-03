@@ -14,7 +14,7 @@ import type {
 } from "@core/voice";
 import { Modal } from "./ChannelDialogs";
 import { localStore } from "./core";
-import { IMAGES_IN_TAB, PREVIEWS_ENCRYPTED, setToggle, useToggle, VOICE_TONES } from "./settings";
+import { setToggle, useToggle, VOICE_TONES } from "./settings";
 
 // The presets are duplicated from client-core's SHARE_PRESETS so this
 // file needs no runtime import of the (lazy) voice module.
@@ -391,10 +391,10 @@ export function ShareDialog({ voice, onClose }: { voice: VoiceClient; onClose: (
 
 // ------------------------------------------------------- settings dialog
 
-export function VoiceSettingsDialog({ voice, snap, onClose }: {
+/** The Voice tab of the Settings dialog (SettingsDialog.tsx). */
+export function VoiceSettings({ voice, snap }: {
   voice: VoiceClient;
   snap: VoiceSnapshot | null;
-  onClose: () => void;
 }) {
   const [devices, setDevices] = useState<AudioDevices | null>(null);
   const [input, setInput] = useState(voice.inputDevice);
@@ -405,8 +405,6 @@ export function VoiceSettingsDialog({ voice, snap, onClose }: {
   const [pin, setPin] = useState(voice.pinQuality);
   const [error, setError] = useState<string | null>(null);
   const tones = useToggle(VOICE_TONES);
-  const previews = useToggle(PREVIEWS_ENCRYPTED);
-  const imagesInTab = useToggle(IMAGES_IN_TAB);
 
   useEffect(() => {
     voice.listDevices().then(setDevices).catch((err) => setError(String(err?.message ?? err)));
@@ -431,9 +429,7 @@ export function VoiceSettingsDialog({ voice, snap, onClose }: {
     d.label || (d.deviceId === "default" ? "System default" : `Device ${i + 1}`);
 
   return (
-    <Modal title="Settings" onClose={onClose}>
-      <div className="modal-body">
-        <h3 className="settings-head">Voice</h3>
+    <>
         <label>
           Microphone
           <select value={input} onChange={(e) => {
@@ -501,30 +497,8 @@ export function VoiceSettingsDialog({ voice, snap, onClose }: {
           </span>
         </label>
 
-        <h3 className="settings-head">Chat</h3>
-        <label className="check">
-          <input type="checkbox" checked={previews} onChange={(e) => setToggle(PREVIEWS_ENCRYPTED, e.target.checked)} />
-          <span>
-            Link previews in encrypted channels
-            <span className="muted small block">
-              Messages stay encrypted, but to build a preview the server fetches the link, so it learns which
-              links you see there. Preview images load from the linked site. Plain channels always show previews.
-            </span>
-          </span>
-        </label>
-        <label className="check">
-          <input type="checkbox" checked={imagesInTab} onChange={(e) => setToggle(IMAGES_IN_TAB, e.target.checked)} />
-          <span>
-            Open images in a new tab
-            <span className="muted small block">Off: clicking an image shows it larger in a viewer on this page.</span>
-          </span>
-        </label>
         {error && <p className="error" role="alert">{error}</p>}
-        <div className="modal-actions">
-          <button className="primary" onClick={onClose}>Done</button>
-        </div>
-      </div>
-    </Modal>
+    </>
   );
 }
 

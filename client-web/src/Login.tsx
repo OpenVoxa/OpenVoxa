@@ -3,7 +3,8 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { call, guessDeviceName, type Session } from "./api";
-import { checkPassword, MIN_PASSWORD, REQUIRED_KINDS } from "./password";
+import { checkPassword } from "./password";
+import { PasswordRules } from "./PasswordRules";
 
 export function Login({ onSession }: { onSession: (s: Session, registered: boolean) => void }) {
   const [mode, setMode] = useState<"login" | "register">("login");
@@ -79,24 +80,7 @@ export function Login({ onSession }: { onSession: (s: Session, registered: boole
           <input type="password" value={password} onChange={(e) => { setPassword(e.target.value); setError(null); }}
             autoComplete={registering ? "new-password" : "current-password"} required />
         </label>
-        {registering && (
-          <ul className="rules" aria-label="Password requirements">
-            <li className={pw.lengthOk ? "ok" : undefined}>
-              {pw.lengthOk ? "✓" : "•"} {MIN_PASSWORD}+ characters
-            </li>
-            <li className={pw.kindsOk ? "ok" : undefined}>
-              {pw.kindsOk ? "✓" : "•"} {REQUIRED_KINDS} of 4:{" "}
-              {pw.kinds.map((k, i) => (
-                <span key={k.label} className={k.ok ? "ok" : undefined}>
-                  {i > 0 && ", "}{k.label}
-                </span>
-              ))}
-            </li>
-            <li className={pw.predictableOk ? "ok" : undefined}>
-              {pw.predictableOk ? "✓" : "•"} not your username or a simple pattern
-            </li>
-          </ul>
-        )}
+        {registering && <PasswordRules pw={pw} />}
         {registering && (
           <label>
             Confirm password

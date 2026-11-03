@@ -21,14 +21,15 @@ import { apiCall, cryptoSession, localStore, wsUrl } from "./core";
 import { ChannelPane } from "./ChannelPane";
 import { ChannelSettingsDialog, CreateChannelDialog } from "./ChannelDialogs";
 import {
-  PersonMenu, ShareDialog, Stage, VoiceBar, VoiceRoster, VoiceSettingsDialog,
+  PersonMenu, ShareDialog, Stage, VoiceBar, VoiceRoster,
   usePushToTalk, useVoiceSnapshot,
 } from "./VoiceUI";
 import { useVoiceTones } from "./tones";
+import { SettingsDialog, type AccountActions, type SettingsTab } from "./SettingsDialog";
 
 const LAST_CHANNEL = (userId: string) => `lastChannel.${userId}`;
 
-export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBackUpNow, onSetUpKey, onEnterKey, onExpired }: {
+export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBackUpNow, onSetUpKey, onEnterKey, onNewKey, onDeleteAccount, onExpired }: {
   session: Session;
   manager: BackupManager;
   backup: BackupStatus | null;
@@ -38,6 +39,8 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   onBackUpNow: () => void;
   onSetUpKey: () => void;
   onEnterKey: () => void;
+  onNewKey: () => void;
+  onDeleteAccount: (chat: Chat, password: string) => Promise<void>;
   onExpired: () => void;
 }) {
   const [chat, setChat] = useState<Chat | null>(null);
@@ -52,7 +55,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
     | { k: "create"; kind: "text" | "voice" }
     | { k: "settings"; id: string }
     | { k: "share" }
-    | { k: "voiceSettings" }
+    | { k: "prefs"; tab: SettingsTab }
     | null
   >(null);
   const [presence, setPresence] = useState<VoicePresence>({});
@@ -197,6 +200,11 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
     void chat.refreshVoice();
   }
 
+  const accountActions: AccountActions = {
+    onBackUpNow, onSetUpKey, onEnterKey, onNewKey,
+    onDeleteAccount: (password) => onDeleteAccount(chat, password),
+  };
+
   const can = (p: string) => perms.includes(p) || perms.includes("administrator");
   const canDeleteAny = can("delete_messages");
   const canManage = can("manage_channels");
@@ -287,7 +295,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           <VoiceBar voice={voiceClient} snap={vsnap}
             channelName={voiceChannels.find((c) => c.id === vsnap.channelId)?.name ?? ""}
             onShare={() => setDialog({ k: "share" })}
-            onSettings={() => setDialog({ k: "voiceSettings" })} />
+            onSettings={() => setDialog({ k: "prefs", tab: "voice" })} />
         )}
         {screens.length > 0 && !stage && (
           <button className="watch-banner" onClick={() => setStage({ focus: null })}>
@@ -296,7 +304,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
         )}
         <UserPanel session={session} backup={backup} notice={notice} busy={busy}
           onLogout={() => onLogout(chat)} onBackUpNow={onBackUpNow}
-          onVoiceSettings={() => void ensureVoice().then((v) => v && setDialog({ k: "voiceSettings" }))}
+          onSettings={() => setDialog({ k: "prefs", tab: "account" })}
           onSetUpKey={onSetUpKey} onEnterKey={onEnterKey} />
       </nav>
       <main className="pane">
@@ -325,8 +333,10 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
       {dialog?.k === "share" && voiceClient && (
         <ShareDialog voice={voiceClient} onClose={() => setDialog(null)} />
       )}
-      {dialog?.k === "voiceSettings" && voiceClient && (
-        <VoiceSettingsDialog voice={voiceClient} snap={vsnap} onClose={() => setDialog(null)} />
+      {dialog?.k === "prefs" && (
+        <SettingsDialog tab={dialog.tab} session={session} call={call} deviceId={chat.session.status.deviceId}
+          backup={backup} busy={busy} actions={accountActions}
+          voice={voiceClient} snap={vsnap} loadVoice={ensureVoice} onClose={() => setDialog(null)} />
       )}
       {person && voiceClient && (
         <PersonMenu voice={voiceClient}
@@ -378,7 +388,7 @@ function SpeakerIcon() {
   );
 }
 
-function UserPanel({ session, backup, notice, busy, onLogout, onBackUpNow, onSetUpKey, onEnterKey, onVoiceSettings }: {
+function UserPanel({ session, backup, notice, busy, onLogout, onBackUpNow, onSetUpKey, onEnterKey, onSettings }: {
   session: Session;
   backup: BackupStatus | null;
   notice: string | null;
@@ -387,7 +397,7 @@ function UserPanel({ session, backup, notice, busy, onLogout, onBackUpNow, onSet
   onBackUpNow: () => void;
   onSetUpKey: () => void;
   onEnterKey: () => void;
-  onVoiceSettings: () => void;
+  onSettings: () => void;
 }) {
   return (
     <div className="user-panel">
@@ -402,7 +412,7 @@ function UserPanel({ session, backup, notice, busy, onLogout, onBackUpNow, onSet
         </span>
         {notice && <span className="muted small" role="status">{notice}</span>}
       </div>
-      <button className="icon" onClick={onVoiceSettings} title="Settings" aria-label="Settings">
+      <button className="icon" onClick={onSettings} title="Settings" aria-label="Settings">
         <GearIcon />
       </button>
       <button className="secondary" onClick={onLogout} disabled={!!busy}>{busy ?? "Log out"}</button>
