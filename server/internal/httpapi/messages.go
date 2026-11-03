@@ -56,7 +56,7 @@ func (a *API) loadMessages(
 		                     'content_type', at.content_type,
 		                     'size', at.size) ORDER BY at.created_at)
 		             FROM attachments at WHERE at.message_id = m.id),
-		          '[]'::json)
+		          '[]'::json),`+mentionsJSON+`
 		   FROM messages m
 		   LEFT JOIN users u ON u.id = m.author_id
 		  WHERE m.channel_id = $1
@@ -77,7 +77,7 @@ func (a *API) loadMessages(
 		var body []byte
 
 		if err := rows.Scan(&m.ID, &authorID, &m.Username, &body, &m.Deleted,
-			&m.CreatedAt, &m.EditedAt, &m.Attachments); err != nil {
+			&m.CreatedAt, &m.EditedAt, &m.Attachments, &m.Mentions); err != nil {
 			return nil, false, err
 		}
 
@@ -187,6 +187,10 @@ func (a *API) listMessages(w http.ResponseWriter, r *http.Request) {
 
 type editMessageRequest struct {
 	Body string `json:"body"`
+	// The edited text's mentions (mentions.go). Absent leaves them as
+	// they were; present replaces them, and anyone newly mentioned is
+	// told.
+	Mentions *[]string `json:"mentions"`
 }
 
 type messageEditedEvent struct {
@@ -195,6 +199,8 @@ type messageEditedEvent struct {
 	MessageID string    `json:"message_id"`
 	Body      string    `json:"body"`
 	EditedAt  time.Time `json:"edited_at"`
+	// The mentions after the edit; absent when the edit left them alone.
+	Mentions *[]mentionInfo `json:"mentions,omitempty"`
 }
 
 type editMessageResponse struct {
@@ -267,15 +273,23 @@ func (a *API) editMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tx, err := a.pool.Begin(r.Context())
+	if err != nil {
+		slog.Error("starting edit", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not edit the message")
+		return
+	}
+	defer tx.Rollback(r.Context())
+
 	// deleted is checked again in the UPDATE: a deletion that lands
 	// between the read above and here must win.
-	var editedAt time.Time
-	err = a.pool.QueryRow(r.Context(),
+	var editedAt, createdAt time.Time
+	err = tx.QueryRow(r.Context(),
 		`UPDATE messages SET body = $2, edited_at = now()
 		  WHERE id = $1 AND NOT deleted
-		  RETURNING edited_at`,
+		  RETURNING edited_at, created_at`,
 		messageID, []byte(req.Body),
-	).Scan(&editedAt)
+	).Scan(&editedAt, &createdAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusConflict, "the message was deleted")
 		return
@@ -286,13 +300,68 @@ func (a *API) editMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Replace the mention set, remembering who is new to it: only they
+	// are told. Someone already mentioned heard about it the first time.
+	var mentions *[]mentionInfo
+	var added []mentionInfo
+	if req.Mentions != nil {
+		list, err := mentionTargets(r.Context(), tx, channelID, session.UserID, *req.Mentions)
+		if errors.Is(err, errTooManyMentions) {
+			writeError(w, http.StatusBadRequest, "too many mentions in one message")
+			return
+		}
+		if err != nil {
+			slog.Error("checking mentions", "err", err)
+			writeError(w, http.StatusInternalServerError, "could not edit the message")
+			return
+		}
+		before := make(map[string]bool)
+		rows, err := tx.Query(r.Context(),
+			`DELETE FROM message_mentions WHERE message_id = $1 RETURNING user_id::text`, messageID)
+		if err == nil {
+			for rows.Next() {
+				var id string
+				if err = rows.Scan(&id); err != nil {
+					break
+				}
+				before[id] = true
+			}
+			rows.Close()
+			if err == nil {
+				err = rows.Err()
+			}
+		}
+		if err == nil {
+			err = saveMentions(r.Context(), tx, messageID, list)
+		}
+		if err != nil {
+			slog.Error("replacing mentions", "err", err)
+			writeError(w, http.StatusInternalServerError, "could not edit the message")
+			return
+		}
+		for _, m := range list {
+			if !before[m.UserID] {
+				added = append(added, m)
+			}
+		}
+		mentions = &list
+	}
+
+	if err := tx.Commit(r.Context()); err != nil {
+		slog.Error("committing edit", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not edit the message")
+		return
+	}
+
 	a.emitChannel(channelID, messageEditedEvent{
 		Type:      "message_edited",
 		ChannelID: channelID,
 		MessageID: messageID,
 		Body:      req.Body,
 		EditedAt:  editedAt,
+		Mentions:  mentions,
 	})
+	a.notifyMentions(added, channelID, messageID, session.UserID, session.Username, createdAt)
 	writeJSON(w, http.StatusOK, editMessageResponse{EditedAt: editedAt})
 }
 

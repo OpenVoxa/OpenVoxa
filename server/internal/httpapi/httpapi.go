@@ -161,6 +161,9 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 	// Older history, page by page (the websocket sends the newest page).
 	mux.HandleFunc("GET /api/v1/channels/{id}/messages",
 		withUUIDPath(api.requireAuth(api.listMessages)))
+	// Who may view a channel, for @mentions.
+	mux.HandleFunc("GET /api/v1/channels/{id}/members",
+		withUUIDPath(api.requireAuth(api.listChannelMembers)))
 
 	mux.HandleFunc("GET /api/v1/users",
 		api.requireStaff(api.listUsers))
@@ -394,6 +397,11 @@ type channelResponse struct {
 	// voice channel. Clients compare it with what they last read to mark
 	// channels unread.
 	LastMessageAt *time.Time `json:"last_message_at,omitempty"`
+
+	// When the newest message mentioning the caller was posted (deleted
+	// ones excluded). Compared with the read mark the same way, for the
+	// mention badge.
+	LastMentionAt *time.Time `json:"last_mention_at,omitempty"`
 }
 
 type channelAccessEntry struct {
@@ -420,7 +428,10 @@ func (a *API) listChannels(w http.ResponseWriter, r *http.Request) {
 		`SELECT c.id, c.name, c.kind, c.encrypted,
 		        EXTRACT(EPOCH FROM c.retention)::float8,
 		        c.force_ptt, c.history_sharing, `+canPostSQL+`, `+channelAccessJSON+`,
-		        (SELECT max(m.created_at) FROM messages m WHERE m.channel_id = c.id)
+		        (SELECT max(m.created_at) FROM messages m WHERE m.channel_id = c.id),
+		        (SELECT max(m.created_at) FROM message_mentions mm
+		           JOIN messages m ON m.id = mm.message_id
+		          WHERE mm.user_id = u.id AND m.channel_id = c.id AND NOT m.deleted)
 		   FROM channels c, users u
 		  WHERE u.id = $1 AND `+canViewSQL+`
 		  ORDER BY c.name`,
@@ -440,7 +451,7 @@ func (a *API) listChannels(w http.ResponseWriter, r *http.Request) {
 		var retentionSeconds *float64
 
 		if err := rows.Scan(&c.ID, &c.Name, &c.Kind, &c.Encrypted, &retentionSeconds,
-			&c.ForcePTT, &c.HistorySharing, &c.CanPost, &c.Access, &c.LastMessageAt); err != nil {
+			&c.ForcePTT, &c.HistorySharing, &c.CanPost, &c.Access, &c.LastMessageAt, &c.LastMentionAt); err != nil {
 			slog.Error("scanning channel", "err", err)
 			writeError(w, http.StatusInternalServerError, "could not list channels")
 			return

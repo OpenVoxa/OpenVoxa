@@ -5,23 +5,26 @@
  * Join and leave tones for voice calls: two short notes made with
  * WebAudio, rising for a join and falling for a leave. No sound files.
  * Turned off with the "Join and leave sounds" setting (settings.ts).
+ * Mentions get their own two notes and their own setting.
  */
 
 import { useEffect, useRef } from "react";
 import type { VoiceSnapshot } from "@core/voice";
-import { getToggle, VOICE_TONES } from "./settings";
+import { getToggle, MENTION_SOUND, VOICE_TONES } from "./settings";
 
 let ctx: AudioContext | null = null;
 
 /** After connecting, people already in the call are not announced. */
 const SETTLE_MS = 2000;
 
-export function playTone(kind: "join" | "leave"): void {
-  if (!getToggle(VOICE_TONES)) return;
+export function playTone(kind: "join" | "leave" | "mention"): void {
+  if (!getToggle(kind === "mention" ? MENTION_SOUND : VOICE_TONES)) return;
   try {
     ctx ??= new AudioContext();
     if (ctx.state === "suspended") void ctx.resume();
-    const notes = kind === "join" ? [523.25, 783.99] : [783.99, 523.25]; // C5, G5
+    const notes = kind === "join" ? [523.25, 783.99] // C5, G5
+      : kind === "leave" ? [783.99, 523.25]
+      : [880, 1174.66]; // A5, D6: higher, so it isn't mistaken for a call
     const start = ctx.currentTime + 0.01;
     notes.forEach((freq, i) => {
       const t = start + i * 0.09;

@@ -11,7 +11,7 @@ import {
   useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore,
   type FormEvent, type KeyboardEvent, type ReactNode,
 } from "react";
-import type { AttachmentInfo, ChannelSnapshot, ChannelView, ChatMessage, CryptoState, Notice, Upload } from "@core/chat";
+import type { AttachmentInfo, ChannelSnapshot, ChannelView, ChatMessage, CryptoState, Mention, Notice, Upload } from "@core/chat";
 import type { ApiCall } from "@core/identity";
 import { describeRetention, Modal } from "./ChannelDialogs";
 import { firstLink, Markdown } from "./markdown";
@@ -29,9 +29,10 @@ function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export function ChannelPane({ view, call, username, canDeleteAny }: {
+export function ChannelPane({ view, call, userId, username, canDeleteAny }: {
   view: ChannelView;
   call: ApiCall;
+  userId: string;
   username: string;
   canDeleteAny: boolean;
 }) {
@@ -103,6 +104,7 @@ export function ChannelPane({ view, call, username, canDeleteAny }: {
         snap={snap}
         call={call}
         previews={previews}
+        userId={userId}
         username={username}
         canDeleteAny={canDeleteAny}
         editing={editing}
@@ -160,11 +162,12 @@ const STICK_PX = 80;
 /** Start loading older history this close to the top. */
 const OLDER_PX = 300;
 
-function MessageList({ view, snap, call, previews, username, canDeleteAny, editing, setEditing, onError }: {
+function MessageList({ view, snap, call, previews, userId, username, canDeleteAny, editing, setEditing, onError }: {
   view: ChannelView;
   snap: ChannelSnapshot;
   call: ApiCall;
   previews: boolean;
+  userId: string;
   username: string;
   canDeleteAny: boolean;
   editing: string | null;
@@ -256,7 +259,9 @@ function MessageList({ view, snap, call, previews, username, canDeleteAny, editi
         encrypted={snap.channel.encrypted}
         previews={previews}
         compact={compact}
+        userId={userId}
         username={username}
+        members={snap.members}
         canDelete={!m.pending && !m.deleted && (m.own || canDeleteAny)}
         canEdit={snap.canPost && m.own && !m.pending && !m.deleted && !m.unreadable}
         canReport={!m.own && !!m.authorId && !m.pending && !m.deleted && !m.unreadable}
@@ -414,13 +419,15 @@ const UNREADABLE: Record<NonNullable<ChatMessage["unreadable"]>, string> = {
 
 // ------------------------------------------------------------ message
 
-function Message({ m, call, encrypted, previews, compact, username, canDelete, canEdit, canReport, editing, onEdit, onCancelEdit, onSaveEdit, onDelete, onReport, onDismiss }: {
+function Message({ m, call, encrypted, previews, compact, userId, username, members, canDelete, canEdit, canReport, editing, onEdit, onCancelEdit, onSaveEdit, onDelete, onReport, onDismiss }: {
   m: ChatMessage;
   call: ApiCall;
   encrypted: boolean;
   previews: boolean;
   compact: boolean;
+  userId: string;
   username: string;
+  members: readonly Mention[];
   canDelete: boolean;
   canEdit: boolean;
   canReport: boolean;
@@ -437,13 +444,14 @@ function Message({ m, call, encrypted, previews, compact, username, canDelete, c
   const gone = !m.authorId;
   const name = gone ? "Deleted user" : m.username || (m.own ? username : "unknown");
   const classes = ["msg", compact ? "compact" : "", m.pending ? "pending" : "", m.failed ? "failed" : "",
-    m.deleted || m.unreadable ? "faint" : ""].filter(Boolean).join(" ");
+    m.deleted || m.unreadable ? "faint" : "",
+    m.mentionsMe && !m.deleted && !m.unreadable ? "mentions-me" : ""].filter(Boolean).join(" ");
 
   let body: ReactNode;
   if (m.deleted) body = <em>Message deleted.</em>;
   else if (m.unreadable) body = <em>{UNREADABLE[m.unreadable]}</em>;
-  else if (editing) body = <EditBox initial={m.text} onSave={onSaveEdit} onCancel={onCancelEdit} />;
-  else body = m.text ? <Markdown text={m.text} /> : null;
+  else if (editing) body = <EditBox initial={m.text} members={members} onSave={onSaveEdit} onCancel={onCancelEdit} />;
+  else body = m.text ? <Markdown text={m.text} mentions={m.mentions} me={userId} /> : null;
   const link = !m.deleted && !m.unreadable && !m.pending && !editing ? firstLink(m.text) : null;
 
   return (
@@ -513,14 +521,16 @@ function Attachments({ m, encrypted }: { m: ChatMessage; encrypted: boolean }) {
   );
 }
 
-function EditBox({ initial, onSave, onCancel }: {
+function EditBox({ initial, members, onSave, onCancel }: {
   initial: string;
+  members: readonly Mention[];
   onSave: (text: string) => Promise<void>;
   onCancel: () => void;
 }) {
   const [text, setText] = useState(initial);
   const [busy, setBusy] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
+  const picker = useMentionPicker(members, text, setText, ref);
   useEffect(() => {
     const el = ref.current;
     if (el) {
@@ -538,6 +548,7 @@ function EditBox({ initial, onSave, onCancel }: {
   }
 
   function onKey(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (picker.onKey(e)) return;
     if (e.key === "Escape") {
       e.preventDefault();
       onCancel();
@@ -549,7 +560,9 @@ function EditBox({ initial, onSave, onCancel }: {
 
   return (
     <div className="edit-box">
-      <AutoTextarea ref={ref} value={text} onChange={setText} onKeyDown={onKey} disabled={busy} label="Edit message" />
+      {picker.list}
+      <AutoTextarea ref={ref} value={text} onChange={setText} onKeyDown={onKey} onSelect={picker.onSelect}
+        disabled={busy} label="Edit message" />
       <span className="muted small">
         Esc to <button className="link small" onClick={onCancel}>cancel</button> · Enter to{" "}
         <button className="link small" onClick={() => void save()}>save</button>
@@ -586,6 +599,7 @@ function Composer({ snap, call, uploads, onSend, onEditLast }: {
   const uploading = files.some((f) => f.status === "uploading");
   const ready = files.flatMap((f) => (f.status === "ready" && f.result ? [f.result] : []));
   const canSend = !reason && !uploading && (!!text.trim() || ready.length > 0);
+  const mentionPicker = useMentionPicker(snap.members, text, setText, ref);
 
   // Focus follows the channel.
   useEffect(() => {
@@ -602,6 +616,7 @@ function Composer({ snap, call, uploads, onSend, onEditLast }: {
   }
 
   function onKey(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (mentionPicker.onKey(e)) return;
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       void send();
@@ -615,6 +630,7 @@ function Composer({ snap, call, uploads, onSend, onEditLast }: {
     <div className="composer-wrap">
     <UploadTray items={files} onRemove={uploads.remove} />
     <div className="composer">
+      {mentionPicker.list}
       {gifs && !reason && (
         <GifPicker call={call} channelId={snap.channel.id} onClose={closeGifs}
           onPick={async (a) => {
@@ -636,6 +652,7 @@ function Composer({ snap, call, uploads, onSend, onEditLast }: {
         value={text}
         onChange={setText}
         onKeyDown={onKey}
+        onSelect={mentionPicker.onSelect}
         onPaste={(e) => {
           // A pasted screenshot or copied file. Text pastes as usual.
           if (reason || !e.clipboardData.files.length) return;
@@ -659,11 +676,12 @@ function Composer({ snap, call, uploads, onSend, onEditLast }: {
 }
 
 /** A textarea that grows with its content, up to a limit (CSS). */
-function AutoTextarea({ ref, value, onChange, onKeyDown, onPaste, disabled, placeholder, label }: {
+function AutoTextarea({ ref, value, onChange, onKeyDown, onSelect, onPaste, disabled, placeholder, label }: {
   ref: React.Ref<HTMLTextAreaElement>;
   value: string;
   onChange: (v: string) => void;
   onKeyDown: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
+  onSelect?: (e: React.SyntheticEvent<HTMLTextAreaElement>) => void;
   onPaste?: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
   disabled?: boolean;
   placeholder?: string;
@@ -687,10 +705,109 @@ function AutoTextarea({ ref, value, onChange, onKeyDown, onPaste, disabled, plac
       value={value}
       onChange={(e) => onChange(e.target.value)}
       onKeyDown={onKeyDown}
+      onSelect={onSelect}
       onPaste={onPaste}
       disabled={disabled}
       placeholder={placeholder}
       aria-label={label}
     />
   );
+}
+
+// ------------------------------------------------------ @ autocomplete
+
+/** "@" plus what has been typed of a name, right before the caret. */
+const MENTION_TYPING = /(?:^|[^\w@])@([A-Za-z0-9_-]{0,32})$/;
+const MAX_SUGGESTIONS = 8;
+
+/**
+ * The list of names that pops up while typing "@". Offers only people who
+ * may view the channel (the server drops anyone else anyway). Arrow keys
+ * move, Enter or Tab picks, Escape closes; clicking works too.
+ */
+function useMentionPicker(
+  members: readonly Mention[],
+  text: string,
+  setText: (v: string) => void,
+  ref: React.RefObject<HTMLTextAreaElement | null>,
+) {
+  // Where the "@" is and what follows it, or null when not typing a name.
+  const [query, setQuery] = useState<{ at: number; q: string } | null>(null);
+  const [active, setActive] = useState(0);
+
+  const q = query?.q.toLowerCase() ?? "";
+  const matches = query
+    ? members.filter((m) => m.username.toLowerCase().startsWith(q)).slice(0, MAX_SUGGESTIONS)
+    : [];
+  const open = matches.length > 0;
+
+  const onSelect = (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
+    const el = e.currentTarget;
+    const caret = el.selectionStart;
+    const m = el.selectionEnd === caret ? MENTION_TYPING.exec(el.value.slice(0, caret)) : null;
+    const next = m ? { at: caret - m[1].length - 1, q: m[1] } : null;
+    if (next?.at !== query?.at || next?.q !== query?.q) {
+      setQuery(next);
+      setActive(0);
+    }
+  };
+
+  const pick = (who: Mention) => {
+    if (!query) return;
+    const end = query.at + 1 + query.q.length;
+    const insert = `@${who.username} `;
+    const after = text.slice(end).replace(/^ /, "");
+    setText(text.slice(0, query.at) + insert + after);
+    setQuery(null);
+    const caret = query.at + insert.length;
+    requestAnimationFrame(() => {
+      const el = ref.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(caret, caret);
+    });
+  };
+
+  /** Handle a key if the list is open; true if it was used. */
+  const onKey = (e: KeyboardEvent<HTMLTextAreaElement>): boolean => {
+    if (!open || e.nativeEvent.isComposing) return false;
+    switch (e.key) {
+      case "ArrowDown":
+        setActive((i) => (i + 1) % matches.length);
+        break;
+      case "ArrowUp":
+        setActive((i) => (i - 1 + matches.length) % matches.length);
+        break;
+      case "Enter":
+      case "Tab":
+        if (e.shiftKey) return false;
+        pick(matches[Math.min(active, matches.length - 1)]);
+        break;
+      case "Escape":
+        setQuery(null);
+        break;
+      default:
+        return false;
+    }
+    e.preventDefault();
+    return true;
+  };
+
+  const list = open ? (
+    <ul className="mention-list" role="listbox" aria-label="People in this channel">
+      {matches.map((m, i) => (
+        <li key={m.user_id} role="option" aria-selected={i === active}
+          className={i === active ? "active" : undefined}
+          onMouseDown={(e) => {
+            e.preventDefault(); // keep focus in the textarea
+            pick(m);
+          }}
+          onMouseEnter={() => setActive(i)}>
+          @{m.username}
+        </li>
+      ))}
+    </ul>
+  ) : null;
+
+  return { list, onKey, onSelect };
 }

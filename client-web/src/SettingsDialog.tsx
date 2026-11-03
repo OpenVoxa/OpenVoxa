@@ -20,7 +20,7 @@ import { call as plainCall, type Session } from "./api";
 import { Modal } from "./ChannelDialogs";
 import { checkPassword } from "./password";
 import { PasswordRules } from "./PasswordRules";
-import { IMAGES_IN_TAB, PREVIEWS_ENCRYPTED, setToggle, useToggle } from "./settings";
+import { IMAGES_IN_TAB, MENTION_NOTIFY, MENTION_SOUND, PREVIEWS_ENCRYPTED, setToggle, useToggle } from "./settings";
 import { VoiceSettings } from "./VoiceUI";
 
 export type SettingsTab = "account" | "voice" | "chat";
@@ -88,8 +88,46 @@ export function SettingsDialog({ tab: initialTab, session, call, deviceId, backu
 function ChatSettings() {
   const previews = useToggle(PREVIEWS_ENCRYPTED);
   const imagesInTab = useToggle(IMAGES_IN_TAB);
+  const mentionSound = useToggle(MENTION_SOUND);
+  const mentionNotify = useToggle(MENTION_NOTIFY);
+  const supported = typeof Notification !== "undefined";
+  const [denied, setDenied] = useState(supported && Notification.permission === "denied");
+
+  async function toggleNotify(on: boolean) {
+    if (!on || !supported) {
+      setToggle(MENTION_NOTIFY, false);
+      return;
+    }
+    // The browser asks once; after a "no" only its own settings can undo it.
+    const answer = Notification.permission === "default"
+      ? await Notification.requestPermission()
+      : Notification.permission;
+    setDenied(answer === "denied");
+    setToggle(MENTION_NOTIFY, answer === "granted");
+  }
+
   return (
     <>
+      <label className="check">
+        <input type="checkbox" checked={mentionSound} onChange={(e) => setToggle(MENTION_SOUND, e.target.checked)} />
+        <span>
+          Sound when someone mentions you
+          <span className="muted small block">Plays unless you're already looking at that channel.</span>
+        </span>
+      </label>
+      <label className="check">
+        <input type="checkbox" checked={mentionNotify && !denied} disabled={!supported}
+          onChange={(e) => void toggleNotify(e.target.checked)} />
+        <span>
+          Desktop notification when someone mentions you
+          <span className="muted small block">
+            {!supported ? "This browser doesn't support notifications."
+              : denied ? "Notifications are blocked for this site. Allow them in the browser's site settings, then turn this on."
+              : "Shown while this tab is in the background or another channel is open. It says who mentioned you and"
+                + " where, never the message itself. Only while OpenVoxa is open in a tab."}
+          </span>
+        </span>
+      </label>
       <label className="check">
         <input type="checkbox" checked={previews} onChange={(e) => setToggle(PREVIEWS_ENCRYPTED, e.target.checked)} />
         <span>

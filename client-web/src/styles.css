@@ -148,6 +148,12 @@ textarea:focus { outline: none; border-color: var(--accent); }
   --sidebar-active: #474747;
   --line: #444444;
   --hover-row: #383838;
+  /* @mentions: a pill for any mention, stronger for one of you. Tints of
+   * the accent, so they follow it. */
+  --mention-bg: color-mix(in srgb, var(--accent) 18%, transparent);
+  --mention-text: color-mix(in srgb, var(--accent) 55%, #fff);
+  --mention-me-bg: color-mix(in srgb, var(--accent) 35%, transparent);
+  --mention-row: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 .small { font-size: 12px; }
 button.link.small { font-size: 12px; }
@@ -647,3 +653,49 @@ button.dot-host { position: relative; }
 .inline-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .inline-form label.inline { display: flex; align-items: center; gap: 6px; text-transform: none; font-weight: normal; margin: 0; }
 .inline-form input.narrow { width: 64px; }
+
+/* ------------------------------------------------------------ mentions */
+.mention {
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--mention-bg);
+  color: var(--mention-text);
+  font-weight: 600;
+}
+.mention.me { background: var(--mention-me-bg); color: var(--text); }
+.msg.mentions-me { background: var(--mention-row); box-shadow: inset 2px 0 0 var(--accent); }
+.msg.mentions-me:hover { background: var(--mention-me-bg); }
+.channel .mention-badge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--alert);
+  color: var(--on-accent);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  flex: none;
+}
+.channel-row:has(.gear):hover .channel .mention-badge { visibility: hidden; }
+.edit-box { position: relative; }
+.mention-list {
+  position: absolute;
+  left: 16px;
+  bottom: calc(100% + 4px);
+  z-index: 5;
+  min-width: 200px;
+  max-width: calc(100% - 32px);
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.4);
+}
+.edit-box .mention-list { left: 0; }
+.mention-list li { padding: 5px 8px; border-radius: 4px; cursor: pointer; }
+.mention-list li.active { background: var(--sidebar-active); }
+

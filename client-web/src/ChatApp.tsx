@@ -11,7 +11,7 @@
  * only draws their snapshots and forwards what the user does.
  */
 
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Chat, type ChannelView, type ChannelInfo, type VoicePresence } from "@core/chat";
 import type { VoiceClient, VoiceParticipant } from "@core/voice";
 import type { BackupStatus } from "@core/recovery";
@@ -24,7 +24,8 @@ import {
   PersonMenu, ShareDialog, Stage, VoiceBar, VoiceRoster,
   usePushToTalk, useVoiceSnapshot,
 } from "./VoiceUI";
-import { useVoiceTones } from "./tones";
+import { playTone, useVoiceTones } from "./tones";
+import { getToggle, MENTION_NOTIFY } from "./settings";
 import { SettingsDialog, type AccountActions, type SettingsTab } from "./SettingsDialog";
 import { ServerSettingsDialog } from "./ServerSettings";
 
@@ -48,6 +49,10 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   const [failed, setFailed] = useState<string | null>(null);
   const [channels, setChannels] = useState<readonly ChannelInfo[]>([]);
   const [unread, setUnread] = useState<ReadonlySet<string>>(new Set());
+  const [mentions, setMentions] = useState<ReadonlySet<string>>(new Set());
+  // The chat listener is set up once; it reads the channel names from here.
+  const channelsRef = useRef<readonly ChannelInfo[]>([]);
+  channelsRef.current = channels;
   const [openId, setOpenId] = useState<string | null>(null);
   const [view, setView] = useState<ChannelView | null>(null);
   // Permissions and rank move while signed in (perms_changed); start
@@ -101,6 +106,30 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
         c.on((e) => {
           if (e.type === "channels") setChannels(e.channels);
           else if (e.type === "unread") setUnread(e.unread);
+          else if (e.type === "mentions") setMentions(e.mentions);
+          else if (e.type === "mentioned") {
+            // Quiet only when you're already looking at that channel.
+            const looking = e.open && document.visibilityState === "visible" && document.hasFocus();
+            if (looking) return;
+            playTone("mention");
+            if (getToggle(MENTION_NOTIFY) && typeof Notification !== "undefined"
+              && Notification.permission === "granted") {
+              const name = channelsRef.current.find((ch) => ch.id === e.channelId)?.name;
+              // Who and where only: in an encrypted channel the text isn't
+              // decrypted until the channel is open, and a notification
+              // can be seen by anyone near the screen.
+              const n = new Notification(`${e.username || "Someone"} mentioned you`, {
+                body: name ? `in #${name}` : undefined,
+                tag: `mention:${e.messageId}`,
+              });
+              n.onclick = () => {
+                window.focus();
+                setOpenId(e.channelId);
+                setStage(null);
+                n.close();
+              };
+            }
+          }
           else if (e.type === "voice") setPresence(e.presence);
           else if (e.type === "reports_changed") setReportsTick((t) => t + 1);
           else if (e.type === "me_changed") {
@@ -121,6 +150,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
         }
         setChannels(c.channels);
         setUnread(c.unread);
+        setMentions(c.mentions);
         setPresence(c.voicePresence);
         setChat(c);
       })
@@ -291,7 +321,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
             {text.map((c) => (
               <li key={c.id} className="channel-row">
                 <button
-                  className={`channel${c.id === openId ? " active" : ""}${unread.has(c.id) ? " unread" : ""}`}
+                  className={`channel${c.id === openId ? " active" : ""}${unread.has(c.id) || mentions.has(c.id) ? " unread" : ""}`}
                   onClick={() => {
                     setOpenId(c.id);
                     setStage(null);
@@ -302,7 +332,9 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
                   <span className="hash" aria-hidden>#</span>
                   <span className="name">{c.name}</span>
                   {c.encrypted && <LockIcon />}
-                  {unread.has(c.id) && <span className="dot" aria-label="unread" />}
+                  {mentions.has(c.id)
+                    ? <span className="mention-badge" aria-label="you were mentioned" title="You were mentioned">@</span>
+                    : unread.has(c.id) && <span className="dot" aria-label="unread" />}
                 </button>
                 {gear(c)}
               </li>
@@ -365,7 +397,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           <Stage voice={voiceClient} screens={screens} focus={stage.focus}
             setFocus={(focus) => setStage({ focus })} onBack={() => setStage(null)} />
         ) : view ? (
-          <ChannelPane key={view.channel.id} view={view} call={call} username={session.username} canDeleteAny={canDeleteAny} />
+          <ChannelPane key={view.channel.id} view={view} call={call} userId={session.user_id} username={session.username} canDeleteAny={canDeleteAny} />
         ) : (
           <div className="pane-empty muted">{text.length ? "Opening…" : "Nothing to show yet."}</div>
         )}
