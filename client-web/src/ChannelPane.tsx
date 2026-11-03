@@ -4,16 +4,16 @@
 /**
  * One open text channel: header, message list with history paging, and
  * the composer. Edit and delete act on your own messages (delete also on
- * anyone's with the delete_messages permission).
+ * anyone's with the delete_messages permission); Report on other people's.
  */
 
 import {
   useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore,
-  type KeyboardEvent, type ReactNode,
+  type FormEvent, type KeyboardEvent, type ReactNode,
 } from "react";
 import type { AttachmentInfo, ChannelSnapshot, ChannelView, ChatMessage, CryptoState, Notice, Upload } from "@core/chat";
 import type { ApiCall } from "@core/identity";
-import { describeRetention } from "./ChannelDialogs";
+import { describeRetention, Modal } from "./ChannelDialogs";
 import { firstLink, Markdown } from "./markdown";
 import { LinkPreview } from "./previews";
 import { GifPicker, useGifsEnabled } from "./gifs";
@@ -176,6 +176,7 @@ function MessageList({ view, snap, call, previews, username, canDeleteAny, editi
   // The message at the top of the view and its offset from the top, so
   // the view can stay still while older messages are added above it.
   const anchor = useRef<{ id: string; delta: number } | null>(null);
+  const [reporting, setReporting] = useState<ChatMessage | null>(null);
 
   const remember = (el: HTMLDivElement) => {
     anchor.current = null;
@@ -258,6 +259,8 @@ function MessageList({ view, snap, call, previews, username, canDeleteAny, editi
         username={username}
         canDelete={!m.pending && !m.deleted && (m.own || canDeleteAny)}
         canEdit={snap.canPost && m.own && !m.pending && !m.deleted && !m.unreadable}
+        canReport={!m.own && !!m.authorId && !m.pending && !m.deleted && !m.unreadable}
+        onReport={() => setReporting(m)}
         editing={editing === m.id}
         onEdit={() => setEditing(m.id)}
         onCancelEdit={() => setEditing(null)}
@@ -303,7 +306,81 @@ function MessageList({ view, snap, call, previews, username, canDeleteAny, editi
       </div>
       {!snap.loaded && <div className="muted small center">Loading…</div>}
       {rows}
+      {reporting && (
+        <ReportDialog m={reporting} call={call} encrypted={snap.channel.encrypted} onClose={() => setReporting(null)} />
+      )}
     </div>
+  );
+}
+
+/**
+ * Report someone's message to the moderators. The server is sent the
+ * text as this device shows it: in a plain channel it checks that against
+ * its own copy and refuses a mismatch; in an encrypted channel it can't
+ * check yet (decisions.md Open items), so moderators see it as unchecked.
+ */
+function ReportDialog({ m, call, encrypted, onClose }: {
+  m: ChatMessage;
+  call: ApiCall;
+  encrypted: boolean;
+  onClose: () => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  async function send(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await call(`/api/v1/messages/${m.id}/report`, {
+        method: "POST",
+        body: JSON.stringify({ reason: reason.trim(), body: m.text }),
+      });
+      setDone(true);
+    } catch (err) {
+      setError(errText(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title="Report message" onClose={onClose}>
+      <div className="modal-body">
+        {done ? (
+          <>
+            <p>Reported. The moderators will take a look.</p>
+            <div className="modal-actions">
+              <button className="primary" onClick={onClose} autoFocus>Done</button>
+            </div>
+          </>
+        ) : (
+          <form className="settings-form" onSubmit={send}>
+            <blockquote className="quoted small">
+              <strong>{m.username}</strong>
+              <span className="block">{m.text || <em className="muted">(files only)</em>}</span>
+            </blockquote>
+            <label>
+              Why are you reporting it? <span className="muted small">(optional)</span>
+              <textarea value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} rows={3} autoFocus />
+            </label>
+            <p className="muted small">
+              Moderators will see this message, who wrote it, your reason and your username.
+              {encrypted && " This channel is encrypted, so reporting sends the message's text to the server as your device"
+                + " shows it. The server can't check that text yet, so moderators see the report as unchecked."}
+            </p>
+            {error && <p className="error" role="alert">{error}</p>}
+            <div className="modal-actions">
+              <button type="button" className="secondary" onClick={onClose} disabled={busy}>Cancel</button>
+              <button type="submit" className="primary" disabled={busy}>{busy ? "Reporting…" : "Report"}</button>
+            </div>
+          </form>
+        )}
+      </div>
+    </Modal>
   );
 }
 
@@ -337,7 +414,7 @@ const UNREADABLE: Record<NonNullable<ChatMessage["unreadable"]>, string> = {
 
 // ------------------------------------------------------------ message
 
-function Message({ m, call, encrypted, previews, compact, username, canDelete, canEdit, editing, onEdit, onCancelEdit, onSaveEdit, onDelete, onDismiss }: {
+function Message({ m, call, encrypted, previews, compact, username, canDelete, canEdit, canReport, editing, onEdit, onCancelEdit, onSaveEdit, onDelete, onReport, onDismiss }: {
   m: ChatMessage;
   call: ApiCall;
   encrypted: boolean;
@@ -346,11 +423,13 @@ function Message({ m, call, encrypted, previews, compact, username, canDelete, c
   username: string;
   canDelete: boolean;
   canEdit: boolean;
+  canReport: boolean;
   editing: boolean;
   onEdit: () => void;
   onCancelEdit: () => void;
   onSaveEdit: (text: string) => Promise<void>;
   onDelete: (skipConfirm: boolean) => void;
+  onReport: () => void;
   onDismiss: () => void;
 }) {
   // No author: the account was deleted (the server sends author_id "" and
@@ -399,9 +478,10 @@ function Message({ m, call, encrypted, previews, compact, username, canDelete, c
           Not sent: {m.failed}. <button className="link small" onClick={onDismiss}>Dismiss</button>
         </div>
       )}
-      {!editing && (canEdit || canDelete) && (
+      {!editing && (canEdit || canDelete || canReport) && (
         <div className="actions">
           {canEdit && <button onClick={onEdit} title="Edit">Edit</button>}
+          {canReport && <button onClick={onReport} title="Report to the moderators">Report</button>}
           {canDelete && (
             <button className="danger" onClick={(e) => onDelete(e.shiftKey)} title="Delete (Shift-click skips the question)">
               Delete
