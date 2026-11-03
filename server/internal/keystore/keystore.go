@@ -17,14 +17,17 @@
 package keystore
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 )
 
@@ -37,6 +40,16 @@ var (
 	// authenticate under the account's key.
 	ErrBadSealed = errors.New("keystore: sealed data is invalid")
 
+	// ErrWrappedNoKEK means a key file is wrapped under a key-encryption
+	// key but none is configured: the operator set OPENVOXA_KEK once and
+	// has since removed or lost it. Failing loudly beats quietly treating
+	// the wrapped bytes as a key and producing garbage.
+	ErrWrappedNoKEK = errors.New("keystore: key file is wrapped but OPENVOXA_KEK is not set")
+
+	// ErrBadKEK means a wrapped key file did not authenticate under the
+	// configured KEK: almost always the wrong key.
+	ErrBadKEK = errors.New("keystore: key file did not unwrap (wrong OPENVOXA_KEK?)")
+
 	errBadID = errors.New("keystore: account id is not a UUID")
 )
 
@@ -46,6 +59,11 @@ const (
 	// formatV1 is the first byte of everything Seal produces, so the
 	// layout can change later without guessing which one a row uses.
 	formatV1 = 0x01
+
+	// wrapV1 is the first byte of a key file stored wrapped under the KEK.
+	// A raw (unwrapped) key file is exactly keySize bytes, so length tells
+	// the two apart; the marker guards against a future layout change.
+	wrapV1 = 0x01
 )
 
 // Account ids become file names, so only a canonical UUID is accepted.
@@ -54,6 +72,12 @@ var uuidRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4
 
 type Store struct {
 	dir string
+
+	// wrap encrypts each account key where it rests on disk, when a KEK is
+	// configured (envelope encryption). Nil means keys are stored in the
+	// clear. It never touches message bodies: those stay sealed under the
+	// per-account key, which this only protects at rest.
+	wrap cipher.AEAD
 
 	// Keys are tiny and read on every history page, so they are cached
 	// for the life of the process. Destroy removes the cached copy too.
@@ -69,7 +93,11 @@ type Store struct {
 // Open prepares the key folder, creating it if needed, and checks the
 // server can write there. A folder it cannot write would otherwise only
 // show up at the first message, as a failed send.
-func Open(dir string) (*Store, error) {
+//
+// kek, when non-nil, must be 32 bytes and wraps every account key at
+// rest. Existing clear-text key files stay readable and are upgraded in
+// place by WrapExisting; new ones are written wrapped.
+func Open(dir string, kek []byte) (*Store, error) {
 	if err := os.MkdirAll(filepath.Join(dir, "tmp"), 0o700); err != nil {
 		return nil, fmt.Errorf("keystore: preparing %s: %w", dir, err)
 	}
@@ -80,8 +108,21 @@ func Open(dir string) (*Store, error) {
 	probe.Close()
 	os.Remove(probe.Name())
 
-	return &Store{dir: dir, cache: map[string]cipher.AEAD{}, destroyed: map[string]bool{}}, nil
+	s := &Store{dir: dir, cache: map[string]cipher.AEAD{}, destroyed: map[string]bool{}}
+	if kek != nil {
+		block, err := aes.NewCipher(kek)
+		if err != nil {
+			return nil, fmt.Errorf("keystore: key-encryption key: %w", err)
+		}
+		if s.wrap, err = cipher.NewGCM(block); err != nil {
+			return nil, fmt.Errorf("keystore: key-encryption key: %w", err)
+		}
+	}
+	return s, nil
 }
+
+// WrapsAtRest reports whether account keys are encrypted on disk.
+func (s *Store) WrapsAtRest() bool { return s.wrap != nil }
 
 func (s *Store) path(userID string) string {
 	return filepath.Join(s.dir, userID+".key")
@@ -101,12 +142,15 @@ func (s *Store) aead(userID string, create bool) (cipher.AEAD, error) {
 		return a, nil
 	}
 
-	key, err := os.ReadFile(s.path(userID))
+	raw, err := os.ReadFile(s.path(userID))
+	var key []byte
 	if errors.Is(err, os.ErrNotExist) {
 		if !create || s.destroyed[userID] {
 			return nil, ErrNoKey
 		}
 		key, err = s.create(userID)
+	} else if err == nil {
+		key, err = s.toKey(userID, raw)
 	}
 	if err != nil {
 		return nil, err
@@ -137,13 +181,18 @@ func (s *Store) create(userID string) ([]byte, error) {
 		return nil, err
 	}
 
+	payload := key
+	if s.wrap != nil {
+		payload = s.wrapKey(userID, key)
+	}
+
 	tmp, err := os.CreateTemp(filepath.Join(s.dir, "tmp"), "key-*")
 	if err != nil {
 		return nil, err
 	}
 	defer os.Remove(tmp.Name())
 
-	if _, err := tmp.Write(key); err != nil {
+	if _, err := tmp.Write(payload); err != nil {
 		tmp.Close()
 		return nil, err
 	}
@@ -157,12 +206,157 @@ func (s *Store) create(userID string) ([]byte, error) {
 
 	if err := os.Link(tmp.Name(), s.path(userID)); err != nil {
 		if errors.Is(err, os.ErrExist) {
-			// Another process made it first; theirs wins.
-			return os.ReadFile(s.path(userID))
+			// Another process made it first; theirs wins. Decode whatever
+			// is on disk, which may already be wrapped.
+			raw, rerr := os.ReadFile(s.path(userID))
+			if rerr != nil {
+				return nil, rerr
+			}
+			return s.toKey(userID, raw)
 		}
 		return nil, err
 	}
 	return key, nil
+}
+
+// wrapAAD binds a wrapped key file to its account, so a wrapped file
+// copied onto another account's path fails to unwrap rather than being
+// accepted as that account's key.
+func wrapAAD(userID string) []byte {
+	return []byte("openvoxa/keywrap/v1\x00" + userID)
+}
+
+// wrapKey encrypts an account key under the KEK for storage on disk.
+func (s *Store) wrapKey(userID string, key []byte) []byte {
+	out := make([]byte, 1+s.wrap.NonceSize(), 1+s.wrap.NonceSize()+len(key)+s.wrap.Overhead())
+	out[0] = wrapV1
+	if _, err := rand.Read(out[1:]); err != nil {
+		// crypto/rand failing is fatal elsewhere too; a panic here is
+		// better than writing a predictable nonce.
+		panic("keystore: out of randomness: " + err.Error())
+	}
+	return s.wrap.Seal(out, out[1:], key, wrapAAD(userID))
+}
+
+// toKey turns the bytes of a key file into the account key. A file of
+// exactly keySize is a clear-text key (no KEK, or written before the KEK
+// was configured and not yet upgraded); anything else is wrapped.
+func (s *Store) toKey(userID string, raw []byte) ([]byte, error) {
+	if len(raw) == keySize {
+		return raw, nil // clear-text key; readable with or without a KEK
+	}
+	if s.wrap == nil {
+		return nil, ErrWrappedNoKEK
+	}
+	n := s.wrap.NonceSize()
+	if len(raw) < 1+n+s.wrap.Overhead() || raw[0] != wrapV1 {
+		return nil, fmt.Errorf("keystore: key file for %s is damaged", userID)
+	}
+	key, err := s.wrap.Open(nil, raw[1:1+n], raw[1+n:], wrapAAD(userID))
+	if err != nil {
+		return nil, ErrBadKEK
+	}
+	return key, nil
+}
+
+// WrapExisting upgrades clear-text key files to wrapped ones, so a key
+// folder that predates the KEK, or was restored from a clear-text backup,
+// ends up fully protected at rest. It is a no-op with no KEK. Safe to run
+// in the background at startup: readers accept both forms, so normal
+// traffic need not wait, and new keys are already written wrapped.
+//
+// Each file is handled under the lock, so it never races Destroy into
+// resurrecting a deleted account's key.
+func (s *Store) WrapExisting(ctx context.Context) {
+	if s.wrap == nil {
+		return
+	}
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		slog.ErrorContext(ctx, "keystore: listing keys to wrap", "err", err)
+		return
+	}
+
+	wrapped := 0
+	for _, e := range entries {
+		if ctx.Err() != nil {
+			return
+		}
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".key") {
+			continue
+		}
+		userID := strings.TrimSuffix(e.Name(), ".key")
+		if !uuidRe.MatchString(userID) {
+			continue
+		}
+		did, err := s.wrapOne(userID)
+		if err != nil {
+			slog.ErrorContext(ctx, "keystore: wrapping key", "err", err, "user_id", userID)
+			continue
+		}
+		if did {
+			wrapped++
+		}
+	}
+	if wrapped > 0 {
+		slog.InfoContext(ctx, "keystore: wrapped existing keys at rest", "count", wrapped)
+	}
+}
+
+// wrapOne rewrites one clear-text key file as wrapped, atomically.
+// Returns false (no error) when the file is gone, already wrapped, or
+// belongs to an account destroyed in this process.
+func (s *Store) wrapOne(userID string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.destroyed[userID] {
+		return false, nil
+	}
+	raw, err := os.ReadFile(s.path(userID))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if len(raw) != keySize {
+		return false, nil // already wrapped, or damaged: leave it for a reader to flag
+	}
+
+	wrappedBytes := s.wrapKey(userID, raw)
+	tmp, err := os.CreateTemp(filepath.Join(s.dir, "tmp"), "key-*")
+	if err != nil {
+		return false, err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(wrappedBytes); err != nil {
+		tmp.Close()
+		return false, err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return false, err
+	}
+	if err := tmp.Close(); err != nil {
+		return false, err
+	}
+	// Rename replaces the clear-text file in one step; the key material is
+	// the same, so a crash mid-way loses nothing either way.
+	if err := os.Rename(tmp.Name(), s.path(userID)); err != nil {
+		return false, err
+	}
+	return true, s.syncDir()
+}
+
+// syncDir flushes the key folder so a rename or unlink survives a crash.
+func (s *Store) syncDir() error {
+	d, err := os.Open(s.dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 // Seal encrypts plaintext under the account's key, creating the key if
@@ -229,10 +423,5 @@ func (s *Store) Destroy(userID string) error {
 	}
 
 	// Flush the folder so the unlink survives a power cut.
-	d, err := os.Open(s.dir)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	return d.Sync()
+	return s.syncDir()
 }

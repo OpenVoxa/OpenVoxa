@@ -76,7 +76,7 @@ func runCommand(args []string) (ok bool, err error) {
 			if err != nil {
 				return err
 			}
-			keys, err := keystore.Open(cfg.KeyDir)
+			keys, err := keystore.Open(cfg.KeyDir, cfg.KEK)
 			if err != nil {
 				return err
 			}

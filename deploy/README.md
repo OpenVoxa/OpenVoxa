@@ -194,6 +194,38 @@ The keys live in their own folder, one small file per account, **deliberately ou
 - On the host: the Docker named volume `deploy_key-data`.
 - Owned by UID 65532, mode 700. The server creates keys itself when first needed; there is nothing to set up.
 
+### Encrypting the keys at rest (recommended)
+
+By default the account keys sit in that folder in the clear, so anyone who reads the folder — or a backup of it — holds every key. You can wrap them under one master key, the **key-encryption key (KEK)**, so the folder and its backups are useless without a secret that lives somewhere else.
+
+Generate a 32-byte key and put it in `.env`:
+
+```bash
+openssl rand -base64 32          # e.g. 9f3c...=  (32 bytes, base64)
+```
+
+```ini
+# .env
+OPENVOXA_KEK=9f3c...=
+```
+
+Recreate the server to pick it up (environment changes need a recreate, not a restart):
+
+```bash
+docker compose --profile tls up -d --force-recreate
+docker compose logs server | grep "at_rest_encryption"
+```
+
+`at_rest_encryption=true` confirms it. On start the server upgrades any clear-text key files it finds to wrapped ones, so turning this on for an existing server is safe and needs no downtime; it logs `wrapped existing keys at rest` when it does.
+
+For a secret mounted as a file (Docker/systemd secrets) use `OPENVOXA_KEK_FILE=/run/secrets/openvoxa_kek` instead of `OPENVOXA_KEK`. Set only one.
+
+**Where to keep the KEK.** The point is defeated if the KEK is captured together with the key folder or the database. So keep it **off both backups**: in `.env` (which is neither) plus one copy somewhere safe like a password manager. Do **not** put it in the key-folder backup.
+
+**If you lose the KEK**, every wrapped key is unreadable, which means all plaintext-channel history is gone exactly as if you had lost the folder — see [If the folder is lost](#if-the-folder-is-lost). Changing it to a different value does the same. Treat it as permanent once set.
+
+**What it does and does not protect.** It defends against a stolen key folder, a stolen key-folder backup, or a stolen disk image — none of them decrypt anything without the KEK. It does **not** defend against someone who compromises the running server: the server must use the keys on every message, so it holds the unwrapped keys in memory while it runs. This layer is about backups and offline theft, not a live break-in.
+
 ### Back it up, separately and briefly
 
 Without this folder, the server cannot read any message in a plaintext channel. So back it up, but **not alongside your database backups, and not for long**:
@@ -201,7 +233,7 @@ Without this folder, the server cannot read any message in a plaintext channel. 
 - **Separately**, because a database backup plus a key backup from the same day can still show the messages of an account deleted since. Store them in different places so one leaked or stolen backup is not both.
 - **Short-lived**, because an account deletion is only complete once the last key backup holding that account's key has been deleted. Keep about a week of key backups and delete older ones. Database backups can be kept as long as you like.
 
-A key backup is a small archive of the folder. It holds the keys in the clear, so treat it like a password file:
+A key backup is a small archive of the folder. Without a KEK it holds the keys in the clear; with a KEK the keys are wrapped, but keep storing the archive carefully and keep the KEK out of it. Either way, treat it like a password file:
 
 ```bash
 cd ~/OpenVoxa/deploy

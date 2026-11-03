@@ -14,10 +14,10 @@ import (
 	"time"
 
 	"github.com/openvoxa/openvoxa/server/internal/blob"
-	"github.com/openvoxa/openvoxa/server/internal/keystore"
 	"github.com/openvoxa/openvoxa/server/internal/config"
 	"github.com/openvoxa/openvoxa/server/internal/db"
 	"github.com/openvoxa/openvoxa/server/internal/httpapi"
+	"github.com/openvoxa/openvoxa/server/internal/keystore"
 )
 
 func main() {
@@ -68,11 +68,18 @@ func run() error {
 	slog.Info("blob store ready", "dir", cfg.BlobDir,
 		"max_attachment_mb", cfg.MaxAttachmentBytes/(1024*1024))
 
-	keys, err := keystore.Open(cfg.KeyDir)
+	keys, err := keystore.Open(cfg.KeyDir, cfg.KEK)
 	if err != nil {
 		return err
 	}
-	slog.Info("key store ready", "dir", cfg.KeyDir)
+	slog.Info("key store ready", "dir", cfg.KeyDir, "at_rest_encryption", keys.WrapsAtRest())
+	if !keys.WrapsAtRest() {
+		slog.Info("account keys are stored in the clear; set OPENVOXA_KEK to encrypt them at rest (see deploy/README.md)")
+	}
+
+	// Upgrade any clear-text key files to wrapped, when a KEK is set.
+	// Readers accept both, so this runs alongside normal traffic.
+	go keys.WrapExisting(ctx)
 
 	api := httpapi.New(pool, cfg, blobs, keys)
 	api.LogSetupCodeIfEmpty(ctx)
