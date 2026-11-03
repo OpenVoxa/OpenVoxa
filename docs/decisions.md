@@ -1528,6 +1528,19 @@ to pick their own colours later, so every colour stays a variable.
       Calls that check a password use api.ts `call`, not the ApiCall
       that signs out on any 401, because a 401 there means a wrong
       password.
+    - Groups and members in client-web (M5 session B, 2026-11-03).
+      A separate Server settings dialog (`ServerSettings.tsx`), not more
+      tabs in Settings, so personal and server settings stay apart and
+      session C adds its moderation tabs there. The gear beside the server
+      name shows for staff (any switch); changing anything needs
+      manage_groups. Rank is edited as a number (Ryan's pick over up/down
+      arrows: it matches the server, allows ties, one save per change),
+      with a hint naming the groups either side. The dialog mirrors the
+      server's rules (rank strictly below yours, only switches you hold,
+      not your own groups) as disabled controls with a reason; PATCH
+      sends only changed fields, since an untouched switch list on a
+      group holding a switch you lack would be refused. Membership
+      changes save on each tick. Lists reload on perms_changed.
     - Device linking by QR (after M1): a logged-in device shows a QR of
       `https://server/link#<one-time secret>` (about 2 min, single use);
       the phone's camera opens it; the server only relays encrypted
