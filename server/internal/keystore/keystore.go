@@ -59,6 +59,11 @@ type Store struct {
 	// for the life of the process. Destroy removes the cached copy too.
 	mu    sync.Mutex
 	cache map[string]cipher.AEAD
+
+	// Accounts destroyed by this process. Seal refuses them, so a send
+	// that races an account deletion cannot quietly make a new key for
+	// an account that no longer exists.
+	destroyed map[string]bool
 }
 
 // Open prepares the key folder, creating it if needed, and checks the
@@ -75,7 +80,7 @@ func Open(dir string) (*Store, error) {
 	probe.Close()
 	os.Remove(probe.Name())
 
-	return &Store{dir: dir, cache: map[string]cipher.AEAD{}}, nil
+	return &Store{dir: dir, cache: map[string]cipher.AEAD{}, destroyed: map[string]bool{}}, nil
 }
 
 func (s *Store) path(userID string) string {
@@ -98,7 +103,7 @@ func (s *Store) aead(userID string, create bool) (cipher.AEAD, error) {
 
 	key, err := os.ReadFile(s.path(userID))
 	if errors.Is(err, os.ErrNotExist) {
-		if !create {
+		if !create || s.destroyed[userID] {
 			return nil, ErrNoKey
 		}
 		key, err = s.create(userID)
@@ -194,4 +199,40 @@ func (s *Store) Open(userID string, sealed, context []byte) ([]byte, error) {
 		return nil, ErrBadSealed
 	}
 	return plain, nil
+}
+
+// Destroy deletes the account's key, which makes everything sealed under
+// it permanently unreadable, including copies in database backups. That
+// is the whole of crypto-shredding: nothing else needs rewriting.
+//
+// Call it only after the account's deletion has committed. Destroying
+// first and then rolling back would leave a live account whose messages
+// can never be read again.
+//
+// A key that is already gone is not an error, so a retry is harmless.
+// Another process (the running server, when the host command deletes an
+// account) may still hold the key in memory until it restarts; it never
+// uses it, because the deleted account's id is no longer on any row.
+func (s *Store) Destroy(userID string) error {
+	if !uuidRe.MatchString(userID) {
+		return errBadID
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	delete(s.cache, userID)
+	s.destroyed[userID] = true
+
+	if err := os.Remove(s.path(userID)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("keystore: destroying key for %s: %w", userID, err)
+	}
+
+	// Flush the folder so the unlink survives a power cut.
+	d, err := os.Open(s.dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/openvoxa/openvoxa/server/internal/config"
 	"github.com/openvoxa/openvoxa/server/internal/db"
 	"github.com/openvoxa/openvoxa/server/internal/httpapi"
+	"github.com/openvoxa/openvoxa/server/internal/keystore"
 )
 
 // Server-host commands. Run inside the running container:
@@ -68,7 +69,19 @@ func runCommand(args []string) (ok bool, err error) {
 		if len(names) == 0 {
 			return true, errors.New(usage)
 		}
-		return true, withDB(ctx, func(conn *pgx.Conn) error { return deleteUsers(ctx, conn, names, force) })
+		return true, withDB(ctx, func(conn *pgx.Conn) error {
+			// Same folder the server uses (OPENVOXA_KEY_DIR): run this
+			// inside the server container so the volume is mounted.
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			keys, err := keystore.Open(cfg.KeyDir)
+			if err != nil {
+				return err
+			}
+			return deleteUsers(ctx, conn, keys, names, force)
+		})
 	case "-h", "--help", "help":
 		fmt.Println(usage)
 		return true, nil
@@ -260,7 +273,8 @@ func listUsers(ctx context.Context, conn *pgx.Conn) error {
 }
 
 // deleteUsers deletes accounts exactly as self-deletion does: messages
-// emptied (rows kept as tombstones), sessions ended, no undo. Each name is
+// emptied (rows kept as tombstones), files removed, sessions ended, the
+// account's key destroyed, no undo. Each name is
 // its own transaction, so one refusal does not stop the rest. The
 // two-administrator floor applies unless --force: the host is trusted,
 // but a typo should not quietly remove the last admins.
@@ -268,11 +282,19 @@ func listUsers(ctx context.Context, conn *pgx.Conn) error {
 // This process cannot reach the running server's open connections, so a
 // deleted user's already-open page stays connected until it next
 // reconnects; every request after this fails.
-func deleteUsers(ctx context.Context, conn *pgx.Conn, names []string, force bool) error {
+func deleteUsers(ctx context.Context, conn *pgx.Conn, keys *keystore.Store, names []string, force bool) error {
 	failed := 0
 	for _, name := range names {
-		if err := deleteUser(ctx, conn, name, force); err != nil {
+		userID, err := deleteUser(ctx, conn, name, force)
+		if err != nil {
 			fmt.Printf("skipped %s: %v\n", name, err)
+			failed++
+			continue
+		}
+		// After the commit, never before (see purgeUser in account.go).
+		if err := keys.Destroy(userID); err != nil {
+			fmt.Printf("deleted %s, but its key was NOT destroyed (%v): remove %s.key from the key folder by hand\n",
+				name, err, userID)
 			failed++
 			continue
 		}
@@ -284,10 +306,10 @@ func deleteUsers(ctx context.Context, conn *pgx.Conn, names []string, force bool
 	return nil
 }
 
-func deleteUser(ctx context.Context, conn *pgx.Conn, name string, force bool) error {
+func deleteUser(ctx context.Context, conn *pgx.Conn, name string, force bool) (string, error) {
 	tx, err := conn.Begin(ctx)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer tx.Rollback(ctx)
 
@@ -295,28 +317,31 @@ func deleteUser(ctx context.Context, conn *pgx.Conn, name string, force bool) er
 	err = tx.QueryRow(ctx,
 		`SELECT id::text FROM users WHERE username = $1 AND deleted_at IS NULL`, name).Scan(&userID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return errors.New("no such account")
+		return "", errors.New("no such account")
 	}
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	guard, err := httpapi.StartAdminGuard(ctx, tx)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if err := httpapi.PurgeUserTx(ctx, tx, userID); err != nil {
-		return err
+		return "", err
 	}
 	if !force {
 		if err := guard.Check(ctx, tx); err != nil {
 			if httpapi.IsTooFewAdmins(err) {
-				return errors.New("the server must keep at least two administrators (add one first, or use --force)")
+				return "", errors.New("the server must keep at least two administrators (add one first, or use --force)")
 			}
-			return err
+			return "", err
 		}
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	return userID, nil
 }
 
 // exitWith prints a command error and exits non-zero.

@@ -733,6 +733,9 @@ interface Report {
   accused_id: string | null;
   reason: string;
   claimed_body: string;
+  // The accused deleted their account (or was deleted), which destroyed
+  // this copy of their words along with everything else they wrote.
+  content_deleted: boolean;
   verified: boolean | null;
   status: "open" | "dismissed" | "actioned" | "rejected";
   created_at: string;
@@ -864,7 +867,9 @@ function ReportsTab({ call, me, reload }: { call: ApiCall; me: Me; reload: numbe
                   <VerifiedTag v={r.verified} />
                   {r.message_gone && <span className="tag small">Message deleted</span>}
                 </div>
-                <blockquote className="quoted small">{r.claimed_body || <em className="muted">(no text)</em>}</blockquote>
+                <blockquote className="quoted small">{r.content_deleted
+                  ? <em className="muted">(content deleted with the account)</em>
+                  : r.claimed_body || <em className="muted">(no text)</em>}</blockquote>
                 {r.reason
                   ? <p className="small report-reason"><span className="muted">Reason:</span> {r.reason}</p>
                   : <p className="small muted report-reason">No reason given.</p>}
