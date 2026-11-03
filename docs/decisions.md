@@ -1472,7 +1472,7 @@ to pick their own colours later, so every colour stays a variable.
       message (`ChannelView.send(text, attachments)`, text may be empty
       with an attachment). Plain attachments (any in plain channels,
       GIFs in any) show inline from their signed URL; sender-encrypted
-      files are a placeholder until session B. Join/leave notices: Chat
+      files were a placeholder until session B (below). Join/leave notices: Chat
       forwards `groups.onMembership` people changes for the open
       encrypted channel; `ChannelSnapshot.notices` are now
       `{id, at, text, kind}` and sit among messages by time. Voice
@@ -1483,6 +1483,32 @@ to pick their own colours later, so every colour stays a variable.
       Settings. The user-panel gear and the voice-bar cog open one
       Settings dialog (Voice and Chat sections). Mic button is
       highlighted when deafened too.
+    - Attachment upload in client-web (M4 session B, built and verified
+      on Docker 2026-11-03): "+" button (file picker, several at
+      once), pasting files or screenshots into the message box, and
+      dropping files anywhere on the channel. Each file uploads the moment
+      it's added (`ChannelView.upload`, which encrypts first in an
+      encrypted channel) into a tray above the composer with thumbnails
+      and a remove button; Send waits for uploads to finish and leaves
+      failed ones out. At most 10 per message (the server's cap); each
+      encrypted file's key and name (cut to 120 characters) ride in the
+      message and count toward its 4,000-character limit, so the error
+      says to send fewer files. `ChannelView.send` takes `Upload`s
+      alongside plain `AttachmentInfo` and puts their keys in the
+      envelope. Showing (`attachments.tsx`): encrypted images decrypt on
+      sight; encrypted video/audio up to 10 MB too, bigger ones behind a
+      "Load" button, because GCM can't stream into a player; other files
+      decrypt on click and save through `download=`, never opening. The
+      blob's type comes from the inline allowlist, never the sender
+      (stored-XSS on our origin otherwise). Decrypted copies are shared
+      per attachment and freed a minute after nothing shows them.
+      Switching channel drops the tray; the server sweeps unclaimed
+      uploads after an hour. The upload `ApiCall` must leave
+      Content-Type alone for FormData (client-web `core.ts` does).
+      Clicking an image opens an in-page viewer (name, "Open in new tab",
+      "Download", Esc or a click outside closes); Settings, "Open images
+      in a new tab", switches to tabs (per browser, off by default; Ryan
+      asked for the choice after A1). Ctrl/middle-click always opens a tab.
     - Device linking by QR (after M1): a logged-in device shows a QR of
       `https://server/link#<one-time secret>` (about 2 min, single use);
       the phone's camera opens it; the server only relays encrypted
@@ -1519,13 +1545,14 @@ to pick their own colours later, so every colour stays a variable.
       browser profile data on the device can read the keys. The fix needs
       recovery keys to exist first, since encrypting with a key also
       stored in IndexedDB would look like protection while providing
-      none.
+      none. Unblocked: recovery keys exist since step 13 M1.
 - [ ] The `ratchet_tree` column in migration 0010 assumes the tree
       travels separately from the welcome. If the extension route is ever
       made to work, both that column and the custom serialiser go away.
-- [ ] Recovery keys do not exist. Without one, a forgotten password means
+- [x] Recovery keys do not exist. Without one, a forgotten password means
       permanently unreadable history, because the server holds only
       ciphertext. The key has to be generated at signup and shown once.
+      Done in step 13 M1 (`client-core/src/recovery.ts`).
 - [x] Removing a revoked device from the groups it belongs to is
       client-side work. Done: reconciliation removes it (step 11).
 - [x] Inactive devices expire after 30 days. Decided by Ryan, 2026-10-31.
@@ -1579,10 +1606,11 @@ to pick their own colours later, so every colour stays a variable.
 - [x] The commit endpoint checks that each welcome's recipient device
       belongs to an account with access to the channel (step 11, server
       side). The whole commit is refused if one does not.
-- [ ] A new device can only join a call while someone already in that
+- [x] A new device can only join a call while someone already in that
       voice group is in the call, and can only join an encrypted text
       channel once a member comes online. External join (step 11, last
       part) closes both.
+      Done: built and verified on Docker 2026-10-31.
 - [ ] LiveKit's `encryption` option also turns on data channel
       encryption. Nothing uses data channels yet; anything that does
       later gets it for free, but must not assume the SFU can read them.
