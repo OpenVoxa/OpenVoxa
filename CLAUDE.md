@@ -7,16 +7,38 @@ end of every session that changes it.
 ## What this is
 
 Self-hosted, non-monetised Discord/TeamSpeak alternative: text channels,
-voice, screen share, forum-style features. Pre-alpha. AGPLv3.
+voice, screen share, forum-style features. Pre-alpha.
 Repo: github.com/OpenVoxa/OpenVoxa. Owner: Ryan (new to much of this,
 leans on AI for code — explain non-obvious choices, don't assume expertise).
+
+Fixed decisions (decisions.md "Blocking decisions", ~L50; don't reopen):
+
+- **Go server** + PostgreSQL. Rust only for pieces that need it.
+- **Electron desktop client** (bundled Chromium = same WebRTC/E2EE/screen
+  capture on every OS) plus the web client. Electron not started yet
+  (`client-desktop/` doesn't exist); it will load the same bundles.
+- **AGPLv3** (`AGPL-3.0-or-later` SPDX header on every file), DCO sign-off.
+- **Our own protocol, not Matrix.** Built from scratch by choice; MLS
+  (RFC 9420) for group crypto.
+- **No federation in v1.** Each instance is an island; server identity
+  stays in the protocol so federation is possible later.
+- **Per-channel E2EE, admin-controlled.** Text channels: encrypted or
+  not, chosen at creation by whoever holds `manage_channels`, fixed
+  after (`channels.encrypted`). Voice/screen share always E2EE, no toggle;
+  DMs will be too.
+- **Account deletion = crypto-shredding** (destroy the user's key
+  material so their ciphertext is unreadable even in backups). **Not
+  built yet:** `purgeUser`/`PurgeUserTx` (`account.go`) blanks message
+  bodies, sets `deleted` (tombstone) and deletes the user row (cascades
+  to sessions/devices). Plaintext channels will always need that path.
 
 Deep references (read only the section you need, not the whole file):
 
 - `docs/decisions.md` — every architectural decision and tradeoff.
-  Sections: Goals, Threat model, Feature decisions, Architecture,
-  Known tensions, **Encryption** (~L191), **Implementation notes** (~L315,
-  hard-won gotchas), **Build order** (~L577), **Open items** (~L603).
+  Sections: Goals, Threat model, Blocking decisions (~L50), Feature
+  decisions, Architecture, Known tensions (~L152), **Encryption** (~L212),
+  **Implementation notes** (~L447, hard-won gotchas), Permission groups
+  (~L1087), **Build order** (~L1226), **Open items** (~L1494).
 - `README.md` — public-facing status, threat model, stack.
 - `deploy/README.md` — compose setup, TLS paths, LiveKit, storage,
   troubleshooting.
@@ -24,52 +46,79 @@ Deep references (read only the section you need, not the whole file):
 ## Layout
 
 ```
-server/            Go server (module root here)
-  main.go
-  internal/httpapi/   HTTP + WS handlers; debugui/chat.html is the
-                      current (deliberately ugly) single-file client
-  internal/db/        Postgres, migrations/000N_*.sql (embedded, ordered)
-  internal/{auth,blob,config,gif,hub,perm,ratelimit,unfurl}
+server/            Go server (module root here; go.mod says go 1.26)
+  main.go, cli.go     cli.go = host commands (grant-admin, list-admins,
+                      list-users, delete-user)
+  Dockerfile          multi-stage: client-core -> client-web -> Go -> distroless
+  internal/httpapi/   HTTP + WS; debugui/chat.html = old debug client
+  internal/db/        Postgres, migrations/00NN_*.sql (embedded, ordered;
+                      latest 0016)
+  internal/{auth,blob,config,gif,hub,password,perm,ratelimit,unfurl}
 client-core/       TypeScript protocol + crypto, no UI
   src/mls/provider.ts  MlsProvider interface (swappable)
   src/mls/tsmls.ts     ts-mls implementation (pinned 1.6.2)
   src/identity.ts      device keys, registration, key packages
   src/groups.ts        MLS group lifecycle (create/join/commit/persist)
   src/chat.ts          text chat: Chat (account) + ChannelView (channel)
+  src/attachments.ts   per-file AES-256-GCM keys + message envelope
+  src/recovery.ts      recovery key / encrypted backup
   src/voice.ts         voice + screen share (VoiceClient); not in index
-  scripts/patch-ts-mls.mjs  build-time fix of a ts-mls validation bug
   src/storage.ts       IndexedDB persistence
   src/index.ts         exports -> global `OpenVoxaCore`
-  build.mjs            esbuild IIFE -> dist/core.js
-deploy/            docker-compose.yml, Caddyfiles, livekit.yaml, .env.example
+  scripts/patch-ts-mls.mjs  build-time fix of a ts-mls validation bug
+  build.mjs            esbuild IIFE -> dist/core.js (+ LiveKit bundles)
+client-web/        Vite + React + TS, plain CSS; imports client-core source
+deploy/            docker-compose.yml, caddy/, livekit.yaml, .env.example,
+                   scripts/update-node-ip.sh
 ```
 
-`client-web/` (Vite + React + TS, plain CSS) is embedded into the server
-(`internal/httpapi/webui/`, `webui.go`) and served at `/`. Build check:
-`cd client-web && npm run build`. `client-desktop` does not exist yet.
+client-web is embedded into the server (`webui.go`) and served at `/`.
 
 ## Stack
 
 Go + PostgreSQL server · LiveKit SFU (server only mints tokens, never in
 the media path) · Caddy optional for TLS · client-core in TS, bundled by
 esbuild and **embedded into the Go binary** (`debugui/core.js`) · MLS via
-ts-mls, ciphersuite 1 · Electron/React clients later.
+ts-mls, ciphersuite 1 · React web client now, Electron shell later.
+
+## Build and run
+
+Compile checks (before any commit):
+
+- `cd client-core && npm install && npm run build`
+- `cd client-web && npm install && npm run build`
+- `cd server && go build ./...` — **Go is not installed in the device
+  shell.** The cloud container has go1.24 and no module proxy; a
+  type-check build works from a clone with a temporary go.mod (go 1.24,
+  `replace` golang.org/x/* etc. with GitHub mirrors at older versions, a
+  protoyaml stub); recipe in the handoff doc, "Working notes". Never
+  commit that go.mod. The cloud container also has Postgres 16.
+
+Docker (run on Docker, from `~/OpenVoxa/deploy`; build context is the repo
+root, the compose file handles that):
+
+```bash
+# first time
+cp .env.example .env                                  # then edit it
+docker run --rm livekit/livekit-server generate-keys  # keys into .env
+docker compose --profile tls up -d --build            # tls = with Caddy
+docker compose logs server | grep setup_code          # first admin signup
+# routine
+docker compose --profile tls up -d --build            # rebuild + restart
+docker compose --profile tls up -d --force-recreate   # after .env edits
+docker compose ps
+docker compose logs server --tail 30                  # or caddy / livekit
+docker compose exec server /openvoxa-server list-users   # host commands
+docker compose --profile tls down
+```
+
+No `tls` profile = no Caddy (own proxy + `OPENVOXA_TRUST_PROXY=true`).
 
 ## Workflow (important)
 
 - Develop on **Git-terminal** (Windows, Git Bash, repo at
   `~/Documents/openvoxa`). Ryan deploys to **Docker** (homelab)
   by pulling from GitHub. Claude cannot reach Docker.
-- Before any change, verify it compiles:
-  - `cd client-core && npm run build` (works in the device shell; run
-    `npm install` first if `node_modules` is missing)
-  - `cd server && go build ./...` — **Go is not installed in the
-    device shell.** The cloud container has go1.24 and no Go module
-    proxy, but a type-check build works from a clone with a temporary
-    go.mod (go 1.24, `replace` golang.org/x/* etc. with their GitHub
-    mirrors at older versions, a protoyaml stub); recipe in the handoff
-    doc, "Working notes". Never commit that go.mod. The cloud container
-    also has Postgres 16 for running the real server end to end.
 - Commits: DCO sign-off required (`git commit -s`), author
   `rynd-automation <rynd_automation@outlook.com>`. Short imperative
   subject lines, one logical change per commit.
@@ -87,7 +136,7 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
      cd ~/OpenVoxa && git pull && git log --oneline -1
      cd ~/OpenVoxa/deploy && docker compose --profile tls up -d --build
      ```
-     Then hard-refresh the browser (Ctrl+Shift+R) for `debugui/` changes.
+     Then hard-refresh the browser (Ctrl+Shift+R).
      Env changes need `--force-recreate`.
 - Naming: call the hosts "Docker" and "Git-terminal", not "the VM" /
   "your desktop".
@@ -111,78 +160,40 @@ ts-mls, ciphersuite 1 · Electron/React clients later.
 - `chat.html` is one script: a throw while wiring handlers silently
   kills every handler after it. Attach new controls via the warn-not-
   throw helper.
-- Docker build context is the repo root; core.js must be copied before
+- core.js, the LiveKit bundles and client-web dist must be copied before
   `go build` (embed). Don't let `go mod tidy` raise the `go` directive
-  above the Dockerfile's base image.
+  above the Dockerfile's base image (golang:1.26).
 - Permission revocation must explicitly reach live WebSockets.
 - LiveKit is self-hosted from `debugui/` and pinned exactly in
   client-core/package.json: the E2EE worker must be same-origin and the
   same build as the main library. Never point it back at a CDN tag.
+- Palette: variables in `client-web/src/styles.css` only.
 
 ## Current state (update every session)
 
-_Last updated: 2026-11-01. Step 13 M1-M3, channel management and M4
-session A done (G1 GIFs, Y1 YouTube verified on Docker; G2-G4 pending);
-LiveKit now on host networking for LAN + public clients; session B next.
-Full handoff: project doc claude/handoff-step-13.md._
+_Last updated: 2026-11-03 (CLAUDE.md review only). Step 13 M1-M3,
+channel management and M4 session A done; session B next. Full handoff:
+project doc claude/handoff-step-13.md._
 
-Done and verified on Docker (details in decisions.md, Build order 9-12 and
-Implementation notes): MLS text encryption (ciphertext in Postgres, no
-pre-join history, local plaintext archive in IndexedDB), encrypted
-attachments (Giphy GIFs stay plain by Ryan's decision), voice/screen-share
-E2EE (own MLS group, LiveKit key slot epoch mod 16, LiveKit 2.23.0 from our
-origin), automatic membership following channel access (reconcile,
-`reconcileSoon`, GroupInfo external joins, resets, join/leave notices per
-person), multi-party tested (ryan + staff + tester), custom permission
-groups (migration 0012; switches decide what, rank decides whom; channel
-allow-lists; chat.html console helpers `showGroups()`, `newGroup()`,
-`addToGroup()`, `mkChannel()`, `setAccess()`, `setHistorySharing()` ...),
-30-day device expiry, history sharing, two-admin floor, password rules.
-Blob storage on Docker is a bind mount: `/mnt/openvoxa-blobs`.
+Done and verified on Docker (details: decisions.md Build order 9-12):
+MLS text E2EE, encrypted attachments in core + chat.html (Giphy GIFs stay
+plain, Ryan's call), voice/screen-share E2EE, automatic membership from
+channel access, permission groups (chat.html console helpers
+`showGroups()`, `mkChannel()`, `setAccess()` ...), device expiry, history
+sharing, two-admin floor, password rules. Blobs on Docker: bind mount
+`/mnt/openvoxa-blobs`.
 
-Step 13 (real client), order M1 signup/login + recovery key -> M2 text ->
-M3 voice/screen share -> M4 attachments/GIFs/unfurls/notices -> M5
-settings and admin panes:
+Step 13 (real client): M1 login + recovery -> M2 text -> M3 voice ->
+M4 attachments/GIFs/unfurls/notices -> M5 settings and admin panes.
 
-- M1 DONE (T1, B1, R1, K1 flow 1; K1 flows 2-5 deferred by Ryan):
-  `client-web` login/register, backup storage (migration 0015,
-  `recovery.go`), client-core `recovery.ts`, recovery screens
-  (`Recovery.tsx`, `backup.ts` BackupManager).
-- M2 pushed, NOT yet verified on Docker (test M2-1 in the handoff):
-  client-core `chat.ts` (`Chat`, `ChannelView`), client-web `ChatApp.tsx`,
-  `ChannelPane.tsx`, `core.ts`; server migration 0016 (`edited_at`),
-  `messages.go` (`GET /channels/{id}/messages?before=`, `PATCH
-  /messages/{id}`, `channel_activity` to viewers only), send frames carry a
-  `ref` echoed on the message. client-web now owns the device: sign-out
-  uploads the backup, revokes the device and wipes the local DB.
-  M2-1 step 1 (plain send/edit/delete) verified on Docker 2026-11-01.
-- Channel management in client-web (Ryan asked, pulled forward from M5):
-  `ChannelDialogs.tsx` (create, settings, delete; "+" and gear in the
-  sidebar for manage_channels / force_ptt). Server: MLS handshake bodies
-  now capped at 8 MB (`maxMLSBody`), was 64 KB and refused adds of ~10
-  devices. Verified on Docker (C1) 2026-11-01.
-- M3 (voice + screen share in client-web) DONE, verified on Docker (V3)
-  2026-11-01: two accounts hear each other, mute/volume, streaming.
-  client-core `voice.ts` (`VoiceClient`, lazy-loaded), client-web
-  `VoiceUI.tsx` (roster, voice bar, stage, share/settings/person
-  dialogs), `voiceWorker.ts`; server `voicepresence.go`
-  (`GET /voice/participants`, `POST /channels/{id}/voice/changed`,
-  `voice_changed`). ts-mls is patched at build time
-  (`scripts/patch-ts-mls.mjs`, decisions.md Implementation notes).
-  Console handle `openvoxaVoice` (`audioStats()`, `snapshot()`).
-  Verified end to end in the cloud container (real server + Postgres +
-  Playwright, two and three accounts).
-- Pending tests from earlier: P3 password test, D1 list/delete-user.
-- Palette: variables in `client-web/src/styles.css` only.
-- M4 session A DONE: markdown, link previews (encrypted channels opt-in
-  per user), GIF picker, join/leave notices, voice tones, one Settings
-  dialog, mic-button fix. `markdown.tsx`, `previews.tsx`, `gifs.tsx`,
-  `tones.ts`, `settings.ts`; server unfurl uses YouTube oEmbed. G1/Y1
-  verified on Docker; G2-G4 still to test.
-- Deploy: LiveKit `network_mode: host` + `advertise_internal_ip`, pinned
-  v1.13.11; containers reach it at `host.docker.internal:7880`.
-  `deploy/scripts/update-node-ip.sh` (cron on Docker) follows the public
-  IP. Ryan has it temporarily open to two friends (port 8443, see
-  handoff for teardown).
-- Next: M4 session B: attachments (upload, drag/paste, per-file
-  encryption, inline media). Open items in decisions.md "Open items".
+- M1 DONE (K1 flows 2-5 deferred by Ryan). M3 DONE (V3). Channel
+  management DONE (C1).
+- M2 pushed; only M2-1 step 1 (send/edit/delete) verified on Docker.
+- M4 session A DONE (markdown, previews, GIFs, notices, tones, Settings).
+  G1/Y1 verified; G2-G4 to test. Also pending: P3 password, D1 delete-user.
+- Deploy: LiveKit on host networking (v1.13.11, `host.docker.internal:7880`),
+  `update-node-ip.sh` on cron. Temporarily open to two friends (port 8443;
+  teardown in handoff).
+- Next: M4 session B: attachment upload in client-web (picker,
+  drag/paste, inline media) on top of the existing `attachments.ts`.
+  Crypto-shredding is unbuilt and not yet scheduled in Build order.
