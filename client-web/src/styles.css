@@ -610,3 +610,13 @@ details summary { cursor: pointer; color: var(--muted); }
 }
 .device-name { flex: 1; min-width: 0; font-size: 14px; }
 .device-name .tag { margin-left: 6px; }
+
+/* ------------------------------------------------------ M5 session B */
+.modal.wide { max-width: 600px; }
+.sidebar-head { display: flex; align-items: center; justify-content: space-between; }
+.device-list li.member { flex-direction: column; align-items: stretch; gap: 8px; }
+.member-row { display: flex; align-items: center; gap: 10px; }
+.member-groups { display: flex; flex-direction: column; gap: 6px; padding: 8px 0 2px; border-top: 1px solid var(--line); }
+.member-groups label.check { font-size: 14px; }
+fieldset.access label.check { font-size: 14px; }
+fieldset.access label.check:has(input:disabled) { opacity: 0.6; }
