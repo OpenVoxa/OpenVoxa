@@ -197,13 +197,12 @@ removal in Settings > Devices. All verified by Ryan on Docker: sign-out/
 sign-in, password change rewrap, removed-device path (recovery screen
 gives the reason), refresh after session end. The storage layer was checked ad hoc in Node with
 fake-indexeddb (34 checks, not kept in the repo; no test setup exists).
-**Next (chosen by Ryan): crypto-shredding**, in a new chat. Not built,
-not in Build order, needs design first and agreement with Ryan before
-coding (fixed decision above: destroy key material so ciphertext is
-unreadable even in backups; today `purgeUser`/`PurgeUserTx` in
-`account.go` only blanks bodies). Plaintext channels will still need the
-blanking path. Present it as a user-facing flow first (Ryan: ease of use,
-simplicity, clarity).
+**Now: crypto-shredding** (build order 14, S1-S6; design agreed with
+Ryan 2026-11-03, decisions.md Encryption, "Account deletion is
+crypto-shredding"). Encrypted channels need no new key (MLS already
+makes server copies unreadable); plaintext channels get a per-account
+key file in `OPENVOXA_KEY_DIR` (outside Postgres), deleted on account
+deletion. Tick S-steps in decisions.md as they land.
 Older full handoff: project doc claude/handoff-step-13.md._
 
 Done and verified on Docker (details: decisions.md Build order 9-12):
