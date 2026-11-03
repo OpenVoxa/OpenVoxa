@@ -35,6 +35,9 @@ export class BackupManager {
   /** Called when this device stops being able to upload (another device
    * started a new backup); the app then asks for the recovery key. */
   onLocked: () => void = () => {};
+  /** Called after every successful upload, scheduled or not, so the
+   * user panel's "Backed up ..." time stays current. */
+  onUploaded: () => void = () => {};
 
   private constructor(token: string) {
     this.backup = new Backup(authedFetch(token));
@@ -69,13 +72,16 @@ export class BackupManager {
       const s = await this.backup.status();
       if (!s?.unlocked) return;
       try {
-        await this.backup.upload();
+        const r = await this.backup.upload();
+        console.info(`backup uploaded: ${r.entries} message(s), ${r.parts} chunk(s), ${r.bytes} bytes`);
       } catch (err) {
         if (err instanceof BackupLocked) this.onLocked();
         throw err;
       }
     });
     this.#running = run;
+    // Tell the app on success; errors still reach the caller.
+    run.then(() => this.onUploaded(), () => {});
     return run;
   }
 

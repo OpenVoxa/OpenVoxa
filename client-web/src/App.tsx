@@ -53,6 +53,9 @@ function Home({ session, justRegistered, onLoggedOut }: {
     (async () => {
       const m = await BackupManager.open(session.user_id, session.token);
       m.onLocked = () => setPhase({ k: "restore" });
+      m.onUploaded = () => {
+        m.status().then((s) => live && setStatus(s), () => {});
+      };
       const s = await m.status();
       if (!live) return;
       setManager(m);
