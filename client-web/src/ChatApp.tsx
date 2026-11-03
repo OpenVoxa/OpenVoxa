@@ -26,6 +26,7 @@ import {
 } from "./VoiceUI";
 import { useVoiceTones } from "./tones";
 import { SettingsDialog, type AccountActions, type SettingsTab } from "./SettingsDialog";
+import { ServerSettingsDialog } from "./ServerSettings";
 
 const LAST_CHANNEL = (userId: string) => `lastChannel.${userId}`;
 
@@ -49,13 +50,18 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   const [unread, setUnread] = useState<ReadonlySet<string>>(new Set());
   const [openId, setOpenId] = useState<string | null>(null);
   const [view, setView] = useState<ChannelView | null>(null);
-  // Permissions move while signed in (perms_changed); start from login's.
+  // Permissions and rank move while signed in (perms_changed); start
+  // from login's. permsTick counts the changes, so Server settings can
+  // reload its lists.
   const [perms, setPerms] = useState<readonly string[]>(session.permissions);
+  const [rank, setRank] = useState(session.rank);
+  const [permsTick, setPermsTick] = useState(0);
   const [dialog, setDialog] = useState<
     | { k: "create"; kind: "text" | "voice" }
     | { k: "settings"; id: string }
     | { k: "share" }
     | { k: "prefs"; tab: SettingsTab }
+    | { k: "server" }
     | null
   >(null);
   const [presence, setPresence] = useState<VoicePresence>({});
@@ -92,8 +98,13 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           else if (e.type === "unread") setUnread(e.unread);
           else if (e.type === "voice") setPresence(e.presence);
           else if (e.type === "me_changed") {
-            (call("/api/v1/me") as Promise<{ permissions: string[] }>)
-              .then((me) => live && setPerms(me.permissions ?? []))
+            (call("/api/v1/me") as Promise<{ permissions: string[]; rank: number }>)
+              .then((me) => {
+                if (!live) return;
+                setPerms(me.permissions ?? []);
+                setRank(me.rank ?? 0);
+                setPermsTick((t) => t + 1);
+              })
               .catch(() => {});
           }
         });
@@ -209,6 +220,9 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   const canDeleteAny = can("delete_messages");
   const canManage = can("manage_channels");
   const canForcePTT = can("force_ptt");
+  // Staff: anyone holding a switch. They see the member list; changing
+  // groups needs manage_groups (checked inside the dialog).
+  const isStaff = perms.length > 0;
   const settingsFor = (c: ChannelInfo) => canManage || (c.kind === "voice" && canForcePTT);
   const dialogChannel = dialog?.k === "settings" ? channels.find((c) => c.id === dialog.id) : undefined;
 
@@ -231,7 +245,15 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   return (
     <div className="app">
       <nav className="sidebar" aria-label="Channels">
-        <header className="sidebar-head">OpenVoxa</header>
+        <header className="sidebar-head">
+          OpenVoxa
+          {isStaff && (
+            <button className="icon" onClick={() => setDialog({ k: "server" })}
+              title="Server settings" aria-label="Server settings">
+              <GearIcon />
+            </button>
+          )}
+        </header>
         <div className="channel-list">
           {heading("Text channels", "text")}
           <ul>
@@ -337,6 +359,10 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
         <SettingsDialog tab={dialog.tab} session={session} call={call} deviceId={chat.session.status.deviceId}
           backup={backup} busy={busy} actions={accountActions}
           voice={voiceClient} snap={vsnap} loadVoice={ensureVoice} onClose={() => setDialog(null)} />
+      )}
+      {dialog?.k === "server" && isStaff && (
+        <ServerSettingsDialog call={call} me={{ userId: session.user_id, permissions: perms, rank }}
+          reload={permsTick} onClose={() => setDialog(null)} />
       )}
       {person && voiceClient && (
         <PersonMenu voice={voiceClient}
