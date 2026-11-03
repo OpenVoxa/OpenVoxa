@@ -183,8 +183,8 @@ No `tls` profile = no Caddy (own proxy + `OPENVOXA_TRUST_PROXY=true`).
 
 ## Current state (update every session)
 
-_Last updated: 2026-11-03. M2 fully verified on Docker; next piece
-not yet chosen (external join recommended, or M4 session B). Older
+_Last updated: 2026-11-03. M4 session B done and verified (A1-A5);
+next M5 or the open tests. External join was already done (2026-10-31). Older
 full handoff: project doc claude/handoff-step-13.md._
 
 Done and verified on Docker (details: decisions.md Build order 9-12):
@@ -209,11 +209,22 @@ M4 attachments/GIFs/unfurls/notices -> M5 settings and admin panes.
 - Deploy: LiveKit on host networking (v1.13.11, `host.docker.internal:7880`),
   `update-node-ip.sh` on cron. Temporarily open to two friends (port 8443;
   teardown in handoff).
-- Next, Ryan to choose: (a) **external join** (MLS external commit so a
-  new device joins encrypted channels / voice groups with no member
-  online; every sign-in is a new device, so friends will hit this;
-  verify the ts-mls API by experiment), or (b) **M4 session B**:
-  attachment upload in client-web (picker, drag/paste, inline media) on
-  `attachments.ts`. Crypto-shredding is unbuilt, not yet in Build order.
-- decisions.md Open items: "Recovery keys do not exist" is stale (M1
-  built them), and unencrypted IndexedDB is now unblocked.
+- External join is DONE (built and verified 2026-10-31, `b550c95`,
+  `ccba824`; `groups.open`, used by client-web via `chat.ts`). A new
+  device joins encrypted channels and voice with nobody online. The
+  2026-11-03 handoff wrongly listed it as unbuilt; check git log and
+  decisions.md Build order before calling something "not built".
+- M4 session B DONE and verified on Docker 2026-11-03: attachment
+  upload in client-web ("+" picker, paste, drag and drop, upload tray,
+  encrypted files decrypted inline; `client-web/src/attachments.tsx`,
+  `ChannelView.upload`). Test plan in the next item.
+- To test (A1-A4): A1 plain channel: picker with 2 images + a PDF, all
+  show for the other account. A2 encrypted channel: paste a screenshot,
+  drop a video; other account sees them decrypt; the PDF downloads with
+  its real name. A3 a video over 10 MB shows "Load". A4 an 11th file is
+  refused; a file over 25 MB fails in the tray and Send leaves it out.
+  A1-A4 PASSED 2026-11-03. Then added an image viewer + Settings toggle
+  "Open images in a new tab"; A5 (viewer + toggle) PASSED too.
+- Then: M5 settings and admin panes. Crypto-shredding is unbuilt, not
+  yet in Build order. Encrypting local IndexedDB keys is unblocked
+  (decisions.md Open items).
