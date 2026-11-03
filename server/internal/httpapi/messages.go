@@ -47,8 +47,8 @@ func (a *API) loadMessages(
 
 	// One extra row tells us whether there is more without a COUNT.
 	rows, err := a.pool.Query(ctx,
-		`SELECT m.id, m.author_id, COALESCE(u.username, ''), m.body, m.deleted,
-		        m.created_at, m.edited_at,
+		`SELECT m.id, m.author_id, COALESCE(u.username, ''), m.body, m.sealed,
+		        m.deleted, m.created_at, m.edited_at,
 		        COALESCE(
 		          (SELECT json_agg(json_build_object(
 		                     'id', at.id,
@@ -75,15 +75,16 @@ func (a *API) loadMessages(
 		var m messageFrame
 		var authorID *string
 		var body []byte
+		var sealed bool
 
-		if err := rows.Scan(&m.ID, &authorID, &m.Username, &body, &m.Deleted,
+		if err := rows.Scan(&m.ID, &authorID, &m.Username, &body, &sealed, &m.Deleted,
 			&m.CreatedAt, &m.EditedAt, &m.Attachments, &m.Mentions); err != nil {
 			return nil, false, err
 		}
 
 		m.Type = "message"
 		m.ChannelID = channelID
-		m.Body = string(body)
+		m.Body = a.openBody(ctx, channelID, authorID, body, sealed)
 		if authorID != nil {
 			m.AuthorID = *authorID
 		} else {
@@ -235,11 +236,13 @@ func (a *API) editMessage(w http.ResponseWriter, r *http.Request) {
 
 	var authorID *string
 	var channelID string
-	var deleted bool
+	var deleted, encrypted bool
 	err := a.pool.QueryRow(r.Context(),
-		`SELECT author_id, channel_id, deleted FROM messages WHERE id = $1`,
+		`SELECT m.author_id, m.channel_id, m.deleted, c.encrypted
+		   FROM messages m JOIN channels c ON c.id = m.channel_id
+		  WHERE m.id = $1`,
 		messageID,
-	).Scan(&authorID, &channelID, &deleted)
+	).Scan(&authorID, &channelID, &deleted, &encrypted)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		writeError(w, http.StatusNotFound, "message not found")
@@ -281,14 +284,23 @@ func (a *API) editMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 
+	// Same treatment as a new message: sealed under the author's key in a
+	// plaintext channel (sealing.go), stored as sent in an encrypted one.
+	stored, sealed, err := a.sealBody(channelID, session.UserID, req.Body, encrypted)
+	if err != nil {
+		slog.Error("sealing edited message", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not edit the message")
+		return
+	}
+
 	// deleted is checked again in the UPDATE: a deletion that lands
 	// between the read above and here must win.
 	var editedAt, createdAt time.Time
 	err = tx.QueryRow(r.Context(),
-		`UPDATE messages SET body = $2, edited_at = now()
+		`UPDATE messages SET body = $2, sealed = $3, edited_at = now()
 		  WHERE id = $1 AND NOT deleted
 		  RETURNING edited_at, created_at`,
-		messageID, []byte(req.Body),
+		messageID, stored, sealed,
 	).Scan(&editedAt, &createdAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusConflict, "the message was deleted")

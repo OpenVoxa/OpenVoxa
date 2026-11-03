@@ -52,7 +52,7 @@ server/            Go server (module root here; go.mod says go 1.26)
   Dockerfile          multi-stage: client-core -> client-web -> Go -> distroless
   internal/httpapi/   HTTP + WS; debugui/chat.html = old debug client
   internal/db/        Postgres, migrations/00NN_*.sql (embedded, ordered;
-                      latest 0018)
+                      latest 0020)
   internal/{auth,blob,config,gif,hub,password,perm,ratelimit,unfurl}
 client-core/       TypeScript protocol + crypto, no UI
   src/mls/provider.ts  MlsProvider interface (swappable)
@@ -202,7 +202,9 @@ Ryan 2026-11-03, decisions.md Encryption, "Account deletion is
 crypto-shredding"). Encrypted channels need no new key (MLS already
 makes server copies unreadable); plaintext channels get a per-account
 key file in `OPENVOXA_KEY_DIR` (outside Postgres), deleted on account
-deletion. Tick S-steps in decisions.md as they land.
+deletion. Tick S-steps in decisions.md as they land. S1 done
+(keystore + sealing new plaintext bodies); next S2 (seal existing rows
+and report copies).
 Older full handoff: project doc claude/handoff-step-13.md._
 
 Done and verified on Docker (details: decisions.md Build order 9-12):

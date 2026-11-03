@@ -1761,9 +1761,15 @@ to pick their own colours later, so every colour stays a variable.
 14. **Crypto-shredding** (design agreed with Ryan 2026-11-03; see
     Encryption, "Account deletion is crypto-shredding"). One commit per
     step, each tested on Docker:
-    - [ ] S1 Key folder (`OPENVOXA_KEY_DIR`, own volume, created by the
+    - [x] S1 Key folder (`OPENVOXA_KEY_DIR`, own volume, created by the
           server) and sealing of new plaintext message bodies and edits;
-          readers unseal. Migration adds `messages.sealed`.
+          readers unseal. Migration adds `messages.sealed`. Done
+          2026-11-03: `internal/keystore` (file per account, created on
+          first seal via temp file + link, cached; unit tests),
+          `httpapi/sealing.go` (AES-256-GCM, format byte 0x01, channel and
+          author as associated data; an unopenable body is delivered
+          empty), migration 0020, compose volume `key-data`. Verified on
+          Docker: send, file-only send, edit, reload.
     - [ ] S2 Seal existing plaintext bodies and report copies during the
           upgrade; seal new report copies.
     - [ ] S3 Plaintext-channel attachments sealed under the uploader's

@@ -341,14 +341,25 @@ func (a *API) persistAndBroadcast(
 	}
 	defer tx.Rollback(ctx)
 
-	// body is written as BYTEA. Today that is plain UTF-8; in an encrypted
-	// channel the same column will hold MLS ciphertext and the server will
-	// not be able to read it.
+	// body is written as BYTEA. In an encrypted channel it is MLS
+	// ciphertext the server cannot read and is stored as sent; in a
+	// plaintext channel it is sealed under the author's key (sealing.go).
+	var encrypted bool
+	if err := tx.QueryRow(ctx,
+		`SELECT encrypted FROM channels WHERE id = $1`, channelID,
+	).Scan(&encrypted); err != nil {
+		return err
+	}
+	stored, sealed, err := a.sealBody(channelID, s.UserID, body, encrypted)
+	if err != nil {
+		return err
+	}
+
 	err = tx.QueryRow(ctx,
-		`INSERT INTO messages (channel_id, author_id, body)
-		 VALUES ($1, $2, $3)
+		`INSERT INTO messages (channel_id, author_id, body, sealed)
+		 VALUES ($1, $2, $3, $4)
 		 RETURNING id, created_at`,
-		channelID, s.UserID, []byte(body),
+		channelID, s.UserID, stored, sealed,
 	).Scan(&out.ID, &out.CreatedAt)
 	if err != nil {
 		return err

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/openvoxa/openvoxa/server/internal/blob"
+	"github.com/openvoxa/openvoxa/server/internal/keystore"
 	"github.com/openvoxa/openvoxa/server/internal/config"
 	"github.com/openvoxa/openvoxa/server/internal/db"
 	"github.com/openvoxa/openvoxa/server/internal/httpapi"
@@ -67,7 +68,13 @@ func run() error {
 	slog.Info("blob store ready", "dir", cfg.BlobDir,
 		"max_attachment_mb", cfg.MaxAttachmentBytes/(1024*1024))
 
-	api := httpapi.New(pool, cfg, blobs)
+	keys, err := keystore.Open(cfg.KeyDir)
+	if err != nil {
+		return err
+	}
+	slog.Info("key store ready", "dir", cfg.KeyDir)
+
+	api := httpapi.New(pool, cfg, blobs, keys)
 	api.LogSetupCodeIfEmpty(ctx)
 
 	db.StartSessionSweep(ctx, pool)

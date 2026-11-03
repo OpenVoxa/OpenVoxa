@@ -30,6 +30,12 @@ type Config struct {
 	// losing it means losing every uploaded file.
 	BlobDir string
 
+	// KeyDir holds one key per account for crypto-shredding. Must NOT be
+	// inside the database's backups; see docs/decisions.md, Encryption,
+	// "Account deletion is crypto-shredding". Losing it makes plaintext
+	// channel history unreadable.
+	KeyDir string
+
 	// MaxAttachmentBytes caps a single upload. Operators pay for the disk
 	// and the bandwidth, so they set the ceiling.
 	MaxAttachmentBytes int64
@@ -68,6 +74,7 @@ func Load() (*Config, error) {
 		DatabaseURL: os.Getenv("OPENVOXA_DATABASE_URL"),
 		DebugUI:     envBool("OPENVOXA_DEBUG_UI", false),
 		BlobDir:     env("OPENVOXA_BLOB_DIR", "/var/lib/openvoxa/blobs"),
+		KeyDir:      env("OPENVOXA_KEY_DIR", "/var/lib/openvoxa/keys"),
 
 		MaxAttachmentBytes: int64(envInt("OPENVOXA_MAX_ATTACHMENT_MB", 25)) * 1024 * 1024,
 
