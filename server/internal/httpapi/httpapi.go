@@ -187,6 +187,9 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 
 	mux.HandleFunc("DELETE /api/v1/me", api.requireAuth(api.deleteOwnAccount))
 	mux.HandleFunc("PUT /api/v1/me/password", api.requireAuth(api.changeOwnPassword))
+	// This session's half of unlocking local storage on refresh
+	// (sessionsecret.go, migration 0019).
+	mux.HandleFunc("GET /api/v1/me/unlock-secret", api.requireAuth(api.getUnlockSecret))
 
 	// Recovery backups: the caller's own, opaque, encrypted client-side
 	// (recovery.go, migration 0015).
