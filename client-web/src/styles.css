@@ -14,7 +14,8 @@
   --text: #ffffff;
   --muted: #bdbdbd;
   --accent: #d96932;
-  --accent-hover: #c05a27;
+  /* Follows --accent, which Settings > Appearance can change. */
+  --accent-hover: color-mix(in srgb, var(--accent) 88%, #000);
   --on-accent: #ffffff;
   --link: #ef9a70;
   --danger: #ff8f87;
@@ -148,6 +149,9 @@ textarea:focus { outline: none; border-color: var(--accent); }
   --sidebar-active: #474747;
   --line: #444444;
   --hover-row: #383838;
+  /* Sidebar markers; both can be changed in Settings > Appearance. */
+  --unread-dot: #d96932;
+  --mention-badge: #e5483d;
   /* @mentions: a pill for any mention, stronger for one of you. Tints of
    * the accent, so they follow it. */
   --mention-bg: color-mix(in srgb, var(--accent) 18%, transparent);
@@ -200,7 +204,7 @@ button.secondary:hover:not(:disabled) { background: var(--sidebar-active); }
 .channel .hash { color: var(--muted); width: 14px; text-align: center; flex: none; }
 .channel .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .channel .lock { color: var(--muted); flex: none; }
-.channel .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text); flex: none; }
+.channel .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--unread-dot); flex: none; }
 
 .user-panel {
   display: flex;
@@ -670,7 +674,7 @@ button.dot-host { position: relative; }
   height: 18px;
   padding: 0 4px;
   border-radius: 9px;
-  background: var(--alert);
+  background: var(--mention-badge);
   color: var(--on-accent);
   font-size: 12px;
   font-weight: 700;
@@ -699,3 +703,10 @@ button.dot-host { position: relative; }
 .mention-list li { padding: 5px 8px; border-radius: 4px; cursor: pointer; }
 .mention-list li.active { background: var(--sidebar-active); }
 
+/* ---------------------------------------------------------- appearance */
+.colour-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
+.colour-row input[type="color"] {
+  width: 40px; height: 28px; padding: 0; flex: none;
+  border: 1px solid var(--line); border-radius: 4px; background: none; cursor: pointer;
+}
+.colour-row .grow { flex: 1; }
