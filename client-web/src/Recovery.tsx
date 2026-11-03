@@ -193,11 +193,14 @@ export function RecoveryRestore({
   onDone,
   onSkip,
   onLostKey,
+  reason,
 }: {
   manager: BackupManager;
   onDone: (summary: string) => void;
   onSkip: () => void;
   onLostKey: () => void;
+  /** Why the key is needed, when there is a specific reason to give. */
+  reason?: string | null;
 }) {
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -240,8 +243,8 @@ export function RecoveryRestore({
       <form className="auth-card" onSubmit={submit}>
         <h1>Enter your recovery key</h1>
         <p className="muted">
-          This device can't read your backup yet. Enter your 12 words to restore your message
-          history here and keep it backed up.
+          {reason ?? "This device can't read your backup yet. Enter your 12 words to restore your " +
+            "message history here and keep it backed up."}
         </p>
         <label>
           Recovery key
