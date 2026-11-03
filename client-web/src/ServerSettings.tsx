@@ -741,7 +741,7 @@ interface Report {
 const REPORT_STATUSES: [Report["status"], string][] = [
   ["open", "Open"],
   ["actioned", "Actioned"],
-  ["dismissed", "Dismissed"],
+  ["dismissed", "No action"],
   ["rejected", "Rejected"],
 ];
 
@@ -753,6 +753,8 @@ function ReportsTab({ call, me, reload }: { call: ApiCall; me: Me; reload: numbe
   const [busy, setBusy] = useState<string | null>(null);
   const [rowError, setRowError] = useState<{ id: string; msg: string } | null>(null);
   const [banning, setBanning] = useState<string | null>(null);
+  // Report whose "Delete message" is waiting for confirmation.
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   // For the Ban button: who is already banned or ranked too high.
   const { users, refresh: refreshUsers } = useUserList(call, reload);
@@ -774,22 +776,50 @@ function ReportsTab({ call, me, reload }: { call: ApiCall; me: Me; reload: numbe
     };
   }, [call, status, reload, tick]);
 
+  const resolve = (r: Report, resolution: "dismiss" | "action") =>
+    call(`/api/v1/reports/${r.id}/resolve`, { method: "POST", body: JSON.stringify({ resolution }) });
+
+  // Deleting the message or banning the author IS acting on the report, so
+  // either one also marks it Actioned. Without that, a moderator could
+  // delete a message and then pick "No action needed", and the record
+  // would say nothing was done.
   async function act(r: Report, what: "dismiss" | "action" | "delete") {
     setBusy(`${r.id}:${what}`);
     setRowError(null);
     setFlash(null);
+    setConfirmDelete(null);
+    let deleted = false;
     try {
       if (what === "delete") {
         await call(`/api/v1/messages/${r.message_id}`, { method: "DELETE" });
+        deleted = true;
+        await resolve(r, "action");
+        setFlash(`Message by ${r.accused} deleted; report marked actioned.`);
       } else {
-        await call(`/api/v1/reports/${r.id}/resolve`, { method: "POST", body: JSON.stringify({ resolution: what }) });
+        await resolve(r, what);
       }
     } catch (err) {
-      setRowError({ id: r.id, msg: errText(err) });
+      setRowError({
+        id: r.id,
+        msg: deleted ? `The message was deleted, but the report couldn't be marked actioned: ${errText(err)}` : errText(err),
+      });
     } finally {
       setBusy(null);
       setTick((t) => t + 1);
     }
+  }
+
+  async function banned(r: Report, msg: string) {
+    setBanning(null);
+    refreshUsers();
+    try {
+      await resolve(r, "action");
+      setFlash(`${msg} Report marked actioned.`);
+    } catch (err) {
+      setFlash(msg);
+      setRowError({ id: r.id, msg: `The ban worked, but the report couldn't be marked actioned: ${errText(err)}` });
+    }
+    setTick((t) => t + 1);
   }
 
   const userById = new Map((users ?? []).map((u) => [u.id, u]));
@@ -803,11 +833,14 @@ function ReportsTab({ call, me, reload }: { call: ApiCall; me: Me; reload: numbe
         ))}
       </div>
       <p className="muted small">
-        {status === "open" && "Deleting the message and banning its author are separate from closing the report:"
-          + " do what's needed, then mark it actioned, or dismiss it."}
+        {status === "open" && "Review each report, then choose one: Delete message or Ban (either one also marks it"
+          + " Actioned), No action needed (reviewed, nothing to do), or Mark actioned if you dealt with it another"
+          + " way, such as a warning."}
         {status === "rejected" && "Reports the server refused because the reported text didn't match the message on"
           + " record: the reporter changed it. Filing those is itself worth a look."}
-        {(status === "actioned" || status === "dismissed") && "The newest 100."}
+        {status === "actioned" && "Reports where a moderator acted: deleted the message, banned the author, or"
+          + " dealt with it another way. The newest 100."}
+        {status === "dismissed" && "Reports a moderator reviewed and decided needed no action. The newest 100."}
       </p>
       {flash && <p className="small" role="status">{flash}</p>}
       {error && <p className="error" role="alert">Couldn't load reports: {error}</p>}
@@ -838,42 +871,66 @@ function ReportsTab({ call, me, reload }: { call: ApiCall; me: Me; reload: numbe
                 {r.status === "open" && (
                   <div className="row-actions">
                     {canDelete && r.message_id && !r.message_gone && (
-                      <button className="danger" disabled={busy !== null} onClick={() => void act(r, "delete")}>
-                        {busy === `${r.id}:delete` ? "Deleting…" : "Delete message"}
+                      <button className="danger" disabled={busy !== null}
+                        onClick={() => {
+                          setBanning(null);
+                          setConfirmDelete(confirmDelete === r.id ? null : r.id);
+                        }}
+                        aria-expanded={confirmDelete === r.id}>
+                        {busy === `${r.id}:delete` ? "Deleting…" : confirmDelete === r.id ? "Close" : "Delete message"}
                       </button>
                     )}
                     {canBan && (banLock
                       ? <span className="muted small" title={banLock}>Can't ban</span>
                       : (
-                        <button className="secondary" onClick={() => setBanning(banning === r.id ? null : r.id)}
+                        <button className="secondary" onClick={() => {
+                          setConfirmDelete(null);
+                          setBanning(banning === r.id ? null : r.id);
+                        }}
                           aria-expanded={banning === r.id}>{banning === r.id ? "Close" : `Ban ${r.accused}`}</button>
                       ))}
                     <span className="spacer" />
-                    <button className="secondary" disabled={busy !== null} onClick={() => void act(r, "dismiss")}>
-                      {busy === `${r.id}:dismiss` ? "…" : "Dismiss"}
+                    <button className="secondary" disabled={busy !== null} onClick={() => void act(r, "dismiss")}
+                      title="Reviewed, and nothing needs doing. Closes the report.">
+                      {busy === `${r.id}:dismiss` ? "…" : "No action needed"}
                     </button>
-                    <button className="primary" disabled={busy !== null} onClick={() => void act(r, "action")}>
+                    <button className="secondary" disabled={busy !== null} onClick={() => void act(r, "action")}
+                      title="You dealt with it some other way, such as a warning. Closes the report.">
                       {busy === `${r.id}:action` ? "…" : "Mark actioned"}
                     </button>
                   </div>
                 )}
+                {confirmDelete === r.id && r.status === "open" && (
+                  <div className="member-groups">
+                    <p className="small">
+                      Delete this message by <strong>{r.accused}</strong> for everyone? This can't be undone, and the
+                      report will be marked actioned.
+                    </p>
+                    <div className="row-actions">
+                      <button className="danger" disabled={busy !== null} onClick={() => void act(r, "delete")}>
+                        {busy === `${r.id}:delete` ? "Deleting…" : "Delete message"}
+                      </button>
+                      <button className="secondary" onClick={() => setConfirmDelete(null)}>Cancel</button>
+                    </div>
+                  </div>
+                )}
                 {banning === r.id && r.accused_id && (
                   <div className="member-groups">
+                    <p className="small muted">Banning {r.accused} also marks this report actioned.</p>
                     <BanForm call={call} me={me} user={{ id: r.accused_id, username: r.accused }}
                       onCancel={() => setBanning(null)}
-                      onDone={(msg) => {
-                        setBanning(null);
-                        setFlash(msg);
-                        refreshUsers();
-                        setTick((t) => t + 1);
-                      }} />
+                      onDone={(msg) => void banned(r, msg)} />
                   </div>
                 )}
                 {rowError?.id === r.id && <p className="error" role="alert">{rowError.msg}</p>}
               </li>
             );
           })}
-          {!reports.length && <li className="muted small">No {status} reports.</li>}
+          {!reports.length && (
+            <li className="muted small">
+              No {(REPORT_STATUSES.find(([id]) => id === status)?.[1] ?? status).toLowerCase()} reports.
+            </li>
+          )}
         </ul>
       )}
     </section>
@@ -993,7 +1050,9 @@ function describe(e: LogEntry): { text: string; note?: string } {
       return { text: `deleted a message by ${e.subject_user || "a deleted account"}${where}` };
     case "resolve_report":
       return {
-        text: `${e.detail === "actioned" ? "actioned" : e.detail === "dismissed" ? "dismissed" : "resolved"} a report about ${e.subject_user || "a deleted account"}${where}`,
+        text: e.detail === "dismissed"
+          ? `marked a report about ${e.subject_user || "a deleted account"}${where} as needing no action`
+          : `${e.detail === "actioned" ? "actioned" : "resolved"} a report about ${e.subject_user || "a deleted account"}${where}`,
       };
     case "delete_user":
       return { text: `deleted the account ${e.detail || "(unknown)"}` };

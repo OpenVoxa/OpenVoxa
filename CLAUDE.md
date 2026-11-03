@@ -204,8 +204,9 @@ makes server copies unreadable); plaintext channels get a per-account
 key file in `OPENVOXA_KEY_DIR` (outside Postgres), deleted on account
 deletion. Tick S-steps in decisions.md as they land. S1-S2 done
 (keystore, sealing new and existing plaintext bodies and report copies);
-next S3 (plaintext-channel attachments). Side idea from Ryan's testing:
-Delete/Ban from a report should mark it Actioned; rename Dismiss.
+next S3 (plaintext-channel attachments). Reports tab: Delete (now confirmed)
+or Ban from a report marks it Actioned; Dismiss is "No action needed"
+(tab "No action"; status value still `dismissed`). Verified by Ryan.
 Older full handoff: project doc claude/handoff-step-13.md._
 
 Done and verified on Docker (details: decisions.md Build order 9-12):
