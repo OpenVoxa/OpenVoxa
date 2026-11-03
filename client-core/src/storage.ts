@@ -626,6 +626,12 @@ export const storage = {
     await run(STORE_SENT, "readwrite", (s) => s.delete(EDIT_PREFIX + messageId));
   },
 
+  /** Ids of every message kept in the archive (edit marks left out). */
+  async archivedMessageIds(): Promise<string[]> {
+    const keys = await run<IDBValidKey[]>(STORE_SENT, "readonly", (s) => s.getAllKeys());
+    return keys.map(String).filter((k) => !k.startsWith(EDIT_PREFIX));
+  },
+
   /**
    * Store the plaintext of an edited message, replacing the earlier
    * version, together with the server's edited_at for it. The mark lets a

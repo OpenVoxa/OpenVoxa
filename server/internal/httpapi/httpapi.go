@@ -206,6 +206,9 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 	mux.HandleFunc("GET /api/v1/me/backup/chunks/{name}", api.requireAuth(api.getBackupChunk))
 	mux.HandleFunc("DELETE /api/v1/me/backup/chunks/{name}", api.requireAuth(api.deleteBackupChunk))
 
+	// Which locally archived messages have been deleted (archivecheck.go).
+	mux.HandleFunc("POST /api/v1/messages/archive-check", api.requireAuth(api.checkArchive))
+
 	// Authors delete their own; the handler checks for moderator rank
 	// before allowing anyone else's.
 	mux.HandleFunc("DELETE /api/v1/messages/{id}",

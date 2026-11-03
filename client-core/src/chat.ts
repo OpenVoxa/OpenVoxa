@@ -322,6 +322,12 @@ class MemoryStore implements KeyValueStore {
  * One signed-in account's chat. Create with the crypto session from
  * startSession, call start(), and close() on sign-out.
  */
+/** Ids per archive check; the server accepts up to 500 (archivecheck.go). */
+const ARCHIVE_CHECK_BATCH = 500;
+/** Wait after user_purged so the server's purge has settled and a burst
+ * of deletions costs one check. */
+const PRUNE_DELAY_MS = 2000;
+
 export class Chat {
   readonly session: Session;
   readonly userId: string;
@@ -340,6 +346,9 @@ export class Chat {
   #voice: VoicePresence = {};
   #voicePoll: ReturnType<typeof setInterval> | undefined;
   #voiceTimer: ReturnType<typeof setTimeout> | undefined;
+  #pruneTimer: ReturnType<typeof setTimeout> | undefined;
+  #pruning: Promise<number> | null = null;
+  #pruneAgain = false;
 
   constructor(session: Session, opts: ChatOptions) {
     this.session = session;
@@ -408,6 +417,74 @@ export class Chat {
     void this.#openEvents();
     void this.refreshVoice();
     this.#voicePoll = setInterval(() => void this.refreshVoice(), VOICE_POLL_MS);
+    // Catch up on deletions that happened while this device was away.
+    void this.pruneArchive();
+  }
+
+  /**
+   * Delete this device's saved copies of messages the server no longer
+   * has: deleted (one at a time, or with their author's account),
+   * expired by retention, or in a deleted channel. Returns how many went.
+   *
+   * The archive is keyed by message id alone, and a device that was
+   * offline never saw the event announcing a deletion, so it asks the
+   * server about every id it keeps (decisions.md, Encryption, "Account
+   * deletion is crypto-shredding"). Call it again after restoring a
+   * backup, which can bring old copies back. Concurrent calls share one
+   * run, plus one more afterwards if asked for meanwhile.
+   *
+   * Afterwards the backup is re-uploaded (it is a full copy each time),
+   * so the deleted messages leave the server-held backup too.
+   */
+  pruneArchive(): Promise<number> {
+    if (this.#pruning) {
+      this.#pruneAgain = true;
+      return this.#pruning;
+    }
+    const run = (async () => {
+      let removed = 0;
+      do {
+        this.#pruneAgain = false;
+        removed += await this.#pruneOnce();
+      } while (this.#pruneAgain && !this.#closed);
+      return removed;
+    })();
+    this.#pruning = run.finally(() => { this.#pruning = null; });
+    return this.#pruning;
+  }
+
+  async #pruneOnce(): Promise<number> {
+    let removed = 0;
+    try {
+      const ids = await storage.archivedMessageIds();
+      for (let i = 0; i < ids.length && !this.#closed; i += ARCHIVE_CHECK_BATCH) {
+        const { gone } = (await this.#opts.call("/api/v1/messages/archive-check", {
+          method: "POST",
+          body: JSON.stringify({ ids: ids.slice(i, i + ARCHIVE_CHECK_BATCH) }),
+        })) as { gone: string[] };
+        for (const id of gone) {
+          await storage.deletePlaintext(id);
+          removed++;
+        }
+      }
+    } catch (err) {
+      // Nothing is deleted on a failed check; the next start tries again.
+      console.warn("could not check the message archive:", err);
+    }
+    if (removed > 0) {
+      try {
+        this.#opts.onArchived?.();
+      } catch {
+        /* the backup schedule is best-effort */
+      }
+    }
+    return removed;
+  }
+
+  /** Coalesce a burst of account deletions into one archive check. */
+  #pruneSoon(): void {
+    clearTimeout(this.#pruneTimer);
+    this.#pruneTimer = setTimeout(() => void this.pruneArchive(), PRUNE_DELAY_MS);
   }
 
   /** Stop everything. The crypto session itself is the caller's. */
@@ -415,6 +492,7 @@ export class Chat {
     this.#closed = true;
     clearInterval(this.#voicePoll);
     clearTimeout(this.#voiceTimer);
+    clearTimeout(this.#pruneTimer);
     this.#offAuto?.();
     this.#offMembership?.();
     this.#view?.close();
@@ -576,6 +654,8 @@ export class Chat {
       case "user_purged":
         this.#view?.userPurged(frame.user_id!);
         this.#reconcileOpen();
+        // Their messages in every other channel, not only the open one.
+        this.#pruneSoon();
         break;
       case "access_changed":
         this.#reconcileOpen();
