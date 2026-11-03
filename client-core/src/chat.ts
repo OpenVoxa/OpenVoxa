@@ -181,6 +181,8 @@ export type ChatEvent =
   /** This account's groups or permissions may have changed: refetch /me. */
   | { type: "me_changed" }
   | { type: "unread"; unread: ReadonlySet<string> }
+  /** The open report queue changed; sent only to people who can read it. */
+  | { type: "reports_changed" }
   /** Who is in each voice call (channels you can see, non-empty only). */
   | { type: "voice"; presence: VoicePresence }
   | { type: "error"; message: string };
@@ -234,7 +236,7 @@ function compareMessages(a: ChatMessage, b: ChatMessage): number {
 /** Server-wide event types (emitAll / emitUsers on the server). */
 const GLOBAL_EVENTS = new Set([
   "user_purged", "access_changed", "channel_changed", "channel_deleted",
-  "perms_changed", "channel_activity", "voice_changed",
+  "perms_changed", "channel_activity", "voice_changed", "reports_changed",
 ]);
 
 const EVENT_RETRY_MS = 5000;
@@ -497,6 +499,9 @@ export class Chat {
         break;
       case "voice_changed":
         this.#refreshVoiceSoon();
+        break;
+      case "reports_changed":
+        this.#emit({ type: "reports_changed" });
         break;
       case "channel_changed":
       case "channel_deleted":

@@ -56,6 +56,11 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   const [perms, setPerms] = useState<readonly string[]>(session.permissions);
   const [rank, setRank] = useState(session.rank);
   const [permsTick, setPermsTick] = useState(0);
+  // Open reports, for the dot on the Server settings gear. Only fetched by
+  // people who can read reports; reports_changed (sent only to them) and
+  // reportsTick trigger a refetch.
+  const [openReports, setOpenReports] = useState(0);
+  const [reportsTick, setReportsTick] = useState(0);
   const [dialog, setDialog] = useState<
     | { k: "create"; kind: "text" | "voice" }
     | { k: "settings"; id: string }
@@ -97,6 +102,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           if (e.type === "channels") setChannels(e.channels);
           else if (e.type === "unread") setUnread(e.unread);
           else if (e.type === "voice") setPresence(e.presence);
+          else if (e.type === "reports_changed") setReportsTick((t) => t + 1);
           else if (e.type === "me_changed") {
             (call("/api/v1/me") as Promise<{ permissions: string[]; rank: number }>)
               .then((me) => {
@@ -125,6 +131,29 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.user_id, session.token]);
+
+  const readsReports = perms.includes("view_reports") || perms.includes("administrator");
+  useEffect(() => {
+    if (!readsReports) {
+      setOpenReports(0);
+      return;
+    }
+    let live = true;
+    const load = () => {
+      (call("/api/v1/reports?status=open") as Promise<unknown[]>)
+        .then((r) => live && setOpenReports(r.length))
+        .catch(() => {});
+    };
+    load();
+    // Fallbacks for an event missed while the event socket reconnected.
+    const timer = setInterval(load, 120_000);
+    window.addEventListener("focus", load);
+    return () => {
+      live = false;
+      clearInterval(timer);
+      window.removeEventListener("focus", load);
+    };
+  }, [call, readsReports, reportsTick, permsTick]);
 
   const text = useMemo(() => channels.filter((c) => c.kind === "text"), [channels]);
   const voiceChannels = useMemo(() => channels.filter((c) => c.kind === "voice"), [channels]);
@@ -248,9 +277,11 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
         <header className="sidebar-head">
           OpenVoxa
           {isStaff && (
-            <button className="icon" onClick={() => setDialog({ k: "server" })}
-              title="Server settings" aria-label="Server settings">
+            <button className="icon dot-host" onClick={() => setDialog({ k: "server" })}
+              title={openReports ? `Server settings: ${openReports}${openReports >= 100 ? "+" : ""} open report${openReports === 1 ? "" : "s"}` : "Server settings"}
+              aria-label={openReports ? `Server settings, ${openReports} open reports` : "Server settings"}>
               <GearIcon />
+              {openReports > 0 && <span className="alert-dot" aria-hidden="true" />}
             </button>
           )}
         </header>
@@ -362,7 +393,11 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
       )}
       {dialog?.k === "server" && isStaff && (
         <ServerSettingsDialog call={call} me={{ userId: session.user_id, permissions: perms, rank }}
-          reload={permsTick} onClose={() => setDialog(null)} />
+          reload={permsTick + reportsTick} openReports={openReports}
+          onClose={() => {
+            setDialog(null);
+            setReportsTick((t) => t + 1);
+          }} />
       )}
       {person && voiceClient && (
         <PersonMenu voice={voiceClient}
