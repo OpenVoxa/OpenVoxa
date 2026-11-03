@@ -172,6 +172,15 @@ func (a *API) reportMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The report keeps its copy of the text sealed under the accused's
+	// key (sealing.go), so deleting their account erases it too.
+	claimed, claimedSealed, err := a.sealReport(authorID, req.Body)
+	if err != nil {
+		slog.Error("sealing report copy", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not file the report")
+		return
+	}
+
 	// Verification. Plaintext channels compare against the stored copy.
 	//
 	// Encrypted channels will verify an MLS signature over the claimed
@@ -189,11 +198,11 @@ func (a *API) reportMessage(w http.ResponseWriter, r *http.Request) {
 			if _, err := a.pool.Exec(r.Context(),
 				`INSERT INTO reports
 				     (message_id, channel_id, reporter_id, accused_id,
-				      reason, claimed_body, verified, status)
-				 VALUES ($1, $2, $3, $4, $5, $6, false, 'rejected')
+				      reason, claimed_body, claimed_sealed, verified, status)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, false, 'rejected')
 				 ON CONFLICT DO NOTHING`,
 				messageID, channelID, session.UserID, authorID,
-				req.Reason, req.Body,
+				req.Reason, claimed, claimedSealed,
 			); err != nil {
 				slog.Error("recording rejected report", "err", err)
 			}
@@ -211,11 +220,11 @@ func (a *API) reportMessage(w http.ResponseWriter, r *http.Request) {
 	err = a.pool.QueryRow(r.Context(),
 		`INSERT INTO reports
 		     (message_id, channel_id, reporter_id, accused_id,
-		      reason, claimed_body, verified)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		      reason, claimed_body, claimed_sealed, verified)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 RETURNING id`,
 		messageID, channelID, session.UserID, authorID,
-		req.Reason, req.Body, verified,
+		req.Reason, claimed, claimedSealed, verified,
 	).Scan(&reportID)
 
 	if err != nil {
@@ -268,7 +277,7 @@ func (a *API) listReports(w http.ResponseWriter, r *http.Request) {
 		        COALESCE(c.name, ''), COALESCE(m.deleted, true),
 		        COALESCE(ru.username, '[deleted]'),
 		        COALESCE(au.username, '[deleted]'),
-		        rp.accused_id, rp.reason, rp.claimed_body,
+		        rp.accused_id, rp.reason, rp.claimed_body, rp.claimed_sealed,
 		        rp.verified, rp.status, rp.created_at
 		   FROM reports rp
 		   LEFT JOIN users ru ON ru.id = rp.reporter_id
@@ -288,13 +297,16 @@ func (a *API) listReports(w http.ResponseWriter, r *http.Request) {
 	out := make([]reportSummary, 0)
 	for rows.Next() {
 		var rs reportSummary
+		var claimed []byte
+		var claimedSealed bool
 		if err := rows.Scan(&rs.ID, &rs.MessageID, &rs.ChannelID,
 			&rs.Channel, &rs.MessageGone, &rs.Reporter, &rs.Accused, &rs.AccusedID, &rs.Reason,
-			&rs.ClaimedBody, &rs.Verified, &rs.Status, &rs.CreatedAt); err != nil {
+			&claimed, &claimedSealed, &rs.Verified, &rs.Status, &rs.CreatedAt); err != nil {
 			slog.Error("scanning report", "err", err)
 			writeError(w, http.StatusInternalServerError, "could not list reports")
 			return
 		}
+		rs.ClaimedBody = a.openReport(r.Context(), rs.AccusedID, claimed, claimedSealed)
 		out = append(out, rs)
 	}
 	if err := rows.Err(); err != nil {

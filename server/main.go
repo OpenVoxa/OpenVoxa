@@ -77,6 +77,10 @@ func run() error {
 	api := httpapi.New(pool, cfg, blobs, keys)
 	api.LogSetupCodeIfEmpty(ctx)
 
+	// Seal plaintext written before crypto-shredding existed. Readers
+	// handle both forms, so this runs alongside normal traffic.
+	go api.SealExisting(ctx)
+
 	db.StartSessionSweep(ctx, pool)
 
 	// The sweep reports what it removed so connected clients can drop the

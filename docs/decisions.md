@@ -1770,8 +1770,16 @@ to pick their own colours later, so every colour stays a variable.
           author as associated data; an unopenable body is delivered
           empty), migration 0020, compose volume `key-data`. Verified on
           Docker: send, file-only send, edit, reload.
-    - [ ] S2 Seal existing plaintext bodies and report copies during the
-          upgrade; seal new report copies.
+    - [x] S2 Seal existing plaintext bodies and report copies during the
+          upgrade; seal new report copies. Done 2026-11-03: migration 0021
+          (`reports.claimed_body` to BYTEA, `claimed_sealed`; blanks report
+          copies and message bodies whose author is already deleted, which
+          account deletion had left behind in reports), `SealExisting` in
+          `sealing.go` runs in the background at startup (batches of 500,
+          guarded UPDATEs so a concurrent edit or delete wins). Report
+          copies are sealed under the accused's key in every channel kind.
+          Verified on Docker: 17 messages and 4 reports sealed, old
+          history, old reports and a new Checked report all read.
     - [ ] S3 Plaintext-channel attachments sealed under the uploader's
           key (bytes and filename), no more dedup there; existing blobs
           converted.
