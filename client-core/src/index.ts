@@ -37,7 +37,7 @@ export type {
 export { TsMlsProvider } from "./mls/tsmls.js";
 export { Identity } from "./identity.js";
 export { Groups, GroupReset, RemovedFromGroup } from "./groups.js";
-export { storage } from "./storage.js";
+export { storage, StorageLocked, type UnlockResult } from "./storage.js";
 export { Chat, ChannelView, describePerson, findMentions, matchMember, MENTION_RE } from "./chat.js";
 export type {
   AttachmentInfo,
@@ -191,6 +191,7 @@ export async function startSession(
 /** Destroy all local key material. Called on sign-out. */
 export async function forgetIdentity(): Promise<void> {
   await storage.wipe();
+  storage.lock();
 }
 
 export interface SelfTestResult {

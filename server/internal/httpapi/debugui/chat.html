@@ -948,6 +948,25 @@ async function onGroupAdvanced() {
 // Private key material never leaves the browser. The server stores only
 // the public halves and hands them out one at a time.
 
+// This browser's key storage is encrypted under the password (client-core
+// storage.ts). The debug page keeps no session across reloads, so the
+// password at sign-in is the only unlock it needs. A keyring that no
+// longer opens (password changed elsewhere) is discarded: this browser
+// becomes a new device, as in the web client.
+async function unlockStorage(password) {
+  if (typeof OpenVoxaCore === "undefined") return;
+  const store = OpenVoxaCore.storage;
+  await store.useAccount(myUserID);
+  let r = await store.unlock(password);
+  if (r === "mismatch") {
+    r = await store.discardAndUnlock(password);
+    line("sys", "this browser's stored keys did not open with this password (changed " +
+      "elsewhere?); discarded them, this browser becomes a new device");
+  } else if (r === "upgraded") {
+    line("sys", "this browser's stored keys are now encrypted with your password");
+  }
+}
+
 async function setUpIdentity() {
   if (typeof OpenVoxaCore === "undefined") return;
 
@@ -1757,6 +1776,7 @@ async function authenticate(path) {
     line("sys", `signed in as ${esc(data.username)}, groups: ${esc(names)}`);
     await loadChannels();
     await loadGifConfig();
+    await unlockStorage($("password").value);
     await setUpIdentity();
     // A fresh event socket for this account (a second Log in on the same
     // page may be a different account).

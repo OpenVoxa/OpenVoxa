@@ -5,8 +5,25 @@ import { useEffect, useState, type FormEvent } from "react";
 import { call, guessDeviceName, type Session } from "./api";
 import { checkPassword } from "./password";
 import { PasswordRules } from "./PasswordRules";
+import { unlockWithPassword, type PasswordUnlock } from "./unlock";
 
-export function Login({ onSession }: { onSession: (s: Session, registered: boolean) => void }) {
+/** A note for the first screen after sign-in, when unlocking changed something. */
+function unlockNote(how: PasswordUnlock): string | undefined {
+  switch (how) {
+    case "upgraded":
+      return "This browser's saved keys and messages are now encrypted with your password.";
+    case "replaced":
+      return "Your password was changed in another browser, so this browser's saved keys " +
+        "could no longer be opened. It has been set up as a new device.";
+    default:
+      return undefined;
+  }
+}
+
+export function Login({ onSession, notice }: {
+  onSession: (s: Session, registered: boolean, note?: string) => void;
+  notice?: string | null;
+}) {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -50,7 +67,16 @@ export function Login({ onSession }: { onSession: (s: Session, registered: boole
           ...(registering && needsSetup ? { setup_code: setupCode } : {}),
         },
       });
-      onSession(s, registering);
+      // The password unlocks this browser's encrypted storage too; this
+      // is the only moment it is at hand (unlock.ts).
+      let how: PasswordUnlock;
+      try {
+        how = await unlockWithPassword(s, password);
+      } catch (err) {
+        const why = err instanceof Error ? err.message : String(err);
+        throw new Error(`Signed in, but this browser's encrypted storage could not be opened: ${why}`);
+      }
+      onSession(s, registering, unlockNote(how));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -69,6 +95,7 @@ export function Login({ onSession }: { onSession: (s: Session, registered: boole
       <form className="auth-card" onSubmit={submit}>
         <h1>OpenVoxa</h1>
         <p className="muted">{registering ? "Create an account" : "Welcome back"}</p>
+        {notice && <p className="muted" role="status">{notice}</p>}
 
         <label>
           Username

@@ -11,23 +11,37 @@ import { RecoveryRestore, RecoverySetup } from "./Recovery";
 import { ChatApp } from "./ChatApp";
 import type { Chat } from "@core/chat";
 import { forgetIdentity } from "@core/index";
-import { dropCryptoSession } from "./core";
+import { apiCall, cryptoSession, dropCryptoSession } from "./core";
+import { lockStorage, unlockOnRefresh } from "./unlock";
 
 export function App() {
   const [session, setSession] = useState<Session | null>(loadSession);
   // Only true right after "Create account" in this tab: the recovery key
   // is then part of signup, with no "Not now".
   const [justRegistered, setJustRegistered] = useState(false);
+  // A note for the next screen: after sign-in for Home, after a forced
+  // sign-out for the login page.
+  const [note, setNote] = useState<string | null>(null);
 
-  function update(s: Session | null, registered = false) {
+  function update(s: Session | null, registered = false, message?: string) {
+    // Signed out for any reason: the unlocked storage key goes too.
+    if (!s) lockStorage();
     saveSession(s);
     setSession(s);
     setJustRegistered(registered);
+    setNote(message ?? null);
   }
 
-  if (!session) return <Login onSession={update} />;
+  if (!session) return <Login onSession={update} notice={note} />;
   return <Home key={session.user_id} session={session} justRegistered={justRegistered}
-    onLoggedOut={() => update(null)} />;
+    initialNotice={note}
+    onLoggedOut={() => update(null)}
+    onLocked={() => {
+      // The refresh could not unlock storage (session ended, or this tab
+      // predates encryption). End the session; the password unlocks.
+      void call("/api/v1/auth/logout", { method: "POST", token: session.token }).catch(() => {});
+      update(null, false, "Sign in again to unlock this browser's encrypted storage.");
+    }} />;
 }
 
 type Phase =
@@ -37,21 +51,39 @@ type Phase =
   | { k: "restore" }
   | { k: "ready" };
 
-function Home({ session, justRegistered, onLoggedOut }: {
+function Home({ session, justRegistered, initialNotice, onLoggedOut, onLocked }: {
   session: Session;
   justRegistered: boolean;
+  initialNotice: string | null;
   onLoggedOut: () => void;
+  onLocked: () => void;
 }) {
   const [manager, setManager] = useState<BackupManager | null>(null);
   const [phase, setPhase] = useState<Phase>({ k: "loading" });
   const [status, setStatus] = useState<BackupStatus | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(initialNotice);
   const [busy, setBusy] = useState<string | null>(null);
 
   // Decide which recovery screen, if any, this sign-in needs.
   useEffect(() => {
     let live = true;
     (async () => {
+      // Signed in just now: Login already unlocked. Refreshed: unlock from
+      // the tab's session copy, or sign in again.
+      if (!(await unlockOnRefresh(session))) {
+        if (live) onLocked();
+        return;
+      }
+      // Start this browser's device before choosing a recovery screen. A
+      // device that was revoked (unused for 30 days, or removed in
+      // Settings, Devices) is wiped and replaced here, which drops its
+      // backup key, so the status below asks for the recovery key.
+      // ChatApp reuses this same session (cryptoSession caches it).
+      const crypto = await cryptoSession(session.user_id, apiCall(session.token, onLoggedOut));
+      if (crypto.status.replaced && live) {
+        setNotice("This browser's device had been removed or was unused for 30 days, so it was " +
+          "set up as a new device. Enter your recovery key to bring your history back.");
+      }
       const m = await BackupManager.open(session.user_id, session.token);
       m.onLocked = () => setPhase({ k: "restore" });
       m.onUploaded = () => {
@@ -94,50 +126,27 @@ function Home({ session, justRegistered, onLoggedOut }: {
   }
 
   /**
-   * Sign out. client-web owns this browser's device for the account, so
-   * signing out also revokes the device and wipes its keys and message
-   * archive, like the debug page's "Forget device". The backup is
-   * uploaded first; the next sign-in restores from it with the recovery
-   * key.
+   * Sign out. The device stays: its keys, groups and message archive stay
+   * in this browser, encrypted under the password, and the next sign-in
+   * here unlocks them with the password alone (decided by Ryan,
+   * 2026-11-03). The recovery key is needed only once the device is
+   * revoked: unused for 30 days (server expiry) or removed in Settings,
+   * Devices. Identity.start then wipes this browser and registers anew.
+   *
+   * The backup is still uploaded first, quietly: it is what other
+   * devices restore from.
    */
   async function logout(chat: Chat | null) {
     if (!manager) return;
-    setBusy("Backing up before signing out…");
-    const s = await manager.status().catch(() => null);
-    if (!s?.unlocked) {
-      const why = !s
-        ? "You have no recovery key, so your encrypted message history isn't backed up."
-        : "This device isn't backing up (it needs your recovery key).";
-      if (!confirm(`${why}\n\nSigning out erases it from this browser for good. Sign out anyway?`)) {
-        setBusy(null);
-        return;
-      }
-    } else {
-      try {
-        await manager.uploadNow();
-      } catch (err) {
-        const why = err instanceof Error ? err.message : String(err);
-        if (!confirm(`Your history couldn't be backed up (${why}).\n\nSigning out erases it from this browser. Sign out anyway?`)) {
-          setBusy(null);
-          return;
-        }
-      }
+    setBusy("Signing out…");
+    try {
+      await manager.uploadNow();
+    } catch (err) {
+      console.warn("backup before sign-out failed:", err);
     }
     manager.close();
-
-    setBusy("Signing out…");
-    if (chat) {
-      try {
-        await chat.forgetDevice();
-        dropCryptoSession(session.user_id);
-      } catch (err) {
-        // The server still lists the device: wiping its keys now would
-        // leave members adding a device nobody holds. Keep them; the next
-        // sign-in in this browser uses the same device.
-        chat.close();
-        console.warn("could not revoke this device; keeping its keys:", err);
-      }
-    }
+    chat?.close();
+    dropCryptoSession(session.user_id);
     // Clear locally even if the server call fails: a dead token is harmless.
     try {
       await call("/api/v1/auth/logout", { method: "POST", token: session.token });

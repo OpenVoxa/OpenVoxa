@@ -641,6 +641,7 @@ export class Chat {
     }
     this.close();
     await storage.wipe();
+    storage.lock();
   }
 }
 

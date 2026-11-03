@@ -27,8 +27,9 @@
  * What the server learns: that a backup exists, its size, and when it
  * changes. Not which channels, how many messages, or any text.
  *
- * The derived key (never the words) is remembered on this device as a
- * non-extractable CryptoKey so later uploads need no typing.
+ * The derived key (never the words) is remembered on this device,
+ * encrypted with the rest of local storage, so later uploads need no
+ * typing.
  */
 
 import { entropyToMnemonic, mnemonicToEntropy } from "@scure/bip39";
@@ -220,7 +221,10 @@ async function derive(
   );
   const aes = await crypto.subtle.deriveKey(
     { name: "HKDF", hash: "SHA-256", salt, info: utf8.encode("openvoxa backup v1 encryption") },
-    ikm, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"],
+    // Extractable so storage can keep it encrypted under the local data
+    // key (a non-extractable key cannot be encrypted); storage hands it
+    // back non-extractable.
+    ikm, { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"],
   );
   const check = new Uint8Array(await crypto.subtle.deriveBits(
     { name: "HKDF", hash: "SHA-256", salt, info: utf8.encode("openvoxa backup v1 key check") },
