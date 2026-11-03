@@ -134,10 +134,10 @@ No `tls` profile = no Caddy (own proxy + `OPENVOXA_TRUST_PROXY=true`).
   asks for a username, the token expired: Ryan makes a new one.
 - Commit/push only when asked. Never commit `.env`, keys, or
   `docker-compose.override.yml`.
-- **On Docker, after a push that changes the app, offer to rebuild**
-  (`docker compose --profile tls up -d --build` from `deploy/`). It
-  restarts the server: connections drop for a few seconds and friends
-  may be online. Afterwards check `docker compose ps` and
+- **On Docker, rebuild without asking as soon as builds pass**
+  (`docker compose --profile tls up -d --build` from `deploy/`); Ryan
+  is the only user, so dropped connections don't matter. Order: build,
+  rebuild, Ryan tests, then commit + push on success. Afterwards check `docker compose ps` and
   `logs server --tail 15`, then tell Ryan to hard-refresh (Ctrl+Shift+R).
   Env changes need `--force-recreate`. Not on Docker: give the block,
   with the expected hash, without being asked (he multitasks):
@@ -183,8 +183,8 @@ No `tls` profile = no Caddy (own proxy + `OPENVOXA_TRUST_PROXY=true`).
 
 ## Current state (update every session)
 
-_Last updated: 2026-11-03. M5 session A (account settings) done and
-verified (S1-S5); next M5 session B (groups and members). External join was already done (2026-10-31). Older
+_Last updated: 2026-11-03. M5 session B (groups and members) done and
+verified (B1-B4); next M5 session C (moderation). External join was already done (2026-10-31). Older
 full handoff: project doc claude/handoff-step-13.md._
 
 Done and verified on Docker (details: decisions.md Build order 9-12):
@@ -207,8 +207,8 @@ M4 attachments/GIFs/unfurls/notices -> M5 settings and admin panes.
 - M4 session A DONE (markdown, previews, GIFs, notices, tones, Settings).
   G1/Y1 verified; G2-G4 to test. Also pending: P3 password, D1 delete-user.
 - Deploy: LiveKit on host networking (v1.13.11, `host.docker.internal:7880`),
-  `update-node-ip.sh` on cron. Temporarily open to two friends (port 8443;
-  teardown in handoff).
+  `update-node-ip.sh` on cron. Closed off: Ryan is the only user (port
+  8443; friend-access teardown notes in handoff).
 - External join is DONE (built and verified 2026-10-31, `b550c95`,
   `ccba824`; `groups.open`, used by client-web via `chat.ts`). A new
   device joins encrypted channels and voice with nobody online. The
@@ -232,9 +232,16 @@ M4 attachments/GIFs/unfurls/notices -> M5 settings and admin panes.
   incl. "Make a new key", devices list/remove, delete account. S5 found
   that live views kept a deleted author's name; fixed (`userPurged`
   clears it, client-web shows "Deleted user").
-- Next: M5 session B. Server endpoints exist (`/groups`, `/users`,
-  `/users/{id}/groups/{group}`); chat.html console helpers show usage.
-  `moderation_log` has no read endpoint yet (C needs server work).
+- M5 session B DONE and verified on Docker 2026-11-03 (B1-B4): Server
+  settings dialog (`client-web/src/ServerSettings.tsx`), gear beside
+  "OpenVoxa" for staff only. Groups tab (create/edit/delete, rank as a
+  number with neighbour hint, switches) and Members tab (search, tick
+  groups per person). Mirrors the server's rank/switch rules as disabled
+  controls. Groups now: Administrator 30, Moderator 20, Member 10 (new
+  accounts), Everyone 0 (= guest level; Ryan dropped Bouncers/VIP/Guest).
+- Next: M5 session C (bans, reports, delete-user) as new tabs in Server
+  settings. Bans/reports endpoints exist (`/bans`, `/reports`,
+  `/users/{id}/ban`); `moderation_log` has no read endpoint yet.
   Crypto-shredding is unbuilt, not
   yet in Build order. Encrypting local IndexedDB keys is unblocked
   (decisions.md Open items).
