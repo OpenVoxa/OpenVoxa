@@ -1817,6 +1817,19 @@ to pick their own colours later, so every colour stays a variable.
 
 ## Open items
 
+- [ ] Emoji (Ryan, 2026-11-03). A picker in the composer, plus `:name:`
+      shortcodes. Unicode emoji are just text, so they work in encrypted
+      channels unchanged. To settle before building: bundle the emoji
+      data and images ourselves (no CDN, same reason as LiveKit) or use
+      the system font; whether reactions on messages come with it.
+- [ ] Custom stickers (Ryan, 2026-11-03): images uploaded to the server
+      and sent like a GIF. To settle before building: who may upload
+      (a new permission, or `manage_channels`), size and type limits,
+      server-wide or per channel. Stickers are a shared server set, not
+      anyone's personal content, so they may stay unsealed like Giphy
+      GIFs; and what happens to a sticker when its uploader deletes their
+      account.
+
 - [ ] Password strength estimation with zxcvbn (server and client), on top
       of the rules. Ryan asked to discuss later (2026-11-01).
 
