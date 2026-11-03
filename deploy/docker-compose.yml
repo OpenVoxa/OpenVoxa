@@ -85,6 +85,14 @@ services:
       # what this server searches for.
       OPENVOXA_GIF_PROVIDER: "${OPENVOXA_GIF_PROVIDER:-}"
       OPENVOXA_GIF_API_KEY: "${OPENVOXA_GIF_API_KEY:-}"
+
+      # Optional: a 32-byte base64 key that encrypts every account key
+      # where it rests in key-data (envelope encryption). With it set, a
+      # stolen key-folder backup is useless on its own. It must live off
+      # the key folder and off the database backups, which .env (next to
+      # neither) satisfies. Empty leaves account keys in the clear.
+      # See deploy/README.md, "Account keys and backups".
+      OPENVOXA_KEK: "${OPENVOXA_KEK:-}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

@@ -5,9 +5,12 @@
 package config
 
 import (
+	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -35,6 +38,16 @@ type Config struct {
 	// "Account deletion is crypto-shredding". Losing it makes plaintext
 	// channel history unreadable.
 	KeyDir string
+
+	// KEK, when set, is a 32-byte key-encryption key that wraps every
+	// per-account key where it rests on disk (envelope encryption). A
+	// stolen key folder, or a backup of it, is then useless without this
+	// key. It must live OUTSIDE the key folder and off the database
+	// backups, so that neither backup alone can decrypt anything. Nil
+	// leaves the per-account keys stored in the clear (the default, for
+	// compatibility). See docs/decisions.md, Encryption, and
+	// deploy/README.md, "Account keys and backups".
+	KEK []byte
 
 	// MaxAttachmentBytes caps a single upload. Operators pay for the disk
 	// and the bandwidth, so they set the ceiling.
@@ -117,7 +130,46 @@ func Load() (*Config, error) {
 			"OPENVOXA_LIVEKIT_URL, _API_KEY and _API_SECRET must all be set or all be empty")
 	}
 
+	kek, err := loadKEK()
+	if err != nil {
+		return nil, err
+	}
+	cfg.KEK = kek
+
 	return cfg, nil
+}
+
+// loadKEK reads the key-encryption key from OPENVOXA_KEK (base64) or from
+// the file named by OPENVOXA_KEK_FILE (base64, whitespace trimmed). A file
+// suits Docker/systemd secrets, which mount a secret as a file rather than
+// an environment variable. Returns nil when neither is set.
+func loadKEK() ([]byte, error) {
+	inline := os.Getenv("OPENVOXA_KEK")
+	file := os.Getenv("OPENVOXA_KEK_FILE")
+	switch {
+	case inline == "" && file == "":
+		return nil, nil
+	case inline != "" && file != "":
+		return nil, errors.New("set only one of OPENVOXA_KEK or OPENVOXA_KEK_FILE")
+	}
+
+	encoded := inline
+	if file != "" {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return nil, fmt.Errorf("reading OPENVOXA_KEK_FILE: %w", err)
+		}
+		encoded = string(data)
+	}
+
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
+	if err != nil {
+		return nil, fmt.Errorf("the key-encryption key must be base64: %w", err)
+	}
+	if len(raw) != 32 {
+		return nil, fmt.Errorf("the key-encryption key must decode to 32 bytes, got %d", len(raw))
+	}
+	return raw, nil
 }
 
 func env(key, fallback string) string {
