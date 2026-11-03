@@ -209,6 +209,14 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store) *API {
 	mux.HandleFunc("POST /api/v1/reports/{id}/resolve",
 		withUUIDPath(api.requirePerm(perm.ViewReports, api.resolveReport)))
 
+	// Ban, View reports or Delete messages; checked in the handler.
+	mux.HandleFunc("GET /api/v1/moderation-log",
+		api.requireAuth(api.listModerationLog))
+	mux.HandleFunc("GET /api/v1/moderation-log/settings",
+		api.requireAuth(api.getModLogSettings))
+	mux.HandleFunc("PUT /api/v1/moderation-log/settings",
+		api.requirePerm(perm.Administrator, api.putModLogSettings))
+
 	mux.HandleFunc("GET /api/v1/bans",
 		api.requirePerm(perm.Ban, api.listBans))
 	mux.HandleFunc("POST /api/v1/users/{id}/ban",
