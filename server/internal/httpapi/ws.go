@@ -137,6 +137,10 @@ type clientFrame struct {
 	// uploader, in this channel, and is not already attached elsewhere.
 	Attachments []string `json:"attachments"`
 
+	// User IDs the message mentions (mentions.go). Anyone who may not
+	// view the channel is dropped.
+	Mentions []string `json:"mentions"`
+
 	// Optional client-chosen tag, echoed on the resulting message (and on
 	// an error about this frame). The sender uses it to pair its own
 	// echo with what it sent: in an encrypted channel the sender cannot
@@ -163,6 +167,8 @@ type messageFrame struct {
 	Ref string `json:"ref,omitempty"`
 
 	Attachments []attachmentInfo `json:"attachments,omitempty"`
+	// Who the message mentions, as the server accepted it.
+	Mentions []mentionInfo `json:"mentions,omitempty"`
 }
 
 type historyFrame struct {
@@ -314,14 +320,19 @@ func (a *API) websocket(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		if err := a.persistAndBroadcast(ctx, session, channelID, frame.Body, frame.Attachments, frame.Ref); err != nil {
+		err = a.persistAndBroadcast(ctx, session, channelID, frame.Body, frame.Attachments, frame.Mentions, frame.Ref)
+		if errors.Is(err, errTooManyMentions) {
+			sendFrame(ctx, client, errorFrame{Type: "error", Error: "too many mentions in one message", Ref: frame.Ref})
+		} else if err != nil {
 			slog.Error("persisting message", "err", err)
 			sendFrame(ctx, client, errorFrame{Type: "error", Error: "could not send message", Ref: frame.Ref})
 		}
 	}
 }
 
-func (a *API) persistAndBroadcast(ctx context.Context, s Session, channelID, body string, attachmentIDs []string, ref string) error {
+func (a *API) persistAndBroadcast(
+	ctx context.Context, s Session, channelID, body string, attachmentIDs, mentionIDs []string, ref string,
+) error {
 	var out messageFrame
 
 	tx, err := a.pool.Begin(ctx)
@@ -378,6 +389,15 @@ func (a *API) persistAndBroadcast(ctx context.Context, s Session, channelID, bod
 		}
 	}
 
+	mentions, err := mentionTargets(ctx, tx, channelID, s.UserID, mentionIDs)
+	if err != nil {
+		return err
+	}
+	if err := saveMentions(ctx, tx, out.ID, mentions); err != nil {
+		return err
+	}
+	out.Mentions = mentions
+
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
@@ -396,6 +416,7 @@ func (a *API) persistAndBroadcast(ctx context.Context, s Session, channelID, bod
 
 	a.hub.Broadcast(channelID, payload)
 	a.notifyActivity(channelID, out.ID, s.UserID, out.CreatedAt)
+	a.notifyMentions(mentions, channelID, out.ID, s.UserID, s.Username, out.CreatedAt)
 	return nil
 }
 

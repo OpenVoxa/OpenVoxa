@@ -37,6 +37,8 @@ export interface ChannelInfo {
   readonly history_sharing: boolean;
   readonly can_post: boolean;
   readonly last_message_at?: string;
+  /** Newest message mentioning you (not deleted); for the mention badge. */
+  readonly last_mention_at?: string;
   /** The allow-list: groups that may view, and whether they may post. */
   readonly access: readonly ChannelAccess[];
 }
@@ -64,6 +66,12 @@ export interface AttachmentInfo {
   readonly url?: string;
 }
 
+/** Someone mentioned in a message, or who may view a channel. */
+export interface Mention {
+  readonly user_id: string;
+  readonly username: string;
+}
+
 /** A message as the server sends it (websocket or history page). */
 interface ServerMessage {
   id: string;
@@ -76,6 +84,7 @@ interface ServerMessage {
   edited_at?: string;
   ref?: string;
   attachments?: AttachmentInfo[];
+  mentions?: Mention[];
 }
 
 /**
@@ -107,6 +116,11 @@ export interface ChatMessage {
   readonly files: readonly FileKey[];
   /** The server's attachment list (placeholders in encrypted channels). */
   readonly attachments: readonly AttachmentInfo[];
+  /** Who it mentions, as the server accepted it: only people who may view
+   * the channel. Draw "@name" as a mention only if the name is here. */
+  readonly mentions: readonly Mention[];
+  /** It mentions this account. */
+  readonly mentionsMe: boolean;
   /** Readable because someone shared it (history sharing). */
   readonly sharedBy?: SharedBy;
   /**
@@ -144,6 +158,9 @@ export interface ChannelSnapshot {
   /** Something worth a line in the UI (shared history, group replaced,
    * who joined or left the encryption group). Oldest first. */
   readonly notices: readonly Notice[];
+  /** Who may view the channel, for the composer's @ list (not you).
+   * Empty until loaded. */
+  readonly members: readonly Mention[];
 }
 
 /** A line in the message stream that isn't a message. */
@@ -181,6 +198,11 @@ export type ChatEvent =
   /** This account's groups or permissions may have changed: refetch /me. */
   | { type: "me_changed" }
   | { type: "unread"; unread: ReadonlySet<string> }
+  /** Channels with a mention of you since you last read them. */
+  | { type: "mentions"; mentions: ReadonlySet<string> }
+  /** Someone just mentioned you (for a sound or a notification).
+   * `open`: in the channel open right now. */
+  | { type: "mentioned"; channelId: string; messageId: string; authorId: string; username: string; open: boolean }
   /** The open report queue changed; sent only to people who can read it. */
   | { type: "reports_changed" }
   /** Who is in each voice call (channels you can see, non-empty only). */
@@ -237,6 +259,7 @@ function compareMessages(a: ChatMessage, b: ChatMessage): number {
 const GLOBAL_EVENTS = new Set([
   "user_purged", "access_changed", "channel_changed", "channel_deleted",
   "perms_changed", "channel_activity", "voice_changed", "reports_changed",
+  "mention",
 ]);
 
 const EVENT_RETRY_MS = 5000;
@@ -256,6 +279,35 @@ function checkBodyLength(body: string, encrypted: boolean, files = 0): void {
   throw new Error(encrypted
     ? "That message is too long for an encrypted channel (about 2,800 characters at most)."
     : `That message is too long (${MAX_BODY} characters at most).`);
+}
+
+/** "@name": not inside a word or an email address. Same characters as
+ * the server's usernamePattern (auth.go). */
+export const MENTION_RE = /(?<![\w@])@([A-Za-z0-9_-]{3,32})(?![\w-])/g;
+
+/**
+ * Who some text mentions, out of the people who may view the channel.
+ * Code (`inline` and ```fenced```) is skipped, as for link previews.
+ * Usernames are case-sensitive on the server, so an exact match wins;
+ * otherwise a case-insensitive one, if only one name fits.
+ */
+export function findMentions(text: string, members: readonly Mention[]): Mention[] {
+  const plain = text.replace(/```[\s\S]*?```/g, " ").replace(/`[^`\n]+`/g, " ");
+  const out = new Map<string, Mention>();
+  for (const m of plain.matchAll(MENTION_RE)) {
+    const who = matchMember(m[1]!, members);
+    if (who) out.set(who.user_id, who);
+  }
+  return [...out.values()];
+}
+
+/** The member a typed name refers to, by the rule in findMentions. */
+export function matchMember(name: string, members: readonly Mention[]): Mention | undefined {
+  const exact = members.find((p) => p.username === name);
+  if (exact) return exact;
+  const lower = name.toLowerCase();
+  const loose = members.filter((p) => p.username.toLowerCase() === lower);
+  return loose.length === 1 ? loose[0] : undefined;
 }
 
 class MemoryStore implements KeyValueStore {
@@ -282,6 +334,7 @@ export class Chat {
   #closed = false;
   #view: ChannelView | null = null;
   #unread = new Set<string>();
+  #mentioned = new Set<string>();
   #offAuto: (() => void) | null = null;
   #offMembership: (() => void) | null = null;
   #voice: VoicePresence = {};
@@ -301,6 +354,11 @@ export class Chat {
 
   get unread(): ReadonlySet<string> {
     return this.#unread;
+  }
+
+  /** Channels with a mention of you since you last read them. */
+  get mentions(): ReadonlySet<string> {
+    return this.#mentioned;
   }
 
   get voicePresence(): VoicePresence {
@@ -410,10 +468,16 @@ export class Chat {
     const next = at ? normalizeTime(at) : prev ?? new Date().toISOString();
     if (!prev || Date.parse(next) > Date.parse(prev)) this.#store.set(key, next);
     if (this.#unread.delete(channelId)) this.#emit({ type: "unread", unread: this.#unread });
+    if (this.#mentioned.has(channelId)) {
+      this.#mentioned = new Set(this.#mentioned);
+      this.#mentioned.delete(channelId);
+      this.#emit({ type: "mentions", mentions: this.#mentioned });
+    }
   }
 
   #recomputeUnread(): void {
     const next = new Set<string>();
+    const mentioned = new Set<string>();
     for (const c of this.#channels) {
       if (c.kind !== "text") continue;
       const read = this.#store.get(this.#readKey(c.id));
@@ -425,9 +489,25 @@ export class Chat {
       }
       if (c.id === this.#view?.channel.id) continue;
       if (c.last_message_at && Date.parse(c.last_message_at) > Date.parse(read)) next.add(c.id);
+      if (c.last_mention_at && Date.parse(c.last_mention_at) > Date.parse(read)) mentioned.add(c.id);
     }
     this.#unread = next;
     this.#emit({ type: "unread", unread: next });
+    this.#mentioned = mentioned;
+    this.#emit({ type: "mentions", mentions: mentioned });
+  }
+
+  #onMention(f: GlobalFrame): void {
+    const channelId = f.channel_id!;
+    const open = channelId === this.#view?.channel.id;
+    if (!open && !this.#mentioned.has(channelId)) {
+      this.#mentioned = new Set(this.#mentioned).add(channelId);
+      this.#emit({ type: "mentions", mentions: this.#mentioned });
+    }
+    this.#emit({
+      type: "mentioned", channelId, messageId: f.message_id ?? "",
+      authorId: f.author_id ?? "", username: f.username ?? "", open,
+    });
   }
 
   #onActivity(channelId: string, authorId: string, createdAt: string): void {
@@ -490,12 +570,16 @@ export class Chat {
       case "channel_activity":
         this.#onActivity(frame.channel_id!, frame.author_id ?? "", frame.created_at!);
         break;
+      case "mention":
+        this.#onMention(frame);
+        break;
       case "user_purged":
         this.#view?.userPurged(frame.user_id!);
         this.#reconcileOpen();
         break;
       case "access_changed":
         this.#reconcileOpen();
+        this.#view?.refreshMembers();
         break;
       case "voice_changed":
         this.#refreshVoiceSoon();
@@ -505,6 +589,7 @@ export class Chat {
         break;
       case "channel_changed":
       case "channel_deleted":
+        this.#view?.refreshMembers();
         this.refreshChannels().catch(() => {});
         this.#refreshVoiceSoon();
         break;
@@ -579,6 +664,8 @@ interface GlobalFrame {
   channel_id?: string;
   user_id?: string;
   author_id?: string;
+  username?: string;
+  message_id?: string;
   created_at?: string;
 }
 
@@ -610,6 +697,10 @@ export class ChannelView {
   #gone = false;
   #retry = 0;
   #snapshot: ChannelSnapshot | null = null;
+  #members: readonly Mention[] = [];
+  /** Settles once the first member list has arrived (or failed). */
+  #membersLoaded: Promise<void> | null = null;
+  #membersTimer: ReturnType<typeof setTimeout> | undefined;
 
   // Every received message, history or live, goes through one queue.
   // Decryption reads and rewrites the stored group state, and own-message
@@ -662,6 +753,7 @@ export class ChannelView {
         canPost: this.#canPost,
         crypto: this.#crypto,
         notices: this.#notices,
+        members: this.#members,
       };
     }
     return this.#snapshot;
@@ -702,12 +794,40 @@ export class ChannelView {
 
   /** @internal Called by Chat.open. */
   async start(): Promise<void> {
+    this.#membersLoaded = this.#loadMembers();
     if (this.#encrypted) await this.#openGroup();
     await this.#connect();
   }
 
+  async #loadMembers(): Promise<void> {
+    try {
+      const list = (await this.#opts.call(`/api/v1/channels/${this.#channel.id}/members`)) as Mention[];
+      if (this.#closed) return;
+      this.#members = list.filter((m) => m.user_id !== this.#chat.userId);
+      this.#changed();
+    } catch {
+      /* no @ list for now; mentions typed by hand still go out once it loads */
+    }
+  }
+
+  /** @internal Access may have changed: fetch the member list again. */
+  refreshMembers(): void {
+    clearTimeout(this.#membersTimer);
+    this.#membersTimer = setTimeout(() => {
+      if (!this.#closed) this.#membersLoaded = this.#loadMembers();
+    }, 300);
+  }
+
+  /** Mentions in text to send, from the member list (waits for it once). */
+  async #mentionsIn(text: string): Promise<Mention[]> {
+    if (!text.includes("@")) return [];
+    await this.#membersLoaded;
+    return findMentions(text, this.#members);
+  }
+
   close(): void {
     this.#closed = true;
+    clearTimeout(this.#membersTimer);
     const s = this.#socket;
     this.#socket = null;
     s?.close();
@@ -817,7 +937,7 @@ export class ChannelView {
         this.#chat.markRead(this.#channel.id, (frame as unknown as ServerMessage).created_at);
         break;
       case "message_edited":
-        this.#enqueue(() => this.#applyEdit(frame.message_id!, frame.body!, frame.edited_at!));
+        this.#enqueue(() => this.#applyEdit(frame.message_id!, frame.body!, frame.edited_at!, frame.mentions));
         break;
       case "message_deleted":
         this.#enqueue(() => this.#tombstone(frame.message_id!));
@@ -869,6 +989,8 @@ export class ChannelView {
       own: !!m.author_id && m.author_id === this.#chat.userId,
       deleted: m.deleted,
       attachments: m.attachments ?? [],
+      mentions: m.mentions ?? [],
+      mentionsMe: (m.mentions ?? []).some((p) => p.user_id === this.#chat.userId),
     };
   }
 
@@ -962,10 +1084,16 @@ export class ChannelView {
     }
   }
 
-  async #applyEdit(id: string, body: string, editedAt: string): Promise<void> {
+  async #applyEdit(id: string, body: string, editedAt: string, mentions?: Mention[]): Promise<void> {
     const raw = this.#raw.get(id);
-    if (raw) this.#raw.set(id, { ...raw, body, edited_at: editedAt });
-    const current = this.#messages.get(id);
+    if (raw) this.#raw.set(id, { ...raw, body, edited_at: editedAt, ...(mentions ? { mentions } : {}) });
+    let current = this.#messages.get(id);
+    if (current && mentions) {
+      current = {
+        ...current, mentions,
+        mentionsMe: mentions.some((p) => p.user_id === this.#chat.userId),
+      };
+    }
 
     if (!this.#encrypted) {
       if (current) this.#put({ ...current, text: body, editedAt });
@@ -978,10 +1106,13 @@ export class ChannelView {
       this.#pendingEdits.delete(id);
       await storage.putEdited(id, mine, editedAt);
       this.#archived();
-      if (current) this.#put(this.#opened(this.#base({ ...(raw ?? toServer(current)), body, edited_at: editedAt }), mine));
+      if (current) this.#put(this.#opened(this.#base({ ...(this.#raw.get(id) ?? toServer(current)), body, edited_at: editedAt }), mine));
       return;
     }
-    if ((await storage.getEditedAt(id)) === normalizeTime(editedAt)) return; // already applied
+    if ((await storage.getEditedAt(id)) === normalizeTime(editedAt)) {
+      if (current && mentions) this.#put(current); // already applied, but the mentions may be new
+      return;
+    }
 
     const fresh = await this.#tryDecrypt(body);
     if (fresh !== null) {
@@ -990,7 +1121,7 @@ export class ChannelView {
     }
     if (!current) return;
     if (fresh !== null) {
-      this.#put(this.#opened({ ...this.#base(raw ?? toServer(current)), editedAt }, fresh));
+      this.#put(this.#opened({ ...this.#base(this.#raw.get(id) ?? toServer(current)), editedAt }, fresh));
     } else {
       this.#put({ ...current, editedAt, staleEdit: !current.unreadable });
     }
@@ -1226,6 +1357,7 @@ export class ChannelView {
     if (!ws || this.#connection !== "open") throw new Error("not connected");
     if (!this.#canPost) throw new Error("you can't post in this channel");
 
+    const mentions = await this.#mentionsIn(text);
     const ref = newRef();
     let body = text;
     let plain = text;
@@ -1252,10 +1384,16 @@ export class ChannelView {
       text,
       files,
       attachments: infos,
+      mentions,
+      mentionsMe: false,
       pending: true,
     });
     const ids = infos.map((a) => a.id);
-    ws.send(JSON.stringify({ type: "send", body, ref, ...(ids.length ? { attachments: ids } : {}) }));
+    ws.send(JSON.stringify({
+      type: "send", body, ref,
+      ...(ids.length ? { attachments: ids } : {}),
+      ...(mentions.length ? { mentions: mentions.map((m) => m.user_id) } : {}),
+    }));
   }
 
   #failPending(ref: string, why: string): void {
@@ -1276,6 +1414,7 @@ export class ChannelView {
     if (!text.trim()) throw new Error("a message can't be empty; delete it instead");
     if (text === current.text) return;
 
+    const mentions = (await this.#mentionsIn(text)).map((m) => m.user_id);
     let body = text;
     if (this.#encrypted) {
       if (current.unreadable) throw new Error("this device can't read that message, so it can't edit it");
@@ -1291,7 +1430,7 @@ export class ChannelView {
     try {
       const res = (await this.#opts.call(`/api/v1/messages/${id}`, {
         method: "PATCH",
-        body: JSON.stringify({ body }),
+        body: JSON.stringify({ body, mentions }),
       })) as { edited_at: string };
       // The event usually arrives first; this covers it arriving late.
       await this.#enqueue(() => this.#applyEdit(id, body, res.edited_at));
@@ -1321,6 +1460,7 @@ interface ChannelFrame {
   recipients?: string[];
   error?: string;
   ref?: string;
+  mentions?: Mention[];
 }
 
 function toServer(m: ChatMessage): ServerMessage {
@@ -1334,5 +1474,6 @@ function toServer(m: ChatMessage): ServerMessage {
     created_at: m.createdAt,
     edited_at: m.editedAt,
     attachments: [...m.attachments],
+    mentions: [...m.mentions],
   };
 }

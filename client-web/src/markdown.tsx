@@ -3,13 +3,21 @@
 
 /**
  * The small Markdown subset chat uses: **bold**, *italic* / _italic_,
- * ~~strike~~, `inline code`, ```fenced code```, "> " quotes, and links.
+ * ~~strike~~, `inline code`, ```fenced code```, "> " quotes, links, and
+ * @mentions (only names the server accepted for that message).
  *
  * Built as React elements, never as an HTML string, so a user's angle
  * bracket can only ever be text. Same subset as the debug page.
  */
 
 import { Fragment, type ReactNode } from "react";
+import { matchMember, MENTION_RE, type Mention } from "@core/chat";
+
+/** Who a message mentions, and who is reading. */
+interface MentionCtx {
+  readonly mentions: readonly Mention[];
+  readonly me: string;
+}
 
 /** http(s) links, without trailing punctuation. */
 export const URL_RE = /\bhttps?:\/\/[^\s<>"'`]+[^\s<>"'`.,;:!?)\]}*_~]/g;
@@ -20,18 +28,24 @@ export function firstLink(text: string): string | null {
   return plain.match(URL_RE)?.[0] ?? null;
 }
 
-export function Markdown({ text }: { text: string }) {
+export function Markdown({ text, mentions, me }: {
+  text: string;
+  mentions?: readonly Mention[];
+  /** Your user ID, to tell your own mentions apart. */
+  me?: string;
+}) {
+  const ctx: MentionCtx | null = mentions?.length ? { mentions, me: me ?? "" } : null;
   const out: ReactNode[] = [];
   let last = 0;
   for (const m of text.matchAll(/```([\s\S]*?)```/g)) {
     const i = m.index ?? 0;
-    if (i > last) out.push(...blocks(trimEnds(text.slice(last, i), last > 0, true), `b${i}`));
+    if (i > last) out.push(...blocks(trimEnds(text.slice(last, i), last > 0, true), `b${i}`, ctx));
     // A language tag on the opening line ("```js") is dropped.
     const code = m[1].replace(/^[\w+-]*\n/, "").replace(/\n$/, "");
     out.push(<pre key={`c${i}`}><code>{code}</code></pre>);
     last = i + m[0].length;
   }
-  if (last < text.length) out.push(...blocks(trimEnds(text.slice(last), last > 0, false), "tail"));
+  if (last < text.length) out.push(...blocks(trimEnds(text.slice(last), last > 0, false), "tail", ctx));
   return <span className="text md">{out}</span>;
 }
 
@@ -44,7 +58,7 @@ function trimEnds(s: string, afterBlock: boolean, beforeBlock: boolean): string 
 }
 
 /** Quotes ("> " lines) as blocks; everything else inline. */
-function blocks(s: string, key: string): ReactNode[] {
+function blocks(s: string, key: string, ctx: MentionCtx | null): ReactNode[] {
   if (!s) return [];
   const lines = s.split("\n");
   const out: ReactNode[] = [];
@@ -55,7 +69,7 @@ function blocks(s: string, key: string): ReactNode[] {
   const flush = () => {
     if (!run.length) return;
     const k = `${key}.${out.length}`;
-    const body = inline(run.join("\n"), k);
+    const body = inline(run.join("\n"), k, ctx);
     out.push(quote ? <blockquote key={k}>{body}</blockquote> : <Fragment key={k}>{body}</Fragment>);
     run = [];
   };
@@ -81,11 +95,12 @@ const INLINE_RE = new RegExp(
     /~~(.+?)~~/.source,                             // 3 strike
     /(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])/.source, // 4 italic
     /(?<![\w_])_(?!\s)(.+?)(?<!\s)_(?![\w_])/.source,   // 5 italic
+    MENTION_RE.source,                              // 6 mention
   ].join("|"),
   "g",
 );
 
-function inline(s: string, key: string): ReactNode[] {
+function inline(s: string, key: string, ctx: MentionCtx | null): ReactNode[] {
   const out: ReactNode[] = [];
   let last = 0;
   for (const m of s.matchAll(INLINE_RE)) {
@@ -93,10 +108,19 @@ function inline(s: string, key: string): ReactNode[] {
     if (i > last) out.push(s.slice(last, i));
     const k = `${key}:${i}`;
     if (m[1] !== undefined) out.push(<code key={k}>{m[1]}</code>);
-    else if (m[2] !== undefined) out.push(<strong key={k}>{inline(m[2], k)}</strong>);
-    else if (m[3] !== undefined) out.push(<del key={k}>{inline(m[3], k)}</del>);
-    else if (m[4] !== undefined) out.push(<em key={k}>{inline(m[4], k)}</em>);
-    else if (m[5] !== undefined) out.push(<em key={k}>{inline(m[5], k)}</em>);
+    else if (m[2] !== undefined) out.push(<strong key={k}>{inline(m[2], k, ctx)}</strong>);
+    else if (m[3] !== undefined) out.push(<del key={k}>{inline(m[3], k, ctx)}</del>);
+    else if (m[4] !== undefined) out.push(<em key={k}>{inline(m[4], k, ctx)}</em>);
+    else if (m[5] !== undefined) out.push(<em key={k}>{inline(m[5], k, ctx)}</em>);
+    else if (m[6] !== undefined) {
+      // A name the server didn't accept (nobody by that name can see the
+      // channel) stays plain text, so it can't look like a real mention.
+      const who = ctx ? matchMember(m[6], ctx.mentions) : undefined;
+      out.push(who
+        ? <span key={k} className={`mention${who.user_id === ctx!.me ? " me" : ""}`}
+            title={who.user_id === ctx!.me ? "Mentions you" : undefined}>@{who.username}</span>
+        : m[0]);
+    }
     else out.push(<a key={k} href={m[0]} target="_blank" rel="noopener noreferrer nofollow">{m[0]}</a>);
     last = i + m[0].length;
   }

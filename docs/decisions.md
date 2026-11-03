@@ -100,6 +100,34 @@ Requirements that follow:
 - Every report is logged with its verification result.
 - In plaintext channels the server compares against its own stored copy.
 
+### Mentions are metadata the server sees
+
+Decided by Ryan, 2026-11-03 (option A of two). `@name` tags someone in a
+message and notifies them. The sender's client sends the mentioned user
+IDs next to the body (`mentions` on the send frame and on PATCH), in
+every channel. The server never reads `@` out of the text, so plaintext
+and encrypted channels behave the same way.
+
+- **What the server learns:** who was mentioned in which message, never
+  what was said. That is the same kind of metadata as who posted when.
+  It's stored in `message_mentions` (migration 0018), deleted with the
+  message, on expiry, and when either account is deleted.
+- **The rejected option (B):** only the recipient's client spots its own
+  name after decrypting. The server learns nothing, but then nothing
+  can tell you about a mention while you're offline, and later push
+  notifications (Electron, web push) would be impossible for encrypted
+  channels.
+- **Access rule:** the server keeps only the IDs that may view the
+  channel (the same rule as everything in `access.go`, so banned and
+  deleted accounts drop out) and drops the author. Anyone else is dropped
+  silently, so naming an outsider tells them nothing. Clients draw
+  `@name` as a mention only when the server accepted it, so a name typed
+  by hand for someone without access stays plain text. At most 20 per
+  message.
+- **Forgery:** a sender can list someone without writing their name.
+  The result is a notification with no visible mention, from a person
+  who could already message that channel. Accepted.
+
 ## Architecture
 
 Five components, three of them off the shelf:
@@ -1566,6 +1594,22 @@ to pick their own colours later, so every colour stays a variable.
       (migration 0017, one-row typed table for server-wide settings,
       default 30, 1 to 3650, administrator sets it in the Log tab) show
       under Archived. A view only; nothing is deleted.
+    - @mentions (2026-11-03, after M5; see Feature decisions, "Mentions
+      are metadata the server sees"). Server: migration 0018
+      `message_mentions`, `mentions.go` (filter by viewer rule, `mention`
+      event via emitUsers to the mentioned only, `GET /channels/{id}/
+      members` for autocomplete), `mentions` on message frames and
+      history, `last_mention_at` per channel in the list. An edit
+      replaces the set and notifies only the newly added. Core:
+      `findMentions` (code skipped, exact username match first, then a
+      unique case-insensitive one), `ChatMessage.mentions`/`mentionsMe`,
+      `Chat.mentions` (channels with an unread mention, compared with the
+      read mark like unread) and a `mentioned` event. Web: `@` list in the
+      composer and the edit box, pills (stronger for you), highlighted
+      rows, a red `@` badge in the sidebar, a mention tone and opt-in
+      desktop notifications (who and where only, never the text) in
+      Settings > Chat. Not built: `@everyone`/`@group`, mention counts,
+      notifications while the app is closed.
     - Device linking by QR (after M1): a logged-in device shows a QR of
       `https://server/link#<one-time secret>` (about 2 min, single use);
       the phone's camera opens it; the server only relays encrypted

@@ -81,6 +81,15 @@ func (a *API) deleteMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Nobody needs to know any more who a deleted message mentioned.
+	if _, err := tx.Exec(r.Context(),
+		`DELETE FROM message_mentions WHERE message_id = $1`, messageID,
+	); err != nil {
+		slog.Error("removing mentions", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not delete the message")
+		return
+	}
+
 	if _, err := tx.Exec(r.Context(),
 		`DELETE FROM attachments WHERE message_id = $1`, messageID,
 	); err != nil {

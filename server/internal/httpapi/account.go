@@ -179,6 +179,16 @@ func (a *API) purgeUser(ctx context.Context, userID string, also func(pgx.Tx) er
 // Shared with the host command `delete-user` (cli.go), which runs the
 // administrator guard itself.
 func PurgeUserTx(ctx context.Context, tx pgx.Tx, userID string) error {
+	// Who their messages mentioned goes with the messages. Mentions OF
+	// them go with the user row (cascade).
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM message_mentions
+		  WHERE message_id IN (SELECT id FROM messages WHERE author_id = $1)`,
+		userID,
+	); err != nil {
+		return err
+	}
+
 	// Empty the bodies rather than dropping the rows.
 	if _, err := tx.Exec(ctx,
 		`UPDATE messages SET body = ''::bytea, deleted = true WHERE author_id = $1`,

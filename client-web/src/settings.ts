@@ -23,6 +23,14 @@ export const VOICE_TONES: Toggle = { key: "voice.tones", fallback: true };
  */
 export const PREVIEWS_ENCRYPTED: Toggle = { key: "chat.previewsEncrypted", fallback: false };
 
+/** A short sound when someone mentions you. */
+export const MENTION_SOUND: Toggle = { key: "chat.mentionSound", fallback: true };
+/**
+ * A browser notification when someone mentions you while you aren't
+ * looking. Off until turned on, because the browser has to ask first.
+ */
+export const MENTION_NOTIFY: Toggle = { key: "chat.mentionNotify", fallback: false };
+
 /** Clicking an image in chat opens it in a new tab instead of the in-page viewer. */
 export const IMAGES_IN_TAB: Toggle = { key: "chat.imagesInTab", fallback: false };
 

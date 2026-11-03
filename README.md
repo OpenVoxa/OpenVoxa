@@ -101,7 +101,7 @@ Stating the limits plainly is most of the point. A privacy tool that is vague ab
 ### What this does not protect against, ever
 
 - **A compromised device.** Plaintext lives on your computer. If someone has your machine, they have your messages.
-- **Metadata.** The server can see who talks to whom, when, and how often. It cannot see what was said. This is true of essentially every system in this category, Signal included, and pretending otherwise would be dishonest.
+- **Metadata.** The server can see who talks to whom, when, and how often, including who was @mentioned in a message. It cannot see what was said. This is true of essentially every system in this category, Signal included, and pretending otherwise would be dishonest.
 - **Other people in the channel.** Anyone who can read a message can screenshot it. Cryptography does not fix social problems.
 - **A malicious build.** You run the binary we ship. Reproducible builds are a goal, not a feature yet.
 
