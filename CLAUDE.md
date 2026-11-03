@@ -194,7 +194,10 @@ Postgres): `internal/keystore` (Seal/Open/Destroy), `httpapi/sealing.go`,
 Deletion destroys the key after the purge commits (`purgeUser`,
 `delete-user`). Clients prune their local archive via
 `POST /messages/archive-check` (`Chat.pruneArchive`, at start and after
-`user_purged`). Operator guidance: `deploy/README.md` "Account keys and
+`user_purged`). Optional at-rest encryption of the account
+keys under a KEK (`OPENVOXA_KEK`/`_FILE`; `keystore` wraps keys, off by
+default, `WrapExisting` upgrades in place): server-only, added this
+session. Operator guidance: `deploy/README.md` "Account keys and
 backups". Go unit tests:
 `docker run --rm -v "$PWD":/src -w /src golang:1.26 go test ./internal/keystore/ ./internal/sealedfile/`
 from `server/`. Ryan has not set up the key-folder backup cron on Docker
