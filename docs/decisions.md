@@ -1844,6 +1844,11 @@ to pick their own colours later, so every colour stays a variable.
         so an operator can raise them.
       - Name per sticker (for search and `:name:` style picking) and
         alt text for screen readers.
+      Rejected (Ryan, 2026-11-03): personal stickers that travel with
+      the user across servers. Without federation they could only be
+      client-side images re-uploaded per server, and anyone could post
+      anything as a "sticker" with no approval step: a moderation
+      burden. Server stickers, chosen by staff, only.
       In encrypted channels the message carries only the sticker's id,
       inside the ciphertext; fetching the image still tells the server
       who viewed which sticker, as with GIFs.
