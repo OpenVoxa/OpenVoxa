@@ -15,6 +15,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import type { ApiCall } from "@core/identity";
 import type { BackupStatus } from "@core/recovery";
+import { storage } from "@core/storage";
 import type { VoiceClient, VoiceSnapshot } from "@core/voice";
 import { call as plainCall, type Session } from "./api";
 import { Modal } from "./ChannelDialogs";
@@ -291,8 +292,19 @@ function PasswordSection({ session }: { session: Session }) {
         body: { current_password: current, new_password: next },
       });
       const n = r?.other_sessions_ended ?? 0;
-      setDone(n === 0 ? "Password changed."
-        : `Password changed. ${n} other sign-in${n === 1 ? " was" : "s were"} signed out.`);
+      let msg = n === 0 ? "Password changed."
+        : `Password changed. ${n} other sign-in${n === 1 ? " was" : "s were"} signed out.`;
+      // This browser's encrypted storage opens with the password, so
+      // re-lock its key under the new one (client-core storage.rewrap).
+      // Other browsers find out at their next sign-in (unlock.ts).
+      try {
+        await storage.rewrap(next);
+      } catch (err) {
+        console.warn("could not re-lock local storage under the new password:", err);
+        msg += " This browser's saved keys are still locked with the old password, so the " +
+          "next sign-in here will set it up as a new device (restore history with your recovery key).";
+      }
+      setDone(msg);
       setOpen(false);
       setCurrent("");
       setNext("");
