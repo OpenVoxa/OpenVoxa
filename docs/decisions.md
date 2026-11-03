@@ -195,9 +195,13 @@ enough for this to work.
 and message counts survive; message bodies do not. A shredded message
 renders as a placeholder. Intended behaviour, not a defect.
 
-**Shredding does not apply to plaintext channels.** No key exists to
-destroy, so deletion there means emptying the body and leaving a tombstone
-row. Two code paths, one user-visible result.
+**Shredding works differently in the two kinds of channel.** Encrypted
+channels need no extra key: MLS readers discard each message key after
+use, so the server's copy is already unreadable to everyone. Plaintext
+channels get a server-held key per account, kept outside the database,
+and that is what deletion destroys. See Encryption, "Account deletion is
+crypto-shredding". (Superseded 2026-11-03: this paragraph used to say
+shredding did not apply to plaintext channels at all.)
 
 **Account recovery depends on the user.** Recovery keys are generated at
 signup and held by the user. A lost password with no recovery key means
@@ -536,6 +540,79 @@ bytes, but UNENCRYPTED".
   the page while signed in, and a weak password can be guessed offline
   from copied files (the password rules are the defence). Electron can
   later add the OS keychain (`safeStorage`) on top.
+
+**Account deletion is crypto-shredding.** Decided with Ryan, 2026-11-03.
+The promise: once an account is deleted, nothing the server holds, its
+backups included, can show that person's messages or files again.
+
+*What the user sees.* Settings, Account, Delete account: one plain
+paragraph ("This permanently deletes your account. Your messages and
+files are erased everywhere this server controls, including its backups.
+People who already read them may still have their own copies."), then
+the password and the username typed out. On success the browser's local
+data is wiped and the account is signed out everywhere. Everyone else
+sees that person's messages become "[deleted]" placeholders, as before.
+An administrator deleting someone gets the same result without the
+password step.
+
+*Why encrypted channels need no new key.* The original plan (Blocking
+decisions, row 7) assumed each author's messages sit under a key of
+their own. MLS does not work like that: a message is under the group's
+key for that epoch, and every reader deletes the message key once it
+has decrypted (forward secrecy). The server's copy of an encrypted
+message, and every database backup of it, is therefore already
+unreadable to anyone, the author included. Nothing to destroy there.
+
+*Plaintext channels: a key per account, outside the database.* The
+server reads these bodies, so a database backup holds them in the clear
+and blanking the live row is not enough. Instead:
+- Every account gets a random 32-byte key, stored as one file per
+  account in a key folder (`OPENVOXA_KEY_DIR`, default
+  `/var/lib/openvoxa/keys`, its own volume). The server creates the
+  folder's contents itself; the operator sets nothing up.
+- Plaintext message bodies are stored sealed under the author's key
+  (AES-256-GCM, a format byte, a random nonce, and the message's
+  channel and author bound in as associated data). `messages.sealed`
+  says which rows are sealed; encrypted-channel rows never are.
+- Report copies (`reports.claimed_body`) are sealed under the accused's
+  key: they are that person's words. After deletion a report reads
+  "content deleted"; the reason, status and who resolved it remain.
+- Attachments in plaintext channels: the bytes and the filename are
+  sealed under the uploader's key. Plaintext channels therefore stop
+  deduplicating identical files, which also closes the open item that
+  dedup reveals someone else uploaded the same file.
+- Existing rows and blobs are sealed once, during the upgrade.
+- Deleting the account deletes the key file. The rows stay as
+  tombstones (reply chains keep their shape) and are still blanked, so
+  the live database is clean at once; backups hold only sealed bytes
+  whose key no longer exists. Attachments of the deleted account are
+  deleted too (account deletion used to leave them; single deletes and
+  ban purges already removed them).
+
+*Why a folder of files rather than a table.* Anything in Postgres is in
+every database backup, so a key kept there would be restored with the
+data it is meant to destroy. A separate folder can be backed up on its
+own, briefly. One file per account makes deletion a single unlink and
+keeps a damaged file from affecting anyone else.
+
+*What the operator must know* (`deploy/README.md`): back the key folder
+up separately from the database and keep those backups short-lived (a
+week, say). Deletion is complete once the last key-folder backup
+holding that key has expired. Lose the folder with no backup and every
+plaintext channel's history is unreadable. Encrypted channels are
+unaffected either way.
+
+*What it cannot do.* Other people's devices hold their own copies: the
+local plaintext archive, their recovery backups, screenshots. Honest
+clients delete stored copies of a deleted account's messages when they
+receive `user_purged` (they used to only hide them); a modified client
+need not. The user-facing text says so. Usernames in the moderation log
+for administrator deletions stay (that record is the point of the log).
+
+*Not covered, deliberately.* Single message deletion and retention
+expiry still blank or drop rows, and backups keep the plaintext until
+they age out. A key per message would cover them too, at the cost of a
+key store that grows with every message; revisit if anyone asks.
 
 ## Implementation notes
 
@@ -1680,6 +1757,25 @@ to pick their own colours later, so every colour stays a variable.
       backup key. The typed recovery key is the fallback.
     - 2FA: TOTP only (authenticator apps, RFC 6238) plus one-time backup
       codes. No SMS, email or third-party service. After device linking.
+
+14. **Crypto-shredding** (design agreed with Ryan 2026-11-03; see
+    Encryption, "Account deletion is crypto-shredding"). One commit per
+    step, each tested on Docker:
+    - [ ] S1 Key folder (`OPENVOXA_KEY_DIR`, own volume, created by the
+          server) and sealing of new plaintext message bodies and edits;
+          readers unseal. Migration adds `messages.sealed`.
+    - [ ] S2 Seal existing plaintext bodies and report copies during the
+          upgrade; seal new report copies.
+    - [ ] S3 Plaintext-channel attachments sealed under the uploader's
+          key (bytes and filename), no more dedup there; existing blobs
+          converted.
+    - [ ] S4 Deletion destroys the key file and removes the account's
+          attachments; reports show "content deleted".
+    - [ ] S5 Delete-account dialog with the new wording (password and
+          typed username); other clients delete stored copies of a
+          deleted account's messages on `user_purged`.
+    - [ ] S6 `deploy/README.md`: key folder, separate short-lived
+          backups, what losing it means.
 
 ## Open items
 
