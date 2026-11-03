@@ -180,6 +180,11 @@ function MessageList({ view, snap, call, previews, userId, username, canDeleteAn
   // the view can stay still while older messages are added above it.
   const anchor = useRef<{ id: string; delta: number } | null>(null);
   const [reporting, setReporting] = useState<ChatMessage | null>(null);
+  // Scrolled up more than a screen: show "Jump to latest". lastSeen is
+  // the newest message when the reader left the bottom, so the button can
+  // say how many arrived since.
+  const [away, setAway] = useState(false);
+  const lastSeen = useRef<string | null>(null);
 
   const remember = (el: HTMLDivElement) => {
     anchor.current = null;
@@ -206,7 +211,13 @@ function MessageList({ view, snap, call, previews, userId, username, canDeleteAn
   const onScroll = () => {
     const el = ref.current;
     if (!el) return;
-    stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_PX;
+    const fromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stick.current = fromBottom < STICK_PX;
+    const isAway = fromBottom > el.clientHeight;
+    if (isAway !== away) {
+      if (isAway) lastSeen.current = snap.messages.at(-1)?.id ?? null;
+      setAway(isAway);
+    }
     remember(el);
     if (el.scrollTop < OLDER_PX && snap.hasMore && !snap.loadingOlder) void view.loadOlder();
   };
@@ -299,6 +310,21 @@ function MessageList({ view, snap, call, previews, userId, username, canDeleteAn
     if (el && stick.current) el.scrollTop = el.scrollHeight;
   };
 
+  // Straight to the bottom, not a smooth scroll: after a long trip up,
+  // animating back down is exactly the wait this button exists to skip.
+  const jumpToLatest = () => {
+    const el = ref.current;
+    if (!el) return;
+    stick.current = true;
+    el.scrollTop = el.scrollHeight;
+    setAway(false);
+  };
+  let newSince = 0;
+  if (away && lastSeen.current) {
+    const i = snap.messages.findIndex((m) => m.id === lastSeen.current);
+    if (i >= 0) newSince = snap.messages.length - 1 - i;
+  }
+
   return (
     <div className="messages" ref={ref} onScroll={onScroll} onLoadCapture={onLoad} role="log" aria-live="polite">
       <div className="history-top muted small">
@@ -311,6 +337,13 @@ function MessageList({ view, snap, call, previews, userId, username, canDeleteAn
       </div>
       {!snap.loaded && <div className="muted small center">Loading…</div>}
       {rows}
+      {away && (
+        <div className="jump-latest">
+          <button className="primary" onClick={jumpToLatest}>
+            {newSince > 0 ? `Jump to latest · ${newSince} new` : "Jump to latest"} ↓
+          </button>
+        </div>
+      )}
       {reporting && (
         <ReportDialog m={reporting} call={call} encrypted={snap.channel.encrypted} onClose={() => setReporting(null)} />
       )}
