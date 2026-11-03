@@ -10,6 +10,7 @@ import { BackupManager, markAskedForKey, wasAskedForKey } from "./backup";
 import { RecoveryRestore, RecoverySetup } from "./Recovery";
 import { ChatApp } from "./ChatApp";
 import type { Chat } from "@core/chat";
+import { forgetIdentity } from "@core/index";
 import { dropCryptoSession } from "./core";
 
 export function App() {
@@ -32,7 +33,7 @@ export function App() {
 type Phase =
   | { k: "loading" }
   | { k: "failed"; error: string }
-  | { k: "setup"; skippable: boolean; replacing: boolean }
+  | { k: "setup"; skippable: boolean; replacing: boolean; rotating?: boolean }
   | { k: "restore" }
   | { k: "ready" };
 
@@ -146,6 +147,25 @@ function Home({ session, justRegistered, onLoggedOut }: {
     onLoggedOut();
   }
 
+  /**
+   * Delete the account (Settings, Account). The server erases it first;
+   * only then is this browser wiped, so a refusal (wrong password, the
+   * last-two-administrators rule) leaves everything as it was. There is
+   * no device to revoke afterwards: deleting the account removed it.
+   */
+  async function deleteAccount(chat: Chat, password: string) {
+    await call("/api/v1/me", { method: "DELETE", token: session.token, body: { password } });
+    manager?.close();
+    chat.close();
+    try {
+      await forgetIdentity();
+    } catch (err) {
+      console.warn("could not wipe this browser's keys:", err);
+    }
+    dropCryptoSession(session.user_id);
+    onLoggedOut();
+  }
+
   if (phase.k === "loading") {
     return <div className="auth-page"><p className="muted">Loading…</p></div>;
   }
@@ -165,7 +185,8 @@ function Home({ session, justRegistered, onLoggedOut }: {
       <RecoverySetup
         manager={manager}
         replacing={phase.replacing}
-        onDone={() => { markAskedForKey(session.user_id); void refresh("Recovery key saved and history backed up."); }}
+        rotating={phase.rotating}
+        onDone={() => { markAskedForKey(session.user_id); void refresh(phase.rotating ? "New recovery key saved; the old one no longer works." : "Recovery key saved and history backed up."); }}
         onSkip={phase.skippable ? () => { markAskedForKey(session.user_id); void refresh(); } : undefined}
       />
     );
@@ -193,6 +214,8 @@ function Home({ session, justRegistered, onLoggedOut }: {
       onBackUpNow={backUpNow}
       onSetUpKey={() => setPhase({ k: "setup", skippable: true, replacing: false })}
       onEnterKey={() => setPhase({ k: "restore" })}
+      onNewKey={() => setPhase({ k: "setup", skippable: true, replacing: true, rotating: true })}
+      onDeleteAccount={deleteAccount}
       onExpired={onLoggedOut}
     />
   );

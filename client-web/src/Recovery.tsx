@@ -67,6 +67,7 @@ export function RecoverySetup({
   onDone,
   onSkip,
   replacing = false,
+  rotating = false,
 }: {
   manager: BackupManager;
   onDone: () => void;
@@ -74,6 +75,8 @@ export function RecoverySetup({
   onSkip?: () => void;
   /** Starting over after a lost key: the old backup becomes unreadable. */
   replacing?: boolean;
+  /** Replacing a key that still works (Settings): history is re-uploaded, nothing is lost. */
+  rotating?: boolean;
 }) {
   // One key per visit to this screen; it is never stored anywhere.
   const key = useMemo(() => RecoveryKey.generate(), []);
@@ -123,9 +126,15 @@ export function RecoverySetup({
             unlocks an encrypted backup of them, so you can read your history after signing out
             or on a new device. Nobody else can recover it for you, not even the server's admins.
           </p>
-          {replacing && (
+          {replacing && !rotating && (
             <p className="error">
               Starting a new key makes the current backup unreadable for good.
+            </p>
+          )}
+          {rotating && (
+            <p className="error">
+              Once you confirm it, your old key stops working. This browser uploads your history again under
+              the new key, so nothing is lost here.
             </p>
           )}
           <ol className="word-grid">
@@ -137,7 +146,7 @@ export function RecoverySetup({
             This is the only time they are shown.
           </p>
           <button className="primary" onClick={toConfirm}>I've saved it</button>
-          {onSkip && <button className="link" onClick={onSkip}>Not now</button>}
+          {onSkip && <button className="link" onClick={onSkip}>{rotating ? "Cancel, keep my old key" : "Not now"}</button>}
         </div>
       </div>
     );
