@@ -62,6 +62,8 @@ function Home({ session, justRegistered, initialNotice, onLoggedOut, onLocked }:
   const [phase, setPhase] = useState<Phase>({ k: "loading" });
   const [status, setStatus] = useState<BackupStatus | null>(null);
   const [notice, setNotice] = useState<string | null>(initialNotice);
+  // Shown on the recovery-key screen instead of its usual text.
+  const [restoreReason, setRestoreReason] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   // Decide which recovery screen, if any, this sign-in needs.
@@ -80,10 +82,6 @@ function Home({ session, justRegistered, initialNotice, onLoggedOut, onLocked }:
       // backup key, so the status below asks for the recovery key.
       // ChatApp reuses this same session (cryptoSession caches it).
       const crypto = await cryptoSession(session.user_id, apiCall(session.token, onLoggedOut));
-      if (crypto.status.replaced && live) {
-        setNotice("This browser's device had been removed or was unused for 30 days, so it was " +
-          "set up as a new device. Enter your recovery key to bring your history back.");
-      }
       const m = await BackupManager.open(session.user_id, session.token);
       m.onLocked = () => setPhase({ k: "restore" });
       m.onUploaded = () => {
@@ -91,6 +89,15 @@ function Home({ session, justRegistered, initialNotice, onLoggedOut, onLocked }:
       };
       const s = await m.status();
       if (!live) return;
+      if (crypto.status.replaced) {
+        if (s) {
+          setRestoreReason("This browser was removed from your devices, or wasn't used for 30 days, " +
+            "so it has been set up again. Enter your 12 words to bring your message history back.");
+        } else {
+          setNotice("This browser was removed from your devices, or wasn't used for 30 days, so it " +
+            "has been set up again. With no recovery backup, earlier encrypted history can't be brought back.");
+        }
+      }
       setManager(m);
       setStatus(s);
       if (!s) {
@@ -204,9 +211,10 @@ function Home({ session, justRegistered, initialNotice, onLoggedOut, onLocked }:
     return (
       <RecoveryRestore
         manager={manager}
-        onDone={(summary) => void refresh(summary)}
-        onSkip={() => void refresh("Not backing up from this device until you enter your recovery key.")}
+        onDone={(summary) => { setRestoreReason(null); void refresh(summary); }}
+        onSkip={() => { setRestoreReason(null); void refresh("Not backing up from this device until you enter your recovery key."); }}
         onLostKey={() => setPhase({ k: "setup", skippable: false, replacing: true })}
+        reason={restoreReason}
       />
     );
   }

@@ -193,9 +193,9 @@ refresh unlocks via the per-session server secret
 (`GET /api/v1/me/unlock-secret`, migration 0019) and a sessionStorage copy
 (`client-web/src/unlock.ts`). **Sign-out now keeps the device** (Ryan:
 ease of use first); the recovery key is needed only after 30-day expiry or
-removal in Settings > Devices. Ryan tested sign-out/sign-in. Not yet
-tested by Ryan: password change rewrap, removed-device path, refresh after
-session end. The storage layer was checked ad hoc in Node with
+removal in Settings > Devices. All verified by Ryan on Docker: sign-out/
+sign-in, password change rewrap, removed-device path (recovery screen
+gives the reason), refresh after session end. The storage layer was checked ad hoc in Node with
 fake-indexeddb (34 checks, not kept in the repo; no test setup exists).
 Older full handoff: project doc claude/handoff-step-13.md._
 
