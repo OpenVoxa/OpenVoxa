@@ -185,7 +185,7 @@ No `tls` profile = no Caddy (own proxy + `OPENVOXA_TRUST_PROXY=true`).
 
 ## Current state (update every session)
 
-_Last updated: 2026-11-03 (end of session). **Now: crypto-shredding**,
+_Last updated: 2026-11-03 (S4 session). **Now: crypto-shredding**,
 build order 14, S1-S6 (design agreed with Ryan, decisions.md Encryption,
 "Account deletion is crypto-shredding"; tick S-steps there as they land).
 Encrypted channels need no new key (MLS already makes server copies
@@ -199,16 +199,14 @@ the uploader's key; downloads 410 when the key is gone), migrations
 0020-0022. Go unit tests run with
 `docker run --rm -v "$PWD":/src -w /src golang:1.26 go test ./internal/keystore/ ./internal/sealedfile/`
 from `server/`.
-**Next: S4** (deletion destroys the key). To do: add `keystore.Destroy`
-(unlink + drop cache); call it only AFTER the purge transaction commits
-(before would lose data on rollback) in `purgeUser` (`account.go`) and
-the `delete-user` host command (`cli.go`, which must open the key store
-from config); `PurgeUserTx` also deletes the user's attachments (it
-never did); report list gets a "content deleted" flag instead of empty
-text (`openReport` returns "" on ErrNoKey). Then S5 (delete-account
-dialog wording + typed username; clients delete stored copies on
-`user_purged`, `chat.ts` `userPurged` only tombstones today) and S6
-(`deploy/README.md`: back the key folder up separately, short-lived).
+**S4 DONE and verified by Ryan** (2026-11-03): `keystore.Destroy`,
+called after the purge commits in `purgeUser` and `delete-user`;
+`PurgeUserTx` deletes the account's attachments and blanks report
+copies; Reports tab shows "content deleted with the account".
+**Next: S5** (delete-account dialog wording + typed username; clients
+delete stored copies on `user_purged`, `chat.ts` `userPurged` only
+tombstones today), then S6 (`deploy/README.md`: back the key folder up
+separately, short-lived).
 Also this session: Reports tab (Delete now confirmed; Delete or Ban from
 a report marks it Actioned; Dismiss is "No action needed", tab "No
 action", status value still `dismissed`) and a "Jump to latest" button
@@ -252,10 +250,10 @@ period in `server_settings`, migration 0017).
   invasive defaults). Not built: @everyone/@group, counts, push.
 - Appearance tab: accent, unread dot, mention badge colours, per browser.
   More customisation goes in `COLOURS` in `appearance.ts`.
-- Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI).
+- Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI;
+  now also destroys the key).
 - @mentions and Appearance: done and verified (M1-M6, A1).
-- Next (Ryan to choose): crypto-shredding (unbuilt, not yet in Build
-  order, needs design); "shared computer: erase everything" on sign-out;
+- After crypto-shredding (Ryan to choose): "shared computer: erase everything" on sign-out;
   local archive retention sweep; real force-PTT via LiveKit
   `MutePublishedTrack`; bitrate ceiling; zxcvbn (discuss first);
   Electron shell.

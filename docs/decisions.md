@@ -1794,8 +1794,21 @@ to pick their own colours later, so every colour stays a variable.
           sealed too (one rule; old ones cannot be told from uploaded
           .gif files). Verified on Docker: 4 existing files converted,
           old and new files, video seeking, GIF, size limit.
-    - [ ] S4 Deletion destroys the key file and removes the account's
-          attachments; reports show "content deleted".
+    - [x] S4 Deletion destroys the key file and removes the account's
+          attachments; reports show "content deleted". Done 2026-11-03:
+          `keystore.Destroy` (unlink + folder fsync, drops the cached
+          key, and refuses to re-create a key for that account in the
+          same process, so a send racing the deletion cannot revive it).
+          Called only after the purge commits, in `purgeUser` and the
+          `delete-user` host command (which opens the key store itself);
+          a failure is logged / printed with the file to remove by hand,
+          not rolled back. `PurgeUserTx` now also deletes the account's
+          attachments (on its messages, and unsent uploads) and blanks
+          report copies of its words; the report list has
+          `content_deleted`. Rejected: a startup sweep of key files with
+          no account, since a server pointed at the wrong database would
+          destroy every key. Verified on Docker: two accounts deleted,
+          files and report text gone, no leftover key files.
     - [ ] S5 Delete-account dialog with the new wording (password and
           typed username); other clients delete stored copies of a
           deleted account's messages on `user_purged`.
