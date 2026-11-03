@@ -466,9 +466,9 @@ function DeleteAccount({ username, onDelete }: { username: string; onDelete: (pa
         <form className="settings-form" onSubmit={submit}>
           <h3 className="settings-head">Delete account</h3>
           <p className="small">
-            This can't be undone, and there is no grace period. Everything you wrote is erased from every
-            channel (your messages show as deleted), your recovery backup and devices are removed, and you're
-            signed out everywhere. Your username becomes free for someone else.
+            This permanently deletes your account. Your messages and files are erased everywhere this server
+            controls, including its backups. People who already read them may still have their own copies.
+            You're signed out everywhere, and your username becomes free for someone else.
           </p>
           <label>
             Type your username, <strong>{username}</strong>, to confirm
