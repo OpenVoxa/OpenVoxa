@@ -251,8 +251,9 @@ period in `server_settings`, migration 0017).
 - Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI;
   now also destroys the key).
 - @mentions and Appearance: done and verified (M1-M6, A1).
-- After crypto-shredding (Ryan to choose): emoji picker and custom
-  stickers (decisions.md Open items, design questions listed there); "shared computer: erase everything" on sign-out;
+- After crypto-shredding (Ryan to choose): emoji picker, custom
+  stickers (mods/admins, server-wide, survive account deletion; limits
+  still to agree) and later a server browser (decisions.md Open items); "shared computer: erase everything" on sign-out;
   local archive retention sweep; real force-PTT via LiveKit
   `MutePublishedTrack`; bitrate ceiling; zxcvbn (discuss first);
   Electron shell.
