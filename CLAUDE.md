@@ -87,12 +87,13 @@ Compile checks (before any commit):
 
 - `cd client-core && npm install && npm run build`
 - `cd client-web && npm install && npm run build`
-- `cd server && go build ./...` — **Go is not installed in the device
-  shell.** The cloud container has go1.24 and no module proxy; a
-  type-check build works from a clone with a temporary go.mod (go 1.24,
-  `replace` golang.org/x/* etc. with GitHub mirrors at older versions, a
-  protoyaml stub); recipe in the handoff doc, "Working notes". Never
-  commit that go.mod. The cloud container also has Postgres 16.
+- `cd server && go build ./...` — **Go is not installed on Docker or
+  in the device shell**; the Docker image build (golang:1.26) is the Go
+  compile check. The cloud container has go1.24, no module proxy, and
+  Postgres 16; a type-check there needs a temporary go.mod (recipe in
+  the handoff doc, "Working notes"). Never commit that go.mod.
+- Node 22 (NodeSource, `/usr/bin/node`) is installed on Docker,
+  matching the Dockerfile's node:22-alpine.
 
 Docker (run on Docker, from `~/OpenVoxa/deploy`; build context is the repo
 root, the compose file handles that):
@@ -116,28 +117,39 @@ No `tls` profile = no Caddy (own proxy + `OPENVOXA_TRUST_PROXY=true`).
 
 ## Workflow (important)
 
-- Develop on **Git-terminal** (Windows, Git Bash, repo at
-  `~/Documents/openvoxa`). Ryan deploys to **Docker** (homelab)
-  by pulling from GitHub. Claude cannot reach Docker.
+- **Check `hostname` first.** If it says `docker`, this session runs on
+  the Docker host itself (Debian 12 VM on Ryan's homelab), repo
+  at `~/OpenVoxa`, live stack in `~/OpenVoxa/deploy`. Claude edits,
+  builds, commits, pushes AND rebuilds the stack from here. Ryan's only
+  terminal is this chat (he can't paste into the VM), so Claude runs
+  host commands (compose, logs, psql) itself. Elsewhere (Git-terminal,
+  Windows, `~/Documents/openvoxa`; cloud container) Claude can't reach
+  Docker, so give Ryan the Docker block below after every push.
 - Commits: DCO sign-off required (`git commit -s`), author
   `rynd-automation <rynd_automation@outlook.com>`. Short imperative
   subject lines, one logical change per commit.
-- Claude can push from the device shell: a repo-scoped GitHub token is
-  stored via `credential.helper store --file=.git/push-credentials`
-  (never commit or print it). Ryan still rebuilds Docker by hand.
+- Pushing works: a fine-grained token (OpenVoxa/OpenVoxa only,
+  Contents read/write) is stored via `credential.helper store
+  --file=.git/push-credentials` (never commit or print it). If a push
+  asks for a username, the token expired: Ryan makes a new one.
 - Commit/push only when asked. Never commit `.env`, keys, or
   `docker-compose.override.yml`.
-- **After EVERY push (docs-only included), give Ryan the Docker block**
-  in the same reply, without being asked. He multitasks and forgets. No
-  Git-terminal `git pull` block: Claude edits that folder directly.
-  Docker block, with the expected hash filled in:
+- **On Docker, after a push that changes the app, offer to rebuild**
+  (`docker compose --profile tls up -d --build` from `deploy/`). It
+  restarts the server: connections drop for a few seconds and friends
+  may be online. Afterwards check `docker compose ps` and
+  `logs server --tail 15`, then tell Ryan to hard-refresh (Ctrl+Shift+R).
+  Env changes need `--force-recreate`. Not on Docker: give the block,
+  with the expected hash, without being asked (he multitasks):
      ```bash
      # DOCKER
      cd ~/OpenVoxa && git pull && git log --oneline -1
      cd ~/OpenVoxa/deploy && docker compose --profile tls up -d --build
      ```
-     Then hard-refresh the browser (Ctrl+Shift+R).
-     Env changes need `--force-recreate`.
+- Debug from the host: `docker compose logs server --since 10m` shows
+  every request (e.g. backup `PUT /me/backup/chunks/...`); psql via
+  `docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER"
+  -d "$POSTGRES_DB"'`. The server image is distroless (no shell).
 - Naming: call the hosts "Docker" and "Git-terminal", not "the VM" /
   "your desktop".
 
@@ -171,9 +183,9 @@ No `tls` profile = no Caddy (own proxy + `OPENVOXA_TRUST_PROXY=true`).
 
 ## Current state (update every session)
 
-_Last updated: 2026-11-03 (CLAUDE.md review only). Step 13 M1-M3,
-channel management and M4 session A done; session B next. Full handoff:
-project doc claude/handoff-step-13.md._
+_Last updated: 2026-11-03. M2 fully verified on Docker; next piece
+not yet chosen (external join recommended, or M4 session B). Older
+full handoff: project doc claude/handoff-step-13.md._
 
 Done and verified on Docker (details: decisions.md Build order 9-12):
 MLS text E2EE, encrypted attachments in core + chat.html (Giphy GIFs stay
@@ -188,12 +200,20 @@ M4 attachments/GIFs/unfurls/notices -> M5 settings and admin panes.
 
 - M1 DONE (K1 flows 2-5 deferred by Ryan). M3 DONE (V3). Channel
   management DONE (C1).
-- M2 pushed; only M2-1 step 1 (send/edit/delete) verified on Docker.
+- M2 DONE and verified 2026-11-03 (quillbrook + staff): paging,
+  unread markers incl. hidden channels, encrypted archive, scheduled
+  backup, sign-out/restore. Fix 7d91eb3: user panel now refreshes the
+  backup time after scheduled uploads (console logs `backup uploaded`).
 - M4 session A DONE (markdown, previews, GIFs, notices, tones, Settings).
   G1/Y1 verified; G2-G4 to test. Also pending: P3 password, D1 delete-user.
 - Deploy: LiveKit on host networking (v1.13.11, `host.docker.internal:7880`),
   `update-node-ip.sh` on cron. Temporarily open to two friends (port 8443;
   teardown in handoff).
-- Next: M4 session B: attachment upload in client-web (picker,
-  drag/paste, inline media) on top of the existing `attachments.ts`.
-  Crypto-shredding is unbuilt and not yet scheduled in Build order.
+- Next, Ryan to choose: (a) **external join** (MLS external commit so a
+  new device joins encrypted channels / voice groups with no member
+  online; every sign-in is a new device, so friends will hit this;
+  verify the ts-mls API by experiment), or (b) **M4 session B**:
+  attachment upload in client-web (picker, drag/paste, inline media) on
+  `attachments.ts`. Crypto-shredding is unbuilt, not yet in Build order.
+- decisions.md Open items: "Recovery keys do not exist" is stale (M1
+  built them), and unencrypted IndexedDB is now unblocked.
