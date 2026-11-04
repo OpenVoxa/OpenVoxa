@@ -401,6 +401,19 @@ unchanged):
   `window:<HWND>:0`, 7.98 s of 8 received, first sound after about
   40 ms, clean WAV, exits when stdin closes), WH2 (another app's sound
   stays out), WH3 (a silent window: silence, no error).
+- **Stage 3 done (2026-11-04):** window shares carry their program's
+  sound in the desktop app. The picker's Share Sound works on the
+  Windows tab where supported (build 19041+ and the helper present).
+  `viewPreload.ts`, the first preload in server views, exposes only
+  `openvoxaDesktop.startShareSound` / `stopShareSound`; the main process
+  answers only the server's own main frame, once, within 15 s of a
+  window pick with Share Sound ticked. The helper's PCM goes to the page
+  over IPC (`share-sound:data`); `client-web/src/desktopShareSound.ts`
+  turns it into a track through an AudioWorklet (40 ms start buffer,
+  drift trimmed above 200 ms) and VoiceClient publishes it as
+  ScreenShareAudio. The helper stops with the share, on leaving, page
+  reload or crash, and when the app quits (stdin closes). WS1-WS7
+  passed.
 
 ### Stay signed in
 
@@ -2503,9 +2516,9 @@ to pick their own colours later, so every colour stays a variable.
       decisions, "Desktop screen share picker". The web client now
       explains an operating-system refusal ("Permission denied by
       system") instead of closing quietly.
-- [ ] Desktop app, step 3: per-app share sound (Windows process
-      loopback; Feature decisions, "Per-app share sound"). Ryan:
-      important. Design first.
+- [x] Desktop app, step 3: per-app share sound. Done 2026-11-04
+      (Feature decisions, "Per-app share sound"; RO1, RS1-RS3, WH1-WH3,
+      WS1-WS7).
 - [ ] Desktop app, later: badges via a preload, voice handoff between
       servers, global push-to-talk, tray, notifications.
 - [ ] Server icon and name in the pane, set in Server settings (Feature

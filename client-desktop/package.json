@@ -9,7 +9,7 @@
   "scripts": {
     "build": "tsc -p . && node scripts/copy-pane.mjs",
     "start": "npm run build && electron .",
-    "package:win": "npm run build && node scripts/package.mjs win32"
+    "package:win": "npm run build && sh audio-helper/build-windows.sh && node scripts/package.mjs win32"
   },
   "devDependencies": {
     "@electron/packager": "20.3.0",

@@ -152,7 +152,7 @@ const sound = document.getElementById("sound");
 const soundNote = document.getElementById("sound-note");
 const shareGo = document.getElementById("share-go");
 
-let shareReq = null; // { host, audio, soundSupported }
+let shareReq = null; // { host, audio, screenSound, windowSound }
 let sources = [];
 let tab = "screens";
 let chosen = null; // source id
@@ -212,16 +212,18 @@ function renderShare() {
   sourcesEmpty.hidden = shown.length > 0;
   sourcesEmpty.textContent = listError ?? (listed ? `No ${tab} to share.` : "Looking for screens and windows...");
 
-  // Sound: only asked for if the page wants it; Electron can capture it
-  // only for a whole screen, and only on Windows.
+  // Sound: only asked for if the page wants it, and only on Windows: a
+  // whole screen shares everything but OpenVoxa, a window only its own
+  // program (Windows 10 2004 or later).
   soundLabel.hidden = !shareReq?.audio;
+  const soundOk = tab === "screens" ? !!shareReq?.screenSound : !!shareReq?.windowSound;
   let why = null;
   if (shareReq?.audio) {
-    if (!shareReq.soundSupported) why = "Sound can only be shared from Windows in the desktop app.";
-    else if (tab === "windows") why = "Sound can only be shared with a whole screen, not a single window.";
-    else why = "Shares everything your computer plays.";
+    if (!shareReq.screenSound) why = "Sound can only be shared from Windows in the desktop app.";
+    else if (!soundOk) why = "Sound from a single window needs Windows 10 version 2004 or later.";
+    else if (tab === "windows") why = "Shares only this window's app sound.";
+    else why = "Shares everything your computer plays, except OpenVoxa.";
   }
-  const soundOk = !!shareReq?.soundSupported && tab === "screens";
   sound.disabled = !soundOk;
   sound.checked = soundOk && soundWanted; // greyed out = not shared, so not ticked
   soundLabel.classList.toggle("locked", !soundOk);

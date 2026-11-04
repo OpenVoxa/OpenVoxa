@@ -13,14 +13,19 @@
 //
 // Security: loading a server means running that server's code here. A
 // server view is sandboxed, has contextIsolation on and nodeIntegration
-// off, gets no preload, and is kept on its own origin. Only the pane (our
-// own local page) talks to this process, and every message is checked to
-// come from it.
+// off, and is kept on its own origin. Its only preload (viewPreload.ts)
+// offers one thing: the sound for a window share the user just picked.
+// The pane (our own local page) talks to this process, and every message
+// is checked to come from the pane or, for share sound, from the view of
+// the server that asked.
 
 import { app, BaseWindow, WebContentsView, ipcMain, Menu, dialog, shell, net, session, desktopCapturer } from "electron";
 import type { DesktopCapturerSource, IpcMainInvokeEvent, Session, Streams, WebContents } from "electron";
+import { spawn } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 // Width of the server pane, in CSS pixels. Must match --pane-width in
@@ -159,11 +164,15 @@ function secureSession(ses: Session, origin: string) {
 //
 // One picker at a time, for the server on screen. While it is open the
 // pane covers the window (like the Add a Server form) and its thumbnails
-// refresh every two seconds. Sound: Electron can only capture the whole
-// computer's sound ("loopback"), and only on Windows, so it is offered
-// for whole screens on Windows only.
+// refresh every two seconds. Sound, Windows only: a whole screen gets
+// Electron's "all system sound" (loopback; the web client asks for
+// restrictOwnAudio, which leaves OpenVoxa itself out). A window gets
+// only its program's sound, recorded by our helper (see "Window share
+// sound" below), which needs Windows 10 2004 (build 19041) or later.
 
 const SOUND_SUPPORTED = process.platform === "win32";
+const WINDOW_SOUND_SUPPORTED =
+  SOUND_SUPPORTED && Number(os.release().split(".")[2] ?? 0) >= 19041 && existsSync(helperPath());
 const THUMB = { width: 320, height: 180 };
 
 type Pick = {
@@ -201,7 +210,9 @@ async function openPicker(origin: string, audio: boolean, callback: (streams: St
   if (pick || !pane || !win || state.selected !== origin) return callback(null);
   const p: Pick = { origin, audio, callback, sources: new Map(), timer: null };
   pick = p;
-  pane.webContents.send("share-open", { host: new URL(origin).host, audio, soundSupported: SOUND_SUPPORTED });
+  pane.webContents.send("share-open", {
+    host: new URL(origin).host, audio, screenSound: SOUND_SUPPORTED, windowSound: WINDOW_SOUND_SUPPORTED,
+  });
   overlay = true;
   layout();
   win.focus();
@@ -223,7 +234,13 @@ function finishPick(id: string | null, sound: boolean) {
   try {
     if (source) {
       const streams: Streams = { video: source };
-      if (p.audio && sound && SOUND_SUPPORTED && source.id.startsWith("screen:")) streams.audio = "loopback";
+      const isScreen = source.id.startsWith("screen:");
+      if (p.audio && sound && SOUND_SUPPORTED && isScreen) streams.audio = "loopback";
+      // A window's sound comes separately: the page asks for it right
+      // after getDisplayMedia returns (startShareSound below).
+      if (p.audio && sound && WINDOW_SOUND_SUPPORTED && !isScreen) {
+        pendingSound.set(p.origin, { window: source.id.split(":")[1], at: Date.now() });
+      }
       p.callback(streams);
     } else {
       p.callback(null);
@@ -235,6 +252,70 @@ function finishPick(id: string | null, sound: boolean) {
   overlay = false;
   layout();
   if (state.selected) views.get(state.selected)?.webContents.focus();
+}
+
+// ---- Window share sound ----
+//
+// For a window share with Share Sound ticked, the page gets the window's
+// program's sound from openvoxa-audio.exe (audio-helper/): it records that
+// program and everything it started, as raw PCM on stdout (48 kHz stereo
+// s16le, about 192 kB a second), and exits when its stdin closes. The page
+// may start it only once per pick, within a few seconds of the pick, and
+// only for its own server: a page can never record anything on its own.
+
+const PENDING_SOUND_MS = 15_000;
+const pendingSound = new Map<string, { window: string; at: number }>();
+const shareSound = new Map<string, ChildProcessWithoutNullStreams>();
+
+function helperPath(): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "openvoxa-audio.exe")
+    : path.join(__dirname, "..", "audio-helper", "target", "x86_64-pc-windows-gnu", "release", "openvoxa-audio.exe");
+}
+
+function startShareSound(origin: string, wc: WebContents): boolean {
+  const p = pendingSound.get(origin);
+  pendingSound.delete(origin);
+  if (!p || Date.now() - p.at > PENDING_SOUND_MS || !/^\d+$/.test(p.window)) return false;
+  stopShareSound(origin);
+  const child = spawn(helperPath(), ["--window", p.window], { stdio: "pipe", windowsHide: true });
+  shareSound.set(origin, child);
+  const end = (reason: string) => {
+    if (shareSound.get(origin) !== child) return;
+    shareSound.delete(origin);
+    if (!wc.isDestroyed()) wc.send("share-sound:end", reason);
+  };
+  child.stdout.on("data", (chunk: Buffer) => {
+    if (shareSound.get(origin) === child && !wc.isDestroyed()) wc.send("share-sound:data", chunk);
+  });
+  let stderr = "";
+  child.stderr.on("data", (b: Buffer) => {
+    stderr = (stderr + b.toString()).slice(-2000);
+  });
+  child.on("error", (err) => end(`couldn't start the sound helper: ${err.message}`));
+  child.on("exit", (code) => end(code === 0 ? "stopped" : stderr.split("\n").find((l) => l.startsWith("error:")) ?? `helper exited (${code})`));
+  return true;
+}
+
+function stopShareSound(origin: string) {
+  pendingSound.delete(origin);
+  const child = shareSound.get(origin);
+  if (!child) return;
+  shareSound.delete(origin);
+  child.stdin.end(); // the helper exits by itself
+  setTimeout(() => { if (child.exitCode === null) child.kill(); }, 2000);
+}
+
+// viewOrigin returns the server whose own page (main frame, on its own
+// origin) sent this message, or null.
+function viewOrigin(e: IpcMainInvokeEvent): string | null {
+  for (const [origin, view] of views) {
+    if (e.sender === view.webContents) {
+      return e.senderFrame && e.senderFrame === view.webContents.mainFrame && originOf(e.senderFrame.url) === origin
+        ? origin : null;
+    }
+  }
+  return null;
 }
 
 // lockToOrigin keeps a server's page (or a window it opened) on that
@@ -281,6 +362,7 @@ function viewFor(origin: string): WebContentsView {
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: true,
+      preload: path.join(__dirname, "viewPreload.js"),
       // Background servers stay connected and keep their timers running
       // (decided 2026-11-04), so sounds and live messages keep working.
       backgroundThrottling: false,
@@ -309,11 +391,16 @@ function viewFor(origin: string): WebContentsView {
   });
   // A page that reloads or crashes with the picker open can't take the
   // answer any more: close the picker.
-  const dropPick = () => { if (pick?.origin === origin) finishPick(null, false); };
+  // Share sound stops with it.
+  const dropPick = () => {
+    if (pick?.origin === origin) finishPick(null, false);
+    stopShareSound(origin);
+  };
   view.webContents.on("did-start-navigation", (details) => {
     if (details.isMainFrame && !details.isSameDocument) dropPick();
   });
   view.webContents.on("render-process-gone", dropPick);
+  view.webContents.on("destroyed", () => stopShareSound(origin));
   view.webContents.on("did-finish-load", () => pane?.webContents.send("server-error", { origin, message: null }));
   view.setVisible(false);
   win!.contentView.addChildView(view);
@@ -455,6 +542,14 @@ function registerIpc() {
   ipcMain.handle("pane:share", (e, id: unknown, sound: unknown) => {
     if (!fromPane(e) || (id !== null && typeof id !== "string")) return;
     finishPick(id, sound === true);
+  });
+  ipcMain.handle("view:share-sound-start", (e) => {
+    const origin = viewOrigin(e);
+    return origin ? startShareSound(origin, e.sender) : false;
+  });
+  ipcMain.handle("view:share-sound-stop", (e) => {
+    const origin = viewOrigin(e);
+    if (origin) stopShareSound(origin);
   });
   ipcMain.handle("pane:overlay", (e, on: unknown) => {
     if (!fromPane(e) || pick) return; // the picker owns the overlay while open
