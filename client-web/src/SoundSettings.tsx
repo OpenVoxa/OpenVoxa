@@ -66,7 +66,7 @@ function SoundRow({ s }: { s: SoundInfo }) {
         <span>
           {s.label}
           <span className="muted small block">
-            {s.help}{s.pending ? " Not played yet: coming in the next update." : ""}
+            {s.help}
           </span>
         </span>
       </label>

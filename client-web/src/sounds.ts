@@ -30,8 +30,6 @@ export interface SoundInfo {
   readonly help: string;
   /** Default choice: "kenney/<name>" or "classic". */
   readonly fallback: string;
-  /** Not played anywhere yet (shown with a note in Settings). */
-  readonly pending?: boolean;
   /** The old on/off key this event's switch replaces (settings.ts, before sounds.ts). */
   readonly legacyKey?: string;
 }
@@ -48,8 +46,9 @@ export const SOUND_EVENTS: readonly SoundInfo[] = [
     fallback: "kenney/minimize_006" },
   { id: "mention", label: "Mention", help: "Someone mentions you, unless you're already looking at that channel.",
     fallback: "kenney/confirmation_004", legacyKey: "chat.mentionSound" },
-  { id: "message", label: "Message", help: "A channel you aren't viewing gets a new message.",
-    fallback: "classic", pending: true },
+  { id: "message", label: "Message",
+    help: "A channel you aren't viewing gets a new message. Plays once, then waits until you've read it.",
+    fallback: "classic" },
 ];
 
 /** Every file in client-web/public/sounds/kenney, without ".ogg". */
@@ -120,6 +119,49 @@ export function getSound(id: SoundEvent): SoundSetting {
 function changed(id: SoundEvent): void {
   cache.delete(id);
   for (const l of listeners) l();
+}
+
+// ------------------------------------------------- per-channel mute
+
+/**
+ * Channels whose message sound is muted, in this browser (Mute sounds in
+ * the channel header). Mentions still play in a muted channel, as in
+ * Discord. Channel ids are unique per server, so one list does for every
+ * account signed in here.
+ */
+const MUTED_KEY = "sound.mutedChannels";
+let muted: ReadonlySet<string> | null = null;
+
+export function mutedChannels(): ReadonlySet<string> {
+  if (!muted) {
+    let ids: unknown = [];
+    try {
+      ids = JSON.parse(localStore.get(MUTED_KEY) ?? "[]");
+    } catch {
+      /* unreadable: start empty */
+    }
+    muted = new Set(Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : []);
+  }
+  return muted;
+}
+
+export function setChannelMuted(channelId: string, on: boolean): void {
+  const next = new Set(mutedChannels());
+  if (on) next.add(channelId);
+  else next.delete(channelId);
+  muted = next;
+  localStore.set(MUTED_KEY, JSON.stringify([...next]));
+  for (const l of listeners) l();
+}
+
+export function useMutedChannels(): ReadonlySet<string> {
+  return useSyncExternalStore(
+    (cb) => {
+      listeners.add(cb);
+      return () => listeners.delete(cb);
+    },
+    mutedChannels,
+  );
 }
 
 export function setSoundOn(id: SoundEvent, on: boolean): void {

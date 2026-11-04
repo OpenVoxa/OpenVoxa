@@ -20,6 +20,7 @@ import { LinkPreview } from "./previews";
 import { GifPicker, useGifsEnabled } from "./gifs";
 import { EmojiPicker, useEmojiShortcodes } from "./emoji";
 import { PREVIEWS_ENCRYPTED, useToggle } from "./settings";
+import { setChannelMuted, useMutedChannels } from "./sounds";
 import { PlainAttachment, SealedAttachment, UploadTray, useUploads } from "./attachments";
 import { StickerMessage } from "./stickers";
 import { ColouredName, nameStyle, useNameColour } from "./names";
@@ -45,6 +46,7 @@ export function ChannelPane({ view, call, userId, username, canDeleteAny, canMan
 }) {
   const snap = useSnapshot(view);
   const previewsEncrypted = useToggle(PREVIEWS_ENCRYPTED);
+  const muted = useMutedChannels().has(snap.channel.id);
   const [editing, setEditing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const c = snap.channel;
@@ -103,6 +105,12 @@ export function ChannelPane({ view, call, userId, username, canDeleteAny, canMan
         {snap.connection !== "open" && (
           <span className="conn small">{snap.connection === "connecting" ? "Connecting…" : "Disconnected, retrying…"}</span>
         )}
+        <button className={`icon mute-toggle${muted ? " on" : ""}`} onClick={() => setChannelMuted(c.id, !muted)}
+          aria-pressed={muted}
+          title={muted ? "Unmute sounds (mentions still play while muted)" : "Mute sounds (mentions still play)"}
+          aria-label={muted ? "Unmute sounds" : "Mute sounds"}>
+          <BellIcon off={muted} />
+        </button>
       </header>
 
       <CryptoBanner crypto={snap.crypto} />
@@ -988,4 +996,14 @@ function useMentionPicker(
   ) : null;
 
   return { list, onKey, onSelect };
+}
+
+/** A bell; struck through when the channel's sounds are muted. */
+export function BellIcon({ off, size = 16 }: { off?: boolean; size?: number }) {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} aria-hidden>
+      <path fill="currentColor" d="M8 1.5a1 1 0 0 1 1 1v.6a4.5 4.5 0 0 1 3.5 4.4v2.8l1.3 1.7a.6.6 0 0 1-.5 1H2.7a.6.6 0 0 1-.5-1l1.3-1.7V7.5A4.5 4.5 0 0 1 7 3.1v-.6a1 1 0 0 1 1-1zM6.3 14h3.4a1.7 1.7 0 0 1-3.4 0z" />
+      {off && <path d="M2 2l12 12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />}
+    </svg>
+  );
 }
