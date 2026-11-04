@@ -16,6 +16,8 @@
   --accent-hover: color-mix(in srgb, var(--accent) 88%, #000);
   --on-accent: #ffffff;
   --danger: #ff8f87;
+  --line: #444444;
+  --sidebar-active: #474747;
   --radius: 6px;
   /* Must match PANE_WIDTH in src/main.ts. */
   --pane-width: 72px;
@@ -122,3 +124,38 @@ button.primary { background: var(--accent); color: var(--on-accent); font-weight
 button.primary:hover:not(:disabled) { background: var(--accent-hover); }
 button.outline { background: transparent; color: var(--text); border: 1px solid var(--accent); font-size: 14px; padding: 7px 15px; }
 button.outline:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 15%, transparent); }
+
+/* ---- Screen share picker ---- */
+.card.wide { max-width: 760px; max-height: calc(100vh - 32px); padding: 24px 28px; gap: 12px; }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+.tabs button {
+  background: none; color: var(--muted); font-size: 14px; padding: 6px 10px 8px;
+  border-radius: 0; border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.tabs button:hover { color: var(--text); }
+.tabs button.on { color: var(--text); border-bottom-color: var(--accent); }
+.sources {
+  list-style: none; margin: 0; padding: 4px; min-height: 160px; overflow-y: auto;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px;
+}
+.source {
+  width: 100%; padding: 8px; display: flex; flex-direction: column; gap: 6px;
+  background: var(--input); color: var(--text); border: 2px solid transparent; border-radius: 8px;
+}
+.source:hover { background: var(--sidebar-active); }
+.source.on { border-color: var(--accent); }
+.source:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.thumb { aspect-ratio: 16 / 9; background: #000; border-radius: 4px; display: grid; place-items: center; overflow: hidden; }
+.thumb img { max-width: 100%; max-height: 100%; }
+.source-name { display: flex; align-items: center; gap: 6px; font-size: 13px; min-width: 0; }
+.source-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-icon { width: 16px; height: 16px; flex: none; }
+.share-foot { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.share-foot .actions { margin-left: auto; }
+.card .note { text-align: left; font-size: 13px; flex: 1; }
+label.check {
+  flex-direction: row; align-items: center; gap: 8px;
+  font-size: 15px; font-weight: 400; text-transform: none; color: var(--text);
+}
+label.check input { margin: 0; accent-color: var(--accent); }
+label.check.locked { opacity: 0.6; cursor: not-allowed; }

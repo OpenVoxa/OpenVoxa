@@ -17,8 +17,8 @@
 // own local page) talks to this process, and every message is checked to
 // come from it.
 
-import { app, BaseWindow, WebContentsView, ipcMain, Menu, dialog, shell, net, session } from "electron";
-import type { IpcMainInvokeEvent, Session, WebContents } from "electron";
+import { app, BaseWindow, WebContentsView, ipcMain, Menu, dialog, shell, net, session, desktopCapturer } from "electron";
+import type { DesktopCapturerSource, IpcMainInvokeEvent, Session, Streams, WebContents } from "electron";
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
@@ -30,10 +30,13 @@ const PANE_WIDTH = 72;
 // Permissions a server's web client may have, and only for its own
 // origin. media = microphone and camera; speaker-selection = the Speaker
 // picker; clipboard-sanitized-write = copy buttons; fullscreen = full
-// screen for shared screens; notifications = the optional pop-ups.
-// Everything else (location, USB, files ...) is refused.
+// screen for shared screens; notifications = the optional pop-ups;
+// display-capture = screen share (what is shared is still chosen in our
+// own picker, never by the page). Everything else (location, USB,
+// files ...) is refused.
 const ALLOWED_PERMISSIONS = new Set([
   "media",
+  "display-capture",
   "speaker-selection",
   "clipboard-sanitized-write",
   "fullscreen",
@@ -143,10 +146,95 @@ function secureSession(ses: Session, origin: string) {
   ses.setPermissionCheckHandler((_wc, permission, requestingOrigin) => {
     return ALLOWED_PERMISSIONS.has(permission) && originOf(requestingOrigin) === origin;
   });
-  // Screen share needs our own picker (Electron shows none); that is the
-  // next step. Until then the request is refused and the web client
-  // reports that sharing failed.
-  ses.setDisplayMediaRequestHandler((_request, callback) => callback(null));
+  // Electron shows no screen share picker of its own: the pane draws one
+  // (see "Screen share picker" below). The server's page only asks; what
+  // gets shared is chosen in our own UI, never by the page.
+  ses.setDisplayMediaRequestHandler((request, callback) => {
+    if (originOf(request.securityOrigin) !== origin || !request.videoRequested) return callback(null);
+    void openPicker(origin, request.audioRequested, callback);
+  });
+}
+
+// ---- Screen share picker ----
+//
+// One picker at a time, for the server on screen. While it is open the
+// pane covers the window (like the Add a Server form) and its thumbnails
+// refresh every two seconds. Sound: Electron can only capture the whole
+// computer's sound ("loopback"), and only on Windows, so it is offered
+// for whole screens on Windows only.
+
+const SOUND_SUPPORTED = process.platform === "win32";
+const THUMB = { width: 320, height: 180 };
+
+type Pick = {
+  origin: string;
+  audio: boolean;
+  callback: (streams: Streams | null) => void;
+  sources: Map<string, DesktopCapturerSource>;
+  timer: NodeJS.Timeout | null;
+};
+let pick: Pick | null = null;
+
+async function listSources(p: Pick) {
+  let found: DesktopCapturerSource[];
+  try {
+    found = await desktopCapturer.getSources({ types: ["screen", "window"], thumbnailSize: THUMB, fetchWindowIcons: true });
+  } catch (err) {
+    // Shown in the picker; the timer keeps trying.
+    if (pick === p) pane?.webContents.send("share-error", `Couldn't list screens and windows (${err instanceof Error ? err.message : String(err)}).`);
+    return;
+  }
+  if (pick !== p) return; // closed meanwhile
+  p.sources = new Map(found.map((s) => [s.id, s]));
+  pane?.webContents.send("share-sources", found.map((s) => ({
+    id: s.id,
+    name: s.name,
+    screen: s.id.startsWith("screen:"),
+    thumbnail: s.thumbnail.isEmpty() ? null : s.thumbnail.toDataURL(),
+    icon: s.appIcon && !s.appIcon.isEmpty() ? s.appIcon.toDataURL() : null,
+  })));
+}
+
+async function openPicker(origin: string, audio: boolean, callback: (streams: Streams | null) => void) {
+  // Only the server on screen may open it (a background server asking
+  // would pop a picker for a page the user can't see), and only one.
+  if (pick || !pane || !win || state.selected !== origin) return callback(null);
+  const p: Pick = { origin, audio, callback, sources: new Map(), timer: null };
+  pick = p;
+  pane.webContents.send("share-open", { host: new URL(origin).host, audio, soundSupported: SOUND_SUPPORTED });
+  overlay = true;
+  layout();
+  win.focus();
+  pane.webContents.focus();
+  await listSources(p);
+  if (pick === p) p.timer = setInterval(() => void listSources(p), 2000);
+}
+
+// finishPick answers the page and closes the picker. A null id cancels:
+// the page's getDisplayMedia then fails with "AbortError: Invalid capture
+// constraints" (Electron 45, found by experiment; null, {} and no
+// argument all give the same), which the web client treats as cancelled.
+function finishPick(id: string | null, sound: boolean) {
+  const p = pick;
+  if (!p) return;
+  pick = null;
+  if (p.timer) clearInterval(p.timer);
+  const source = id ? p.sources.get(id) : undefined;
+  try {
+    if (source) {
+      const streams: Streams = { video: source };
+      if (p.audio && sound && SOUND_SUPPORTED && source.id.startsWith("screen:")) streams.audio = "loopback";
+      p.callback(streams);
+    } else {
+      p.callback(null);
+    }
+  } catch {
+    // The page went away while the picker was open: nothing to answer.
+  }
+  pane?.webContents.send("share-close");
+  overlay = false;
+  layout();
+  if (state.selected) views.get(state.selected)?.webContents.focus();
 }
 
 // lockToOrigin keeps a server's page (or a window it opened) on that
@@ -219,6 +307,13 @@ function viewFor(origin: string): WebContentsView {
     if (!isMainFrame || code === -3 /* aborted */) return;
     pane?.webContents.send("server-error", { origin, message: `${description} (${url})` });
   });
+  // A page that reloads or crashes with the picker open can't take the
+  // answer any more: close the picker.
+  const dropPick = () => { if (pick?.origin === origin) finishPick(null, false); };
+  view.webContents.on("did-start-navigation", (details) => {
+    if (details.isMainFrame && !details.isSameDocument) dropPick();
+  });
+  view.webContents.on("render-process-gone", dropPick);
   view.webContents.on("did-finish-load", () => pane?.webContents.send("server-error", { origin, message: null }));
   view.setVisible(false);
   win!.contentView.addChildView(view);
@@ -239,6 +334,7 @@ function layout() {
 }
 
 function select(origin: string | null) {
+  if (pick && pick.origin !== origin) finishPick(null, false);
   state.selected = origin;
   if (origin) {
     viewFor(origin);
@@ -356,8 +452,12 @@ function registerIpc() {
     if (!fromPane(e) || typeof origin !== "string") return;
     views.get(origin)?.webContents.reload();
   });
+  ipcMain.handle("pane:share", (e, id: unknown, sound: unknown) => {
+    if (!fromPane(e) || (id !== null && typeof id !== "string")) return;
+    finishPick(id, sound === true);
+  });
   ipcMain.handle("pane:overlay", (e, on: unknown) => {
-    if (!fromPane(e)) return;
+    if (!fromPane(e) || pick) return; // the picker owns the overlay while open
     overlay = on === true;
     layout();
     if (!overlay && state.selected) views.get(state.selected)?.webContents.focus();

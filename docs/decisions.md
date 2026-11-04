@@ -309,6 +309,47 @@ the pane is desktop-only (browser users keep one server per tab).
   picker; we draw our own) and E2EE tested inside it. Tray,
   notifications, auto-update and installers later.
 
+### Desktop screen share picker
+
+Decided with Ryan, 2026-11-04 (desktop step 2).
+
+- **Where:** the pane covers the window while the picker is open, like
+  the Add a Server form. The server's page only asks
+  (`getDisplayMedia`); what is shared is chosen in the app's own UI,
+  never by the page. Only the server on screen may open it, one at a
+  time.
+- **What:** Screens and Windows tabs, thumbnails refreshed every 2 s,
+  app icons on windows. Click to choose, then Share; double-click
+  shares at once. A lone screen is chosen for you. Cancel, Escape, a
+  click outside the card, or any pane button closes it without
+  sharing (like the web client's dialogs).
+- **Sound:** Electron offers only "all system sound" (`loopback`), and
+  only on Windows. So Share Sound appears when the page asked for
+  sound, works for whole screens on Windows, and is greyed out and
+  unticked (with the reason) for windows and on other systems. All
+  system sound includes the call's own voices, so the others could
+  hear themselves back (SD2: no echo seen, recheck with per-app sound).
+- **Next (Ryan: "important"):** per-app sound, below.
+
+### Per-app share sound (desktop step 3, to design)
+
+Raised by Ryan, 2026-11-04, after SP2. Not designed yet: discuss first.
+
+- **The limit is Electron's, not Windows'.** Since Windows 10 2004
+  (build 19041) Windows can record one process tree's sound
+  (`ActivateAudioInterfaceAsync` with
+  `AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`), or everything
+  except one process tree. Discord's per-app sound works this way.
+- **Gives two things:** a window share carries that app's sound, and a
+  whole-screen share can exclude OpenVoxa's own process, so the call's
+  voices are never sent back (the SD2 risk).
+- **Needs:** a small native helper (Rust, Windows only) and a way to get
+  the audio into the server's page as a track. Server views have no
+  preload today; this would be the first narrow one (already foreseen
+  in "Server browser and desktop shell": a tiny preload API checked by
+  sender), offering only "the sound for the share just picked". Linux
+  and Mac stay as they are.
+
 ### Stay signed in
 
 Decided by Ryan, 2026-11-04, after ED5 (the desktop app signed him out
@@ -1650,6 +1691,17 @@ editor cannot decrypt its own edit, so the plaintext is kept from the
 PATCH until the `message_edited` echo or the response, whichever comes
 first. A backup restore only takes an edit mark together with its text.
 
+**Electron screen share (desktop step 2, found by experiment).**
+`display-capture` must pass the session's permission handler or the
+page gets NotAllowedError before `setDisplayMediaRequestHandler` is
+ever called. Refusing in that handler (`callback(null)`, `{}` or no
+argument alike) reaches the page as `AbortError: Invalid capture
+constraints`, not NotAllowedError, so the web client treats both as
+"cancelled". Testing under Xvfb in a container: start Xvfb with
+`-extension MIT-SHM` or screen capture fails ("Failed to initialize
+pixel buffer", empty source list), and run a window manager (openbox)
+or no windows are listed.
+
 **Only a device removes its own duplicate leaves.** After rejoining from
 a GroupInfo a device can hold two leaves. Another member cannot tell
 which is live, and removing the wrong one would kick the device out, so
@@ -2382,10 +2434,14 @@ to pick their own colours later, so every colour stays a variable.
       Wine). Electron gives the permission check handler
       `requestingOrigin` with a trailing slash: compare normalised
       origins or device names stay hidden.
-- [ ] Desktop app, step 2: our own screen share picker
-      (`setDisplayMediaRequestHandler` + `desktopCapturer`; today
-      `display-capture` is refused and the share dialog just closes,
-      ED8), then E2EE screen share tested inside the app.
+- [x] Desktop app, step 2: our own screen share picker. Done
+      2026-11-04 (ED8, SP1-SP7, SD1; SD2 no echo seen): Feature
+      decisions, "Desktop screen share picker". The web client now
+      explains an operating-system refusal ("Permission denied by
+      system") instead of closing quietly.
+- [ ] Desktop app, step 3: per-app share sound (Windows process
+      loopback; Feature decisions, "Per-app share sound"). Ryan:
+      important. Design first.
 - [ ] Desktop app, later: badges via a preload, voice handoff between
       servers, global push-to-talk, tray, notifications.
 - [ ] Server icon and name in the pane, set in Server settings (Feature
