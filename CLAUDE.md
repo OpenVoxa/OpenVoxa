@@ -185,7 +185,16 @@ No `tls` profile = no Caddy (own proxy + `OPENVOXA_TRUST_PROXY=true`).
 
 ## Current state (update every session)
 
-_Last updated: 2026-11-04. **Reactions DONE** (Ryan chose option A:
+_Last updated: 2026-11-04. **Custom stickers DONE** (verified by Ryan,
+ST1-ST5 + ST7; decisions.md Open items "Custom stickers"): limits 1 MB,
+512 x 512 px, 100 per server (admin-editable, Server settings >
+Stickers), `manage_stickers` switch (Moderator by default), migration
+0024, `httpapi/stickers.go`, client-core `stickers.ts` (message token
+`[sticker:<uuid>]`), client-web `stickers.tsx` (picker 🏷️ + tab). Also:
+the client now refetches `/me` on start, so a switch added by a server
+update shows without signing out. Go test cache volume `ovx-gomod` on
+Docker (`-v ovx-gomod:/go/pkg/mod` in the docker run test command).
+Earlier 2026-11-04: **Reactions DONE** (Ryan chose option A:
 the server sees the emoji, like mentions; decisions.md Feature decisions
 "Reactions are metadata the server sees"): `httpapi/reactions.go`,
 migration 0023, `ChannelView.react`, chips + "React" in `ChannelPane.tsx`.
@@ -255,11 +264,12 @@ period in `server_settings`, migration 0017).
 - Appearance tab: accent, unread dot, mention badge colours, per browser.
   More customisation goes in `COLOURS` in `appearance.ts`.
 - Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI;
-  now also destroys the key).
+  now also destroys the key), ST6 (stickers: a plain Member
+  can send stickers and has no way to manage them; only tried as an
+  administrator so far).
 - @mentions and Appearance: done and verified (M1-M6, A1).
-- Next (Ryan to choose): custom
-  stickers (mods/admins, server-wide, survive account deletion; limits
-  still to agree) and later a server browser (decisions.md Open items); "shared computer: erase everything" on sign-out;
+- Next (Ryan to choose): `:name:` sticker shortcodes (small), later
+  a server browser (decisions.md Open items); "shared computer: erase everything" on sign-out;
   local archive retention sweep; real force-PTT via LiveKit
   `MutePublishedTrack`; bitrate ceiling; zxcvbn (discuss first);
   Electron shell.
