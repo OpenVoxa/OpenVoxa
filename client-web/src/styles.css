@@ -745,13 +745,18 @@ button.dot-host { position: relative; }
 
 /* Stickers (stickers.tsx). Images keep their own proportions inside a
    square box; small ones are not blown up. */
-.sticker-btn { font-size: 18px; padding: 6px 10px; line-height: 1.2; }
-.sticker-btn.on { background: var(--sidebar-active); }
 .sticker { margin-top: 2px; }
 .sticker-img { display: block; width: auto; height: auto; object-fit: contain; }
 .sticker-blank { display: inline-block; border-radius: 6px; background: var(--input); }
+.sticker-panel { display: flex; flex-direction: column; gap: 6px; }
+/* As tall as the emoji tab (search row, category row, grid, footer), so
+   switching tabs doesn't make the picker jump. */
 .sticker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 4px;
-  max-height: 320px; overflow-y: auto; min-height: 60px; }
+  align-content: start; height: 372px; overflow-y: auto; }
+.picker-modes { display: flex; gap: 4px; }
+.picker-modes button { flex: 1; padding: 4px 0; background: none; border: 0; border-bottom: 2px solid transparent;
+  color: var(--muted); font-weight: 600; cursor: pointer; }
+.picker-modes button.on { color: inherit; border-bottom-color: var(--accent); }
 .sticker-grid.busy { opacity: .5; }
 .sticker-choice { padding: 4px; height: 84px; display: flex; align-items: center; justify-content: center;
   background: var(--input); border: 2px solid transparent; border-radius: 6px; }

@@ -22,6 +22,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent } from "react";
 import { localStore } from "./core";
+import type { StickerInfo } from "@core/stickers";
+import { StickerPanel, useStickers } from "./stickers";
 
 export interface Emoji {
   /** The emoji itself, default (yellow) skin. */
@@ -235,14 +237,28 @@ export function noteRecent(e: Emoji): void {
  * insert and close; Shift+click inserts and keeps it open. Typing searches;
  * Enter takes the first result.
  */
-export function EmojiPicker({ onPick, onClose, style, label = "Emoji" }: {
+/** The tab last used in the composer's picker, for this page load. */
+let lastMode: "emoji" | "stickers" = "emoji";
+
+export function EmojiPicker({ onPick, onClose, style, label = "Emoji", stickers }: {
   /** The emoji text to insert, with the chosen skin tone applied. */
   onPick: (text: string) => void;
   onClose: () => void;
   /** Placement, when not above the composer (reactions place it by the message). */
   style?: CSSProperties;
   label?: string;
+  /** Composer only: adds a Stickers tab (not for reactions). */
+  stickers?: { canManage: boolean; onPick: (s: StickerInfo) => Promise<void> };
 }) {
+  const stickerList = useStickers();
+  // No tab when there is nothing to pick and no way to add any.
+  const stickerTab = !!stickers && (stickers.canManage || !stickerList || stickerList.stickers.length > 0);
+  const [mode, setModeState] = useState<"emoji" | "stickers">(lastMode);
+  const setMode = (m: "emoji" | "stickers") => {
+    lastMode = m;
+    setModeState(m);
+  };
+  const showStickers = stickerTab && mode === "stickers";
   const data = useEmojiData(true);
   const [error, setError] = useState(false);
   const [query, setQuery] = useState("");
@@ -253,7 +269,9 @@ export function EmojiPicker({ onPick, onClose, style, label = "Emoji" }: {
   const grid = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
 
-  useEffect(() => input.current?.focus(), []);
+  useEffect(() => {
+    if (!showStickers) input.current?.focus();
+  }, [showStickers]);
   useEffect(() => {
     let live = true;
     loadEmoji().catch(() => live && setError(true));
@@ -318,7 +336,16 @@ export function EmojiPicker({ onPick, onClose, style, label = "Emoji" }: {
   const shown = hover ?? sections[0]?.items[0] ?? null;
 
   return (
-    <div className="emoji-picker" ref={box} role="dialog" aria-label={label} style={style}>
+    <div className="emoji-picker" ref={box} role="dialog" aria-label={stickerTab ? "Emoji and stickers" : label} style={style}>
+      {stickerTab && (
+        <div className="picker-modes" role="tablist">
+          <button role="tab" aria-selected={!showStickers} className={showStickers ? undefined : "on"}
+            onClick={() => setMode("emoji")}>Emoji</button>
+          <button role="tab" aria-selected={showStickers} className={showStickers ? "on" : undefined}
+            onClick={() => setMode("stickers")}>Stickers</button>
+        </div>
+      )}
+      {showStickers ? <StickerPanel canManage={stickers!.canManage} onPick={stickers!.onPick} onDone={onClose} /> : (<>
       <div className="emoji-top">
         <input ref={input} value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={onSearchKey}
           placeholder="Search emoji" aria-label="Search emoji" />
@@ -348,6 +375,7 @@ export function EmojiPicker({ onPick, onClose, style, label = "Emoji" }: {
           </>
         ) : <span className="muted small">Shift+click to pick several</span>}
       </div>
+      </>)}
     </div>
   );
 }

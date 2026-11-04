@@ -3,8 +3,8 @@
 
 /**
  * Custom stickers (decisions.md Open items, "Custom stickers"): the
- * server's set, the picker beside the composer, a sticker inside a
- * message, and the Stickers tab of Server settings.
+ * server's set, the Stickers tab of the composer's emoji picker, a
+ * sticker inside a message, and the Stickers tab of Server settings.
  *
  * The images need the session token, so they are fetched with it and
  * shown from blob: URLs, kept for the page's lifetime (a sticker id
@@ -132,37 +132,27 @@ export function StickerMessage({ id }: { id: string }) {
 
 // ------------------------------------------------------------ picker
 
-export function StickerPicker({ canManage, onPick, onClose }: {
+/**
+ * The Stickers tab of the composer's emoji picker (emoji.tsx), which
+ * owns the box, Escape and click-outside.
+ */
+export function StickerPanel({ canManage, onPick, onDone }: {
   /** Holds manage_stickers: an empty set says where to add some. */
   canManage: boolean;
   onPick: (s: StickerInfo) => Promise<void>;
-  onClose: () => void;
+  /** After a successful pick: close the picker. */
+  onDone: () => void;
 }) {
   const { list: stickers, failed } = useStickerState();
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
-  const box = useRef<HTMLDivElement>(null);
 
   useEffect(() => input.current?.focus(), []);
   useEffect(() => {
     if (!state.list && !loading) void refreshStickers();
   }, []);
-
-  // Close on Escape or a click outside.
-  useEffect(() => {
-    const key = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    const click = (e: MouseEvent) => {
-      if (box.current && !box.current.contains(e.target as Node)) onClose();
-    };
-    window.addEventListener("keydown", key);
-    window.addEventListener("mousedown", click);
-    return () => {
-      window.removeEventListener("keydown", key);
-      window.removeEventListener("mousedown", click);
-    };
-  }, [onClose]);
 
   const q = query.trim().toLowerCase().replace(/^:|:$/g, "");
   const shown = useMemo(() => (stickers?.stickers ?? []).filter((s) =>
@@ -174,7 +164,7 @@ export function StickerPicker({ canManage, onPick, onClose }: {
     setError(null);
     try {
       await onPick(s);
-      onClose();
+      onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setBusy(false);
@@ -183,17 +173,15 @@ export function StickerPicker({ canManage, onPick, onClose }: {
 
   const empty = stickers && stickers.stickers.length === 0;
   return (
-    <div className="gif-picker sticker-picker" ref={box} role="dialog" aria-label="Stickers">
-      {!empty && (
-        <input ref={input} value={query} onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search stickers" aria-label="Search stickers"
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && shown[0]) {
-              e.preventDefault();
-              void pick(shown[0]);
-            }
-          }} />
-      )}
+    <div className="sticker-panel">
+      <input ref={input} value={query} onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search stickers" aria-label="Search stickers" disabled={!!empty}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && shown[0]) {
+            e.preventDefault();
+            void pick(shown[0]);
+          }
+        }} />
       <div className={`sticker-grid${busy ? " busy" : ""}`}>
         {!stickers && !failed && <span className="muted small">Loading…</span>}
         {!stickers && failed && <span className="error small">Couldn't load the stickers.</span>}

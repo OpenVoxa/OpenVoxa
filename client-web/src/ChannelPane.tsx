@@ -21,7 +21,7 @@ import { GifPicker, useGifsEnabled } from "./gifs";
 import { EmojiPicker, useEmojiShortcodes } from "./emoji";
 import { PREVIEWS_ENCRYPTED, useToggle } from "./settings";
 import { PlainAttachment, SealedAttachment, UploadTray, useUploads } from "./attachments";
-import { StickerMessage, StickerPicker, useStickers } from "./stickers";
+import { StickerMessage } from "./stickers";
 import { stickerIdOf, stickerToken } from "@core/stickers";
 
 function useSnapshot(view: ChannelView): ChannelSnapshot {
@@ -730,11 +730,6 @@ function Composer({ snap, call, uploads, canManageStickers, onSend, onEditLast }
   const closeEmoji = useCallback(() => setEmoji(false), []);
   const gifsEnabled = useGifsEnabled(call);
   const closeGifs = useCallback(() => setGifs(false), []);
-  const [stickers, setStickers] = useState(false);
-  const closeStickers = useCallback(() => setStickers(false), []);
-  // No button when there is nothing to pick and no way to add any.
-  const stickerList = useStickers();
-  const showStickers = canManageStickers || !stickerList || stickerList.stickers.length > 0;
   const ref = useRef<HTMLTextAreaElement>(null);
   const picker = useRef<HTMLInputElement>(null);
   const reason = composeBlocker(snap);
@@ -789,21 +784,23 @@ function Composer({ snap, call, uploads, canManageStickers, onSend, onEditLast }
     <div className="composer">
       {mentionPicker.list}
       {emojiCodes.list}
-      {emoji && !reason && <EmojiPicker onPick={insertEmoji} onClose={closeEmoji} />}
+      {emoji && !reason && (
+        <EmojiPicker onPick={insertEmoji} onClose={closeEmoji}
+          stickers={{
+            canManage: canManageStickers,
+            onPick: async (s) => {
+              // On its own straight away, like a GIF; typed text stays.
+              if (!(await onSend(stickerToken(s.id)))) throw new Error("Couldn't send the sticker.");
+              ref.current?.focus();
+            },
+          }} />
+      )}
       {gifs && !reason && (
         <GifPicker call={call} channelId={snap.channel.id} onClose={closeGifs}
           onPick={async (a) => {
             // Sent on its own straight away, like other chat apps; whatever
             // is typed stays in the box.
             if (!(await onSend("", [a]))) throw new Error("Couldn't send the GIF.");
-            ref.current?.focus();
-          }} />
-      )}
-      {stickers && !reason && (
-        <StickerPicker canManage={canManageStickers} onClose={closeStickers}
-          onPick={async (s) => {
-            // On its own straight away, like a GIF; typed text stays.
-            if (!(await onSend(stickerToken(s.id)))) throw new Error("Couldn't send the sticker.");
             ref.current?.focus();
           }} />
       )}
@@ -838,26 +835,15 @@ function Composer({ snap, call, uploads, canManageStickers, onSend, onEditLast }
           onMouseDown={(e) => e.stopPropagation()}
           onClick={() => {
             setEmoji(false);
-            setStickers(false);
             setGifs((g) => !g);
           }} title="Send a GIF" aria-expanded={gifs}>GIF</button>
-      )}
-      {showStickers && (
-        <button className={`secondary sticker-btn${stickers ? " on" : ""}`} disabled={!!reason}
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={() => {
-            setEmoji(false);
-            setGifs(false);
-            setStickers((v) => !v);
-          }} title="Send a sticker" aria-label="Stickers" aria-expanded={stickers}>🏷️</button>
       )}
       <button className={`secondary emoji-btn${emoji ? " on" : ""}`} disabled={!!reason}
         onMouseDown={(e) => e.stopPropagation()}
         onClick={() => {
           setGifs(false);
-          setStickers(false);
           setEmoji((v) => !v);
-        }} title="Emoji" aria-label="Emoji" aria-expanded={emoji}>😊</button>
+        }} title="Emoji and stickers" aria-label="Emoji and stickers" aria-expanded={emoji}>😊</button>
       <button className="primary" onClick={() => void send()} disabled={!canSend}
         title={uploading ? "Waiting for uploads to finish" : undefined}>Send</button>
     </div>
