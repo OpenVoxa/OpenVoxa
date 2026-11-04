@@ -415,6 +415,41 @@ unchanged):
   reload or crash, and when the app quits (stdin closes). WS1-WS7
   passed.
 
+### Receiving shares on demand
+
+Ryan, 2026-11-04: a share's sound played for everyone in the call the
+moment it started, wanted or not. Quick fix agreed before the voice
+channel view (next section):
+
+- **Nothing of a share is received until asked for.** The room joins
+  with `autoSubscribe: false`; microphones are subscribed explicitly
+  (`#subscribeWanted`, at join and on every TrackPublished). A share's
+  picture is received only while a tile shows it (`attachScreen` /
+  `detachScreen` count the elements), so viewers no longer download
+  shares they don't watch.
+- **Sound only after Listen**, per share, off for every new share.
+  Listen is in the share tile and as "Listen to Share" in the person
+  menu; it keeps playing after Back to Chat. The person's volume
+  slider applies to it as before. LS1-LS7 passed.
+
+### Voice channel view (to design)
+
+Ryan, 2026-11-04. The main area shows a voice channel as tiles, one per
+person with their avatar; a sharer's tile shows the share preview
+instead, with Hide (stop showing it), Listen and Fullscreen. Open
+questions, asked but not answered yet:
+
+- **Preview cost.** A live preview means everyone downloads the share.
+  Shares send one full-quality H.264 copy (simulcast off), so options:
+  live preview from a half-size simulcast layer (VP8, more upload and
+  CPU for the sharer), live preview at full quality (heavy with
+  several sharers), or a still frame refreshed every few seconds (not
+  live, needs its own encrypted channel).
+- **Avatars.** Not built (Planned section): letter circles until then,
+  or avatars first.
+- **When it shows.** Clicking a voice channel shows its tiles (with
+  Join), or only while in the call.
+
 ### Stay signed in
 
 Decided by Ryan, 2026-11-04, after ED5 (the desktop app signed him out

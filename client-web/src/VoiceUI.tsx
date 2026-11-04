@@ -251,8 +251,9 @@ export function PersonMenu({ voice, person, at, call, canServerMute, onClose }: 
       window.removeEventListener("keydown", esc);
     };
   }, [onClose]);
+  const share = voice.snapshot().screens.find((s) => s.participantId === person.id && s.hasAudio);
   const left = Math.min(at.x, window.innerWidth - 240);
-  const top = Math.min(at.y, window.innerHeight - (canServerMute ? 330 : 140));
+  const top = Math.min(at.y, window.innerHeight - (canServerMute ? 330 : 140) - (share ? 32 : 0));
   return (
     <div ref={ref} className="menu" style={{ left, top }} role="dialog" aria-label={`${person.name} volume`}>
       <strong>{person.name}</strong>
@@ -271,6 +272,13 @@ export function PersonMenu({ voice, person, at, call, canServerMute, onClose }: 
         <span>Mute for me</span>
       </label>
       <p className="muted small">Only on this device. Nobody else is told.</p>
+      {share && (
+        <label className="check">
+          <input type="checkbox" checked={share.listening}
+            onChange={(e) => voice.setShareListening(person.id, e.target.checked)} />
+          <span>Listen to Share</span>
+        </label>
+      )}
       {canServerMute && (
         <div className="menu-section">
           <strong className="small">Server Mute</strong>
@@ -681,6 +689,14 @@ function ScreenTile({ voice, share, stats, onClick }: {
       <figcaption>
         <span>{share.name}{share.isLocal ? " (you)" : ""}</span>
         {stats && <span className="muted small">{line}</span>}
+        {/* A share's sound is off until asked for, and stays on after
+            going back to chat (stop it here or in the person's menu). */}
+        {share.hasAudio && (
+          <button className={share.listening ? "primary" : "secondary"} aria-pressed={share.listening}
+            onClick={() => voice.setShareListening(share.participantId, !share.listening)}>
+            {share.listening ? "Stop Listening" : "Listen"}
+          </button>
+        )}
         <button className="secondary" onClick={fullscreen}>Fullscreen</button>
       </figcaption>
     </figure>
