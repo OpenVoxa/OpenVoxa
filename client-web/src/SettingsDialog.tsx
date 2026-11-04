@@ -35,6 +35,8 @@ export interface AccountActions {
   onNewKey: () => void;
   /** Resolves once the account is gone and this browser wiped; throws the server's refusal. */
   onDeleteAccount: (password: string) => Promise<void>;
+  /** Shared computer: back up, remove this device, erase this browser, sign out. */
+  onEraseAndLogout: () => void;
 }
 
 export function SettingsDialog({ tab: initialTab, session, call, deviceId, backup, busy, actions, voice, snap, loadVoice, onClose }: {
@@ -257,7 +259,8 @@ function AccountSettings({ session, call, deviceId, backup, busy, actions, onClo
         )}
       </section>
 
-      <DevicesSection call={call} deviceId={deviceId} />
+      <DevicesSection call={call} deviceId={deviceId} backup={backup} busy={busy}
+        onErase={leave(actions.onEraseAndLogout)} />
 
       <DeleteAccount username={session.username} onDelete={actions.onDeleteAccount} />
     </>
@@ -366,7 +369,13 @@ interface Device {
   last_seen_at: string;
 }
 
-function DevicesSection({ call, deviceId }: { call: ApiCall; deviceId: string }) {
+function DevicesSection({ call, deviceId, backup, busy, onErase }: {
+  call: ApiCall;
+  deviceId: string;
+  backup: BackupStatus | null;
+  busy: string | null;
+  onErase: () => void;
+}) {
   const [devices, setDevices] = useState<Device[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
@@ -399,6 +408,19 @@ function DevicesSection({ call, deviceId }: { call: ApiCall; deviceId: string })
     }
   }
 
+  function erase() {
+    const history = backup?.unlocked
+      ? "Your history is backed up first. Signing in here again sets this browser up as a new device, " +
+        "and your 12-word recovery key brings your history back."
+      : backup
+        ? "This browser isn't backing up (it doesn't have your recovery key), so encrypted history only " +
+          "this browser holds is lost."
+        : "You have no recovery key, so encrypted history only this browser holds is lost for good.";
+    if (!confirm("Sign out and erase this browser?\n\nFor a shared or borrowed computer. Your keys and " +
+      "message history are deleted from this browser, and it's removed from your devices.\n\n" + history)) return;
+    onErase();
+  }
+
   // This browser first, then the most recently used.
   const sorted = devices && [...devices].sort((a, b) =>
     Number(b.id === deviceId) - Number(a.id === deviceId) || b.last_seen_at.localeCompare(a.last_seen_at));
@@ -421,9 +443,13 @@ function DevicesSection({ call, deviceId }: { call: ApiCall; deviceId: string })
                   Added {new Date(d.created_at).toLocaleDateString()} · last used {new Date(d.last_seen_at).toLocaleString()}
                 </span>
               </span>
-              {d.id !== deviceId && (
+              {d.id !== deviceId ? (
                 <button className="danger" onClick={() => void remove(d)} disabled={removing !== null}>
                   {removing === d.id ? "Removing…" : "Remove"}
+                </button>
+              ) : (
+                <button className="danger" onClick={erase} disabled={!!busy || removing !== null}>
+                  Sign out and erase
                 </button>
               )}
             </li>
@@ -431,7 +457,10 @@ function DevicesSection({ call, deviceId }: { call: ApiCall; deviceId: string })
         </ul>
       )}
       {sorted?.some((d) => d.id === deviceId) && (
-        <p className="muted small">To remove this browser, log out: that backs up your history first.</p>
+        <p className="muted small">
+          On a shared computer, use <strong>Sign out and erase</strong>: it backs up your history, then removes
+          this browser and deletes everything it holds. A plain Log out keeps this browser set up for next time.
+        </p>
       )}
       {error && <p className="error" role="alert">{error}</p>}
     </section>

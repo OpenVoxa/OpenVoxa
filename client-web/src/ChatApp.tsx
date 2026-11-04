@@ -32,7 +32,7 @@ import { configureStickers, refreshStickers } from "./stickers";
 
 const LAST_CHANNEL = (userId: string) => `lastChannel.${userId}`;
 
-export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBackUpNow, onSetUpKey, onEnterKey, onNewKey, onDeleteAccount, onExpired }: {
+export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBackUpNow, onSetUpKey, onEnterKey, onNewKey, onDeleteAccount, onEraseAndLogout, onExpired }: {
   session: Session;
   manager: BackupManager;
   backup: BackupStatus | null;
@@ -44,6 +44,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   onEnterKey: () => void;
   onNewKey: () => void;
   onDeleteAccount: (chat: Chat, password: string) => Promise<void>;
+  onEraseAndLogout: (chat: Chat, deviceId: string) => void;
   onExpired: () => void;
 }) {
   const [chat, setChat] = useState<Chat | null>(null);
@@ -287,6 +288,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   const accountActions: AccountActions = {
     onBackUpNow, onSetUpKey, onEnterKey, onNewKey,
     onDeleteAccount: (password) => onDeleteAccount(chat, password),
+    onEraseAndLogout: () => onEraseAndLogout(chat, chat.session.status.deviceId),
   };
 
   const can = (p: string) => perms.includes(p) || perms.includes("administrator");

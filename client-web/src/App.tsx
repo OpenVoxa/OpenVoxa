@@ -6,11 +6,11 @@ import type { BackupStatus } from "@core/recovery";
 import { call, type Session } from "./api";
 import { loadSession, saveSession } from "./session";
 import { Login } from "./Login";
-import { BackupManager, markAskedForKey, wasAskedForKey } from "./backup";
+import { BackupManager, forgetAskedForKey, markAskedForKey, wasAskedForKey } from "./backup";
 import { RecoveryRestore, RecoverySetup } from "./Recovery";
 import { ChatApp } from "./ChatApp";
 import type { Chat } from "@core/chat";
-import { forgetIdentity } from "@core/index";
+import { eraseIdentity, forgetIdentity } from "@core/index";
 import { apiCall, cryptoSession, dropCryptoSession } from "./core";
 import { lockStorage, unlockOnRefresh } from "./unlock";
 
@@ -35,7 +35,7 @@ export function App() {
   if (!session) return <Login onSession={update} notice={note} />;
   return <Home key={session.user_id} session={session} justRegistered={justRegistered}
     initialNotice={note}
-    onLoggedOut={() => update(null)}
+    onLoggedOut={(message) => update(null, false, message)}
     onLocked={() => {
       // The refresh could not unlock storage (session ended, or this tab
       // predates encryption). End the session; the password unlocks.
@@ -55,7 +55,7 @@ function Home({ session, justRegistered, initialNotice, onLoggedOut, onLocked }:
   session: Session;
   justRegistered: boolean;
   initialNotice: string | null;
-  onLoggedOut: () => void;
+  onLoggedOut: (message?: string) => void;
   onLocked: () => void;
 }) {
   const [manager, setManager] = useState<BackupManager | null>(null);
@@ -164,6 +164,61 @@ function Home({ session, justRegistered, initialNotice, onLoggedOut, onLocked }:
   }
 
   /**
+   * Sign out and erase this browser (Settings, Devices): for a shared
+   * computer. Like logout, but the device goes too: the backup is
+   * uploaded first (if this browser can), the device is removed on the
+   * server so it leaves every encrypted channel at once rather than after
+   * 30 days, and this account's local database (keys, archive, keyring)
+   * and its "asked for a recovery key" flag are deleted. Per-browser
+   * preferences (colours, voice devices, notification switches) stay:
+   * they say nothing about the account. Signing in here again is a new
+   * device, which needs the recovery key for history.
+   *
+   * A failed backup or device removal does not stop the erase: the user
+   * asked for this browser to be emptied. They are told on the login
+   * page instead.
+   */
+  async function eraseAndLogout(chat: Chat, deviceId: string) {
+    if (!manager) return;
+    setBusy("Erasing…");
+    const problems: string[] = [];
+    const s = await manager.status().catch(() => null);
+    if (s?.unlocked) {
+      try {
+        await manager.uploadNow();
+      } catch (err) {
+        console.warn("backup before erase failed:", err);
+        problems.push("the last backup didn't upload");
+      }
+    }
+    manager.close();
+    chat.close();
+    try {
+      await call(`/api/v1/devices/${deviceId}`, { method: "DELETE", token: session.token });
+    } catch (err) {
+      console.warn("removing this device failed:", err);
+      problems.push("this browser is still listed in your devices (remove it in Settings from another device, " +
+        "or it expires after 30 days unused)");
+    }
+    try {
+      await eraseIdentity();
+    } catch (err) {
+      console.warn("could not erase this browser's data:", err);
+      problems.push("some data could not be erased; clear this site's data in the browser settings");
+    }
+    forgetAskedForKey(session.user_id);
+    dropCryptoSession(session.user_id);
+    try {
+      await call("/api/v1/auth/logout", { method: "POST", token: session.token });
+    } catch {
+      /* ignore */
+    }
+    onLoggedOut(problems.length
+      ? `Signed out and erased, but ${problems.join("; ")}.`
+      : "Signed out. This browser no longer holds anything from your account.");
+  }
+
+  /**
    * Delete the account (Settings, Account). The server erases it first;
    * only then is this browser wiped, so a refusal (wrong password, the
    * last-two-administrators rule) leaves everything as it was. There is
@@ -233,6 +288,7 @@ function Home({ session, justRegistered, initialNotice, onLoggedOut, onLocked }:
       onEnterKey={() => setPhase({ k: "restore" })}
       onNewKey={() => setPhase({ k: "setup", skippable: true, replacing: true, rotating: true })}
       onDeleteAccount={deleteAccount}
+      onEraseAndLogout={eraseAndLogout}
       onExpired={onLoggedOut}
     />
   );

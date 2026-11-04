@@ -191,10 +191,21 @@ export async function startSession(
   return { identity, groups: new Groups(mls, call, status.deviceId), status };
 }
 
-/** Destroy all local key material. Called on sign-out. */
+/**
+ * Destroy all local key material, keeping the keyring (see storage.wipe).
+ * Used on account deletion and by the debug page.
+ */
 export async function forgetIdentity(): Promise<void> {
   await storage.wipe();
   storage.lock();
+}
+
+/**
+ * Delete this account's whole local database, keyring included, for
+ * "Sign out and erase" on a shared computer (see storage.destroy).
+ */
+export async function eraseIdentity(): Promise<void> {
+  await storage.destroy();
 }
 
 export interface SelfTestResult {

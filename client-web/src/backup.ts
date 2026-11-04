@@ -103,6 +103,15 @@ export function wasAskedForKey(userId: string): boolean {
   }
 }
 
+/** Drop the flag above (Sign out and erase leaves no trace of the account). */
+export function forgetAskedForKey(userId: string): void {
+  try {
+    localStorage.removeItem(ASKED(userId));
+  } catch {
+    /* storage unavailable: nothing was kept */
+  }
+}
+
 export function markAskedForKey(userId: string): void {
   try {
     localStorage.setItem(ASKED(userId), "1");
