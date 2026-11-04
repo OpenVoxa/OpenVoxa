@@ -1901,6 +1901,29 @@ to pick their own colours later, so every colour stays a variable.
 
 ## Open items
 
+- [ ] Username colours by group (Ryan, 2026-11-04). A name is drawn in
+      the colour of the account's highest group (highest `position`)
+      that has one. Defaults: Administrator orange (the #D96932 accent,
+      kept for now; change it if names look like buttons), Moderator
+      magenta, Member cyan, Everyone (guests, accounts in no other
+      group) none, i.e. the normal text colour (white in the default
+      palette). Each group's colour is editable by whoever can manage
+      groups (Server settings > Groups), so custom groups get colours
+      too; a server-wide on/off switch. Server data, so everyone on the
+      server sees the same colours (unlike Appearance, which is per
+      browser). Likely a nullable `colour` column on `perm_groups` sent
+      with the group list. Decided with Ryan, 2026-11-04:
+      - Coloured everywhere a name appears: message authors, member
+        list, @mention chips, voice participants.
+      - Minimum contrast check against the background when a colour is
+        set. Measured on #333333: orange 3.6:1, magenta (#FF00FF)
+        4.0:1, cyan 10.1:1, white 12.6:1. Proposed bar: 3:1 (the WCAG
+        level for large or bold text), with names drawn bold. The
+        stricter 4.5:1 would reject the default orange and magenta.
+        Confirm with Ryan when building.
+      - On by default; each user can turn them off for themselves in
+        Settings > Appearance (per browser), which shows plain text
+        colour instead.
 - [x] Emoji (Ryan, 2026-11-03; done 2026-11-04, `client-web/src/emoji.tsx`).
       A picker in the composer (categories, search, recently used, skin
       tone, all per browser) plus `:name:` shortcodes (GitHub's set):

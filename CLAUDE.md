@@ -275,6 +275,7 @@ period in `server_settings`, migration 0017).
   now also destroys the key).
 - @mentions and Appearance: done and verified (M1-M6, A1).
 - Next (Ryan to choose): a server browser (decisions.md Open items);
+  username colours by group (Open items);
   local archive retention sweep; real force-PTT via LiveKit
   `MutePublishedTrack`; bitrate ceiling; zxcvbn (discuss first);
   Electron shell.
