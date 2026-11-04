@@ -245,6 +245,68 @@ Decided with Ryan, 2026-11-04, instead of enforcing force-PTT.
   refusal, and that leaving or the browser's Stop sharing still release
   the capture).
 
+### Server browser and desktop shell (proposed, not decided)
+
+Discussed with Ryan, 2026-11-04; he is mulling it over. Nothing is built.
+
+- **Ryan's idea:** a pane of server icons down the left of the window,
+  like Discord. Each icon is a bookmark to one OpenVoxa server
+  (`openvoxa.ryanindustries.net`, `anotherserver.domain.com`, ...), so
+  people can use any number of independent hosts without a central
+  platform or having to remember every address. Each server stays a
+  separate island: accounts, messages and keys never carry over between
+  servers. No federation; the servers never talk to each other.
+- **Why decide it before Electron:** the shell and the server browser
+  are one question (where the desktop app gets the web app from), and
+  choosing wrongly first would mean redoing logins and storage later.
+  Building Electron does not wait for the rest of the app: it loads the
+  same web client, so features arrive in it for free, and
+  Electron-only problems (screen share picker, E2EE worker,
+  permissions, storage) are cheaper to find early.
+- **Recommended approach: each server in its own view, loaded from that
+  server.** The desktop app draws the icon pane itself; clicking an icon
+  shows that server's own web app, from that server's address, in its
+  own isolated view (like a browser tab built into the app). Same
+  origin as today, so no CORS or login changes; each server's storage
+  (session, device keys, archive) is separated by the browser engine;
+  each server serves the client version that matches it, so no version
+  skew. Rejected: one client bundled into the app talking to every
+  server's API (CORS, auth rework, one client compatible with every
+  server version).
+- **Security (must be built in from day one):** bookmarking a server
+  means running its code inside the desktop app, and unlike a browser
+  tab an Electron page can be given access to the computer. Each
+  server's view gets its own storage partition, the sandbox,
+  `contextIsolation` on and `nodeIntegration` off, so it can't touch
+  files, the computer or other servers' views. The only bridge is a
+  tiny preload API whose messages the shell checks by sender: unread and
+  mention counts for the badge, "joined / left voice", push-to-talk key
+  events.
+- **Voice across servers:** in a call on one server at a time; joining
+  voice on server B makes the shell tell server A to leave. The global
+  push-to-talk key goes to the server with the call. That server always
+  stays loaded, or switching views would drop the call.
+- **Background servers:** recommended: they stay connected (messages
+  arrive live, badges and in-page sounds keep working, switching is
+  instant, like Discord), with perhaps an unload after a long idle
+  (say a day) until clicked. The alternative is connecting only the
+  server on screen: less memory, but no badges, and a catch-up on
+  click (nothing is lost; servers store messages). When the app is
+  closed nothing runs either way.
+- **Also needed:** a server name and icon set by the administrator
+  (Server settings; the bookmark falls back to the address); badges
+  need the web client to report counts to the shell (doing nothing in
+  a plain browser); adding a server by pasting an HTTPS address, later
+  an `openvoxa://` invite link; bookmarks stored only on the device,
+  with export / import.
+- **Open questions for Ryan:** the approach above; background servers
+  stay connected or pause; the pane desktop-only (browser users keep
+  one server per tab) or something for browser users too.
+- **First Electron step once agreed:** the shell with the server pane
+  and the security setup, then voice, screen share (Electron shows no
+  picker; we draw our own) and E2EE tested inside it. Tray,
+  notifications, auto-update and installers later.
+
 ## Architecture
 
 Five components, three of them off the shelf:
@@ -2123,7 +2185,10 @@ to pick their own colours later, so every colour stays a variable.
       account and device keys, and the client just keeps several sign-ins
       side by side. Worth keeping in mind now so per-server state in
       client-core (storage, keys, settings) is keyed by server, not
-      global.
+      global. 2026-11-04: proposed design (one isolated view per server,
+      loaded from that server, which makes per-server state automatic) in
+      Feature decisions, "Server browser and desktop shell"; Ryan is
+      thinking it over.
 
 - [ ] Password strength estimation with zxcvbn (server and client), on top
       of the rules. Ryan asked to discuss later (2026-11-01).
