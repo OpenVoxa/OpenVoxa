@@ -159,18 +159,12 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 
 ## Current state (rewrite every session)
 
-_2026-11-04._ **Desktop step 3, per-app share sound: done.** Whole
-screens: `restrictOwnAudio` keeps OpenVoxa out (`369814d`). Windows: the
-Rust helper `client-desktop/audio-helper/` (process loopback, PCM on
-stdout, `build-windows.sh` cross-builds; `package:win` runs it) feeds
-the page through `viewPreload.ts`, the first server-view preload
-(`f1359ec`). Sound is chosen only in the picker (`28ef9e5`). Shares are
-received on demand: picture while a tile shows it, sound after Listen
-(`4c731b0`). Tests RO1, RS, WH, WS, ST, LS all passed. Ryan's desktop
-app runs build `-e`. Gotchas: decisions.md Implementation notes
-("Windows process loopback").
+_2026-11-04._ **Per-app share sound done** (decisions.md "Per-app
+share sound", "Receiving shares on demand"; Implementation notes
+"Windows process loopback"). Rust helper in `client-desktop/audio-helper/`
+(`package:win` cross-builds it), fed to pages by `viewPreload.ts`. Shares
+arrive silent until Listen. Ryan's desktop app runs build `-e`.
 
-- **Stay signed in** on login, ticked by default (SS1-SS4 passed).
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts: quillbrook (Ryan), staff, secondadmin,
   testuser. Voice channels: voice-general, vip-voice (admins only).
@@ -183,12 +177,8 @@ app runs build `-e`. Gotchas: decisions.md Implementation notes
 - Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI).
 - Known gaps (decisions.md Open items): K1 recovery flows 2-5 deferred;
   no @everyone/@group; no per-group share limits.
-- **Next: the voice channel view** (decisions.md Feature decisions,
-  "Voice channel view (to design)"): tiles per person, a sharer's tile
-  shows the share with Hide / Listen / Fullscreen. Three open
-  questions to settle with Ryan first: preview cost (simulcast layer,
-  full copy, or refreshed still), letter circles vs avatars first, and
-  whether clicking a voice channel shows it before joining.
+- **Next: the voice channel view** (decisions.md "Voice channel view
+  (to design)"): settle its three open questions with Ryan first.
 - Backlog after that: touchscreen push-to-talk button (Open items);
   Ryan's list (decisions.md "Planned: server icons, updates, bug
   reports, channel menus, avatars"): discuss each before building.
