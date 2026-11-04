@@ -2013,7 +2013,12 @@ to pick their own colours later, so every colour stays a variable.
 - [ ] Confirm whether screen sharing should have its own `min_role_stream`
       rather than reusing the voice publish permission
 - [ ] Server-side bitrate ceiling so one user cannot saturate the
-      operator's uplink
+      operator's uplink. Next item (Ryan, 2026-11-04). The SFU sends one
+      copy per viewer, so upload ~ bitrate x viewers (a 20 Mbps 4K share
+      to 5 viewers ~ 100 Mbps). Sketch: an admin limit (server_settings,
+      maybe per group), the client hiding presets above it, and real
+      enforcement from the server through LiveKit's API (shared plumbing
+      with real force-PTT, below). Design to be agreed with Ryan.
 - [ ] Force-PTT is advisory: the server tells the client and the client
       complies. Real enforcement means calling LiveKit's
       `MutePublishedTrack` API.
