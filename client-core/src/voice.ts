@@ -69,6 +69,10 @@ export interface ScreenShare {
   readonly participantId: string;
   readonly name: string;
   readonly isLocal: boolean;
+  /** The share has sound (someone else's: yours is never played back). */
+  readonly hasAudio: boolean;
+  /** You chose Listen: its sound plays. Off for every new share. */
+  readonly listening: boolean;
 }
 
 export interface VoiceSnapshot {
@@ -325,6 +329,14 @@ export class VoiceClient {
   #lastEnd: string | null = null;
   #notices: string[] = [];
   #audioEls = new Map<string, HTMLMediaElement>();
+  /**
+   * Nothing of a share is received until asked for (autoSubscribe off):
+   * its picture while a tile shows it (attachScreen), its sound only
+   * after Listen. Otherwise every share's sound played for everyone in
+   * the call, and everyone downloaded every share.
+   */
+  #screenEls = new Map<string, Set<HTMLVideoElement>>();
+  #listening = new Set<string>(); // participant identities
   #stats = new Map<string, { bytes: number; frames: number; at: number }>();
 
   constructor(session: Session, opts: VoiceOptions) {
@@ -351,8 +363,11 @@ export class VoiceClient {
           const local = p === room.localParticipant;
           const audioOn = [...p.audioTrackPublications.values()]
             .some((pub) => pub.source === Track.Source.Microphone && pub.track && !pub.isMuted);
+          // Remote shares are listed whether or not they are received.
           const vids = [...p.videoTrackPublications.values()]
-            .filter((pub) => pub.source === Track.Source.ScreenShare && pub.track);
+            .filter((pub) => pub.source === Track.Source.ScreenShare && (!local || pub.track));
+          const shareAudio = !local && [...p.audioTrackPublications.values()]
+            .some((pub) => pub.source === Track.Source.ScreenShareAudio);
           people.push({
             id: p.identity,
             name: p.name || p.identity,
@@ -366,7 +381,10 @@ export class VoiceClient {
             serverMuted: (local ? this.#canPublish : !!p.permissions?.canPublish) && micTakenAway(p),
           });
           for (const pub of vids) {
-            screens.push({ id: pub.trackSid, participantId: p.identity, name: p.name || p.identity, isLocal: local });
+            screens.push({
+              id: pub.trackSid, participantId: p.identity, name: p.name || p.identity, isLocal: local,
+              hasAudio: shareAudio, listening: shareAudio && this.#listening.has(p.identity),
+            });
           }
         }
       }
@@ -518,7 +536,9 @@ export class VoiceClient {
       await room.setE2EEEnabled(true);
       this.#wire(room, pinned);
 
-      await room.connect(data.url, data.token);
+      // Microphones are subscribed by #subscribeWanted, shares on demand.
+      await room.connect(data.url, data.token, { autoSubscribe: false });
+      this.#subscribeWanted(room);
       this.#canPublish = data.can_publish;
       this.#forcePTT = data.force_ptt;
       this.#state = "connected";
@@ -667,6 +687,8 @@ export class VoiceClient {
     this.#mic = null;
     for (const el of this.#audioEls.values()) el.remove();
     this.#audioEls.clear();
+    this.#screenEls.clear();
+    this.#listening.clear();
     this.#stats.clear();
     this.#decryptErrors.clear();
     this.#worker?.terminate(); // LiveKit leaves the worker to its owner
@@ -750,8 +772,16 @@ export class VoiceClient {
         void this.#restoreShareAudio(room);
         this.#changed();
       })
-      .on(RoomEvent.TrackPublished, this.#changed)
-      .on(RoomEvent.TrackUnpublished, this.#changed)
+      .on(RoomEvent.TrackPublished, () => {
+        this.#subscribeWanted(room);
+        this.#changed();
+      })
+      .on(RoomEvent.TrackUnpublished, (_pub: RemoteTrackPublication, p: RemoteParticipant) => {
+        // Listen lasts for one share: a new share starts silent again.
+        const stillSharing = [...p.trackPublications.values()].some((x) => x.source === Track.Source.ScreenShare);
+        if (!stillSharing) this.#listening.delete(p.identity);
+        this.#changed();
+      })
       .on(RoomEvent.AudioPlaybackStatusChanged, () => {
         this.#audioBlocked = !room.canPlaybackAudio;
         this.#changed();
@@ -785,12 +815,20 @@ export class VoiceClient {
           document.body.appendChild(el);
           this.#audioEls.set(track.sid ?? pub.trackSid, el);
           this.#applyVolume(p);
-        } else if (track.source === Track.Source.ScreenShare && pinned) {
-          // With adaptiveStream off nothing picks a layer: ask for the top.
-          try {
-            pub.setVideoQuality(VideoQuality.HIGH);
-          } catch {
-            /* not simulcast */
+        } else if (track.source === Track.Source.ScreenShare) {
+          // Tiles that asked before the picture arrived get it now.
+          for (const el of this.#screenEls.get(pub.trackSid) ?? []) {
+            el.muted = true;
+            el.playsInline = true;
+            track.attach(el);
+          }
+          if (pinned) {
+            // With adaptiveStream off nothing picks a layer: ask for the top.
+            try {
+              pub.setVideoQuality(VideoQuality.HIGH);
+            } catch {
+              /* not simulcast */
+            }
           }
         }
         this.#changed();
@@ -1125,7 +1163,19 @@ export class VoiceClient {
   }
 
   /** Show a screen share in a video element. Your own is muted locally. */
+  /**
+   * Shows a share in a video element. Someone else's share is received
+   * only while at least one element shows it.
+   */
   attachScreen(id: string, el: HTMLVideoElement): void {
+    let els = this.#screenEls.get(id);
+    if (!els) this.#screenEls.set(id, (els = new Set()));
+    els.add(el);
+    const remote = this.#remoteScreenPub(id);
+    if (remote && !remote.isSubscribed) {
+      remote.setSubscribed(true); // attached in TrackSubscribed
+      return;
+    }
     const t = this.#screenTrack(id);
     if (!t) return;
     el.muted = true;
@@ -1135,6 +1185,46 @@ export class VoiceClient {
 
   detachScreen(id: string, el: HTMLVideoElement): void {
     this.#screenTrack(id)?.detach(el);
+    const els = this.#screenEls.get(id);
+    els?.delete(el);
+    if (els && els.size === 0) {
+      this.#screenEls.delete(id);
+      this.#remoteScreenPub(id)?.setSubscribed(false);
+    }
+  }
+
+  /** Plays or silences someone's share sound (Listen). */
+  setShareListening(participantId: string, on: boolean): void {
+    if (on) this.#listening.add(participantId);
+    else this.#listening.delete(participantId);
+    if (this.#room) this.#subscribeWanted(this.#room);
+    this.#changed();
+  }
+
+  #remoteScreenPub(id: string): RemoteTrackPublication | undefined {
+    for (const p of this.#room?.remoteParticipants.values() ?? []) {
+      const pub = p.trackPublications.get(id);
+      if (pub && pub.source === Track.Source.ScreenShare) return pub;
+    }
+    return undefined;
+  }
+
+  /**
+   * Subscribes to what should be playing: every microphone, and the share
+   * sound of people you chose to listen to. Pictures are handled by
+   * attachScreen. Safe to call any time.
+   */
+  #subscribeWanted(room: Room): void {
+    for (const p of room.remoteParticipants.values()) {
+      for (const pub of p.trackPublications.values()) {
+        let want: boolean | null = null;
+        if (pub.source === Track.Source.Microphone) want = true;
+        else if (pub.source === Track.Source.ScreenShareAudio) want = this.#listening.has(p.identity);
+        else if (pub.source === Track.Source.ScreenShare) want = this.#screenEls.has(pub.trackSid);
+        else if (pub.kind === Track.Kind.Audio) want = true; // unknown audio: as before
+        if (want !== null && pub.isSubscribed !== want) pub.setSubscribed(want);
+      }
+    }
   }
 
   /**
