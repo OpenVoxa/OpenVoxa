@@ -153,11 +153,11 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 ## Current state (rewrite every session)
 
 _2026-11-04._ Step 13 (web client M1-M5) and everything since are done;
-latest: **custom sounds, stages 1 and 2** (`sounds.ts`,
-`SoundSettings.tsx`): per-event sounds, message sound with a per-channel
-cooldown, "Mute Sounds" bell per channel, and `Chat.setLooking` (a
-background tab leaves the open channel unread). Verified CS1-CS10,
-MS1-MS9, MC1-MC9. Details: decisions.md Feature decisions "Custom sounds".
+latest: **custom sounds** (`sounds.ts`, `SoundSettings.tsx`; CS, MS, MC
+tests) and now **sounds follow the Voice Speaker** (`setSinkId`; hidden
+`<audio>` on Firefox) plus **Show My Devices** in Settings > Voice
+(browsers hide device names until the mic is allowed). Verified
+SO0a-SO0c, SO1-SO7. Details: decisions.md Feature decisions "Custom sounds".
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts: tuckilufigus (Ryan), staff, openvoxaadmin,
@@ -170,11 +170,8 @@ MS1-MS9, MC1-MC9. Details: decisions.md Feature decisions "Custom sounds".
   Ryan is the only user (port 8443).
 - Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI).
 - Known gaps (decisions.md Open items): K1 recovery flows 2-5 deferred;
-  no @everyone/@group; no per-group share limits; sounds ignore the
-  Speaker picked in Voice (`AudioContext.setSinkId` could fix it).
-- **Next, in order:** (1) sounds follow the Voice Speaker
-  (`AudioContext.setSinkId` in `sounds.ts`; the pick is
-  `VoiceClient.outputDevice`, `voice.ts`). (2) zxcvbn password strength
-  (decisions.md Open items; discuss with Ryan first). Later: server
+  no @everyone/@group; no per-group share limits.
+- **Next:** zxcvbn password strength (decisions.md Open items; discuss
+  with Ryan first: server and client, how strict, how it's shown). Later: server
   browser + Electron shell ("Server browser and desktop shell", three
   open questions), per-user upload test in the share dialog.
