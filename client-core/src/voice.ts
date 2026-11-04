@@ -30,6 +30,7 @@ import {
   createLocalAudioTrack,
   createLocalScreenTracks,
   isE2EESupported,
+  type AudioCaptureOptions,
   type LocalAudioTrack,
   type LocalTrack,
   type Participant,
@@ -143,6 +144,14 @@ function micTakenAway(p: Participant): boolean {
 
 const SHARE_BLOCKED =
   "Screen sharing is blocked until you rejoin the call: your last share was above this server's quality limit.";
+
+// A share's sound leaves out this page's own sound (the call's voices),
+// so the others never hear themselves back. In the desktop app on
+// Windows this keeps the whole app out of the "all system sound"
+// capture (RO1, decisions.md "Per-app share sound", option C).
+// Browsers that don't know restrictOwnAudio ignore it. Not yet in
+// TypeScript's or LiveKit's types, hence the cast.
+const SHARE_AUDIO = { restrictOwnAudio: true } as AudioCaptureOptions;
 
 export const SHARE_PRESETS: readonly { label: string; width: number; height: number; fps: number; kbps: number }[] = [
   { label: "720p 30fps", width: 1280, height: 720, fps: 30, kbps: 2500 },
@@ -973,7 +982,7 @@ export class VoiceClient {
     }
 
     const tracks = await createLocalScreenTracks({
-      audio: s.audio,
+      audio: s.audio ? SHARE_AUDIO : false,
       resolution: { width: s.width, height: s.height, frameRate: s.fps },
     });
     if (this.#room !== room) {
