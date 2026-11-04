@@ -292,6 +292,7 @@ const GLOBAL_EVENTS = new Set([
   "user_purged", "access_changed", "channel_changed", "channel_deleted",
   "perms_changed", "channel_activity", "voice_changed", "reports_changed",
   "mention", "stickers_changed", "names_changed",
+  "archive_message_gone", "archive_channel_expired",
 ]);
 
 const EVENT_RETRY_MS = 5000;
@@ -515,7 +516,24 @@ export class Chat {
     return removed;
   }
 
-  /** Coalesce a burst of account deletions into one archive check. */
+  /**
+   * Delete this device's copy of one message the server deleted, if it
+   * has one, and refresh the backup. The open channel's view may already
+   * have deleted it (message_deleted); then there is nothing to do.
+   */
+  async #forget(messageId: string): Promise<void> {
+    try {
+      if ((await storage.getPlaintext(messageId)) === undefined) return;
+      await storage.deletePlaintext(messageId);
+      this.#opts.onArchived?.();
+    } catch (err) {
+      // The next start's archive check catches it.
+      console.warn("could not delete an archived message:", err);
+    }
+  }
+
+  /** Coalesce a burst of deletions (accounts, retention sweeps, channels)
+   * into one archive check. */
   #pruneSoon(): void {
     clearTimeout(this.#pruneTimer);
     this.#pruneTimer = setTimeout(() => void this.pruneArchive(), PRUNE_DELAY_MS);
@@ -707,8 +725,22 @@ export class Chat {
       case "names_changed":
         this.#emit({ type: "names_changed" });
         break;
-      case "channel_changed":
+      case "archive_message_gone":
+        // A message deleted in any encrypted channel this account can see.
+        void this.#forget(frame.message_id!);
+        break;
+      case "archive_channel_expired":
+        // Retention removed messages that may not be loaded anywhere.
+        this.#pruneSoon();
+        break;
       case "channel_deleted":
+        // Its messages went with it.
+        this.#pruneSoon();
+        this.#view?.refreshMembers();
+        this.refreshChannels().catch(() => {});
+        this.#refreshVoiceSoon();
+        break;
+      case "channel_changed":
         this.#view?.refreshMembers();
         this.refreshChannels().catch(() => {});
         this.#refreshVoiceSoon();

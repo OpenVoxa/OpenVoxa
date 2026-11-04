@@ -40,6 +40,25 @@ type messageDeletedEvent struct {
 	MessageID string `json:"message_id"`
 }
 
+// archiveEvent tells every device that may keep a local plaintext copy
+// of an encrypted channel's messages that some of them are gone, so it
+// can delete its copies while the app stays open, not only at the next
+// start (Chat.pruneArchive in client-core). Types:
+//
+//   - "archive_message_gone": one message, by MessageID.
+//   - "archive_channel_expired": a retention sweep removed messages
+//     before Before; the client asks archive-check which ids went.
+//
+// These are separate from message_deleted and channel_purged because
+// emitUsers reaches every socket of an account, channel sockets
+// included, and the open channel's view must not apply a deletion twice.
+type archiveEvent struct {
+	Type      string     `json:"type"`
+	ChannelID string     `json:"channel_id"`
+	MessageID string     `json:"message_id,omitempty"`
+	Before    *time.Time `json:"before,omitempty"`
+}
+
 type channelChangedEvent struct {
 	Type      string `json:"type"`
 	ChannelID string `json:"channel_id"`
@@ -117,6 +136,11 @@ func (a *API) NotifyChannelPurged(channelID string, before time.Time) {
 		ChannelID: channelID,
 		Before:    before,
 	})
+	a.notifyArchives(channelID, archiveEvent{
+		Type:      "archive_channel_expired",
+		ChannelID: channelID,
+		Before:    &before,
+	})
 }
 
 // NotifyMessageDeleted reports a single message removal.
@@ -126,6 +150,42 @@ func (a *API) NotifyMessageDeleted(channelID, messageID string) {
 		ChannelID: channelID,
 		MessageID: messageID,
 	})
+	a.notifyArchives(channelID, archiveEvent{
+		Type:      "archive_message_gone",
+		ChannelID: channelID,
+		MessageID: messageID,
+	})
+}
+
+// notifyArchives sends an archiveEvent to every connected account that may
+// view the channel, if the channel is encrypted: plaintext channels have
+// no local archive. Viewers only, as with channel_activity, so outsiders
+// learn nothing about a hidden channel. Someone who has since lost access
+// still holds old copies; their next start's archive-check removes them.
+// Runs in the background so a slow query never delays the deletion.
+func (a *API) notifyArchives(channelID string, ev archiveEvent) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var encrypted bool
+		err := a.pool.QueryRow(ctx,
+			`SELECT encrypted FROM channels WHERE id = $1`, channelID).Scan(&encrypted)
+		if err != nil {
+			// A channel deleted meanwhile is covered by channel_deleted.
+			slog.Debug("checking channel for archive event", "err", err, "channel_id", channelID)
+			return
+		}
+		if !encrypted {
+			return
+		}
+		viewers, err := a.channelViewers(ctx, channelID)
+		if err != nil {
+			slog.Warn("listing channel viewers for archive event", "err", err, "channel_id", channelID)
+			return
+		}
+		a.emitUsers(viewers, ev)
+	}()
 }
 
 // NotifyChannelChanged tells clients a channel's settings moved, so they
