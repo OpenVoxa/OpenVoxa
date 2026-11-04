@@ -15,7 +15,6 @@ import type {
 import type { ApiCall } from "@core/identity";
 import { Modal } from "./ChannelDialogs";
 import { localStore } from "./core";
-import { setToggle, useToggle, VOICE_TONES } from "./settings";
 import { ColouredName } from "./names";
 import { PRESETS, presetAllowed, type ShareLimit } from "./shareLimit";
 
@@ -495,7 +494,6 @@ export function VoiceSettings({ voice, snap }: {
   const [binding, setBinding] = useState(false);
   const [pin, setPin] = useState(voice.pinQuality);
   const [error, setError] = useState<string | null>(null);
-  const tones = useToggle(VOICE_TONES);
 
   useEffect(() => {
     voice.listDevices().then(setDevices).catch((err) => setError(String(err?.message ?? err)));
@@ -578,13 +576,6 @@ export function VoiceSettings({ voice, snap }: {
           <span>
             Always watch screen shares at full quality
             <span className="muted small block">Otherwise quality follows the size of the video on screen. Applies next time you join.</span>
-          </span>
-        </label>
-        <label className="check">
-          <input type="checkbox" checked={tones} onChange={(e) => setToggle(VOICE_TONES, e.target.checked)} />
-          <span>
-            Join and leave sounds
-            <span className="muted small block">A short tone when you or someone else joins or leaves your call.</span>
           </span>
         </label>
 

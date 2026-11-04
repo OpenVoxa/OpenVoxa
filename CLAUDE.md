@@ -153,14 +153,14 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 ## Current state (rewrite every session)
 
 _2026-11-04._ Step 13 (web client M1-M5) and everything since are done;
-latest: **server mute** (`voicemute.go`, migration 0028, switch
-`server_mute`): a moderator takes away someone's mic and screen share
-audio in every voice channel, until unmuted or 10 min / 1 h / 1 day;
-enforced through LiveKit publish sources (join token + live
-`UpdateParticipant`). Force-PTT closed as advisory by design. Details,
-reasons and test IDs (SM1-SM10): decisions.md Feature decisions
-"Server mute"; LiveKit gotcha (`stopLocalTrackOnUnpublish`) in
-Implementation notes.
+latest: **custom sounds, stage 1** (`sounds.ts`, `SoundSettings.tsx`,
+Settings > Sounds): six events (join, leave, stream start / end,
+mention, message), each with on/off, a picker over Kenney's CC0
+Interface Sounds (`client-web/public/sounds/kenney/`) plus "Classic
+tone", the user's own file (browser only, 1 MB / 5 s), reset and
+volume. Defaults are Ryan's picks. Verified CS1-CS10. Details:
+decisions.md Feature decisions "Custom sounds". Before that: server
+mute (SM1-SM10).
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts: quillbrook (Ryan), staff, secondadmin,
@@ -173,12 +173,10 @@ Implementation notes.
   Ryan is the only user (port 8443).
 - Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI).
 - Known gaps: K1 recovery flows 2-5 deferred; no @everyone/@group; no
-  per-group share limits. The debug page (`/debug/`, chat.html) was
-  deleted 2026-11-04; the web client is the only client.
-- **Next: Ryan to choose.** He is mulling over the server browser +
-  Electron shell design (decisions.md Feature decisions, "Server browser
-  and desktop shell": one isolated view per server; three open
-  questions), and custom sounds (Feature decisions, "Custom sounds":
-  mostly agreed, Ryan uploads his own set as the server default; three
-  open points). Other candidates: a per-user upload test in the share
-  dialog; zxcvbn (discuss first).
+  per-group share limits; sounds ignore the Speaker picked in Voice.
+- **Next: custom sounds stage 2** (agreed, ready to build): the message
+  sound (once per unread channel, quiet until read) and "Mute sounds"
+  per channel (browser only; mentions still play). Then Ryan to choose:
+  server browser + Electron shell (decisions.md "Server browser and
+  desktop shell", three open questions), a per-user upload test in the
+  share dialog, zxcvbn (discuss first).

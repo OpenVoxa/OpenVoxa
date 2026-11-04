@@ -307,40 +307,47 @@ Discussed with Ryan, 2026-11-04; he is mulling it over. Nothing is built.
   picker; we draw our own) and E2EE tested inside it. Tray,
   notifications, auto-update and installers later.
 
-### Custom sounds (proposed, mostly agreed)
+### Custom sounds
 
-Discussed with Ryan, 2026-11-04. Nothing is built. Today `tones.ts`
-synthesises join, leave and mention beeps (WebAudio, no files) behind
-two toggles in Settings.
+Discussed with Ryan, 2026-11-04. Stage 1 built and verified the same day
+(CS1-CS10); stage 2 (message sound, per-channel mute) is next.
 
-- **Six sounds:** join (someone joins your call); leave (leaves or
-  disconnects, one sound); message (a channel you're not viewing gets a
-  new message); stream start and stream end (someone in your call
-  starts or stops screen sharing); mention.
-- **Three layers, first one set wins** (agreed): the user's own choice
-  (Settings > Sounds, in the browser only, per device); the server's
-  default set (uploaded by an administrator in Server settings > Sounds,
-  stored as server blobs); the built-in sounds.
-- **Built-in sounds stay the synthesised tones** (new ones for message
-  and stream start / end), not files. Ryan's sounds are royalty-free
-  downloads, and royalty-free licences often forbid redistributing the
-  raw files, so they must not go in the public repository. They become
-  his server's default set, uploaded through the browser; nothing has to
-  be copied to Docker.
-- **Message sound** (Ryan): plays once when a channel you aren't viewing
-  gets a new message, then stays quiet for that channel until you've
-  read it.
-- **Per-channel mute** (Ryan): "Mute sounds" on any channel, for every
-  user. Proposed: mentions still play in a muted channel (as Discord).
-- **Per sound, for each user:** play (preview), upload, reset to the
-  server default, on / off, volume. The existing two toggles fold into
-  this.
-- **Limits (proposed):** MP3, OGG or WAV, about 1 MB and a few seconds at
-  most, checked by both client and server.
-- **Open:** who manages the server set (administrator only, or a new
-  switch like manage_stickers); mentions in a muted channel; whether the
-  per-channel mute and the user's own sounds should sync across devices
-  (server-side, per account) rather than stay in the browser.
+- **Six sounds:** join (you or someone joins your call); leave (leaves or
+  drops out, one sound); stream start and stream end (anyone in your
+  call, you included, starts or stops screen sharing; leaving mid-share
+  plays only leave); mention (unless you're looking at that channel);
+  message (a channel you're not viewing gets a new message; stage 2).
+- **Where sounds come from:** Kenney's Interface Sounds pack (100 OGG
+  files, CC0, unchanged in `client-web/public/sounds/kenney/`, served at
+  `/sounds/kenney/` from the embedded bundle; licence note in
+  `sounds/README.md`), plus the old WebAudio beeps as "Classic tone".
+  Rejected: Ryan's own Pixabay downloads. The Pixabay licence forbids
+  distributing files "on a Standalone basis", and a public repository
+  hands out the raw files, so it was a grey area; CC0 has none. Also
+  dropped: an administrator-uploaded server sound set (Ryan: the server
+  ships its defaults, users swap in their own).
+- **Defaults** (Ryan's picks by ear): Join Confirmation 1, Leave
+  Question 4, Stream Start Maximize 6, Stream End Minimize 6, Mention
+  Confirmation 4, Message Classic tone. Volume 60%.
+- **Per event, per browser** (Settings > Sounds, `SoundSettings.tsx`,
+  `sounds.ts`): on / off, a picker (Kenney grouped by name, Classic, your
+  file), Play, Choose file, Reset, volume. Picking or releasing the
+  slider plays it. The old "Join and leave sounds" and "Sound when
+  someone mentions you" toggles folded in (their old values still
+  apply). Nothing syncs across devices (Ryan: browser only).
+- **Your own files:** MP3, OGG or WAV, up to 1 MB and 5 seconds, checked
+  in the browser (there's no upload). Kept in their own unencrypted
+  IndexedDB database, `openvoxa-sounds`, not the account database: a
+  sound is a preference like the theme, so "Sign out and erase" leaves
+  it, as it leaves the theme.
+- **Never silent by accident:** a sound that won't load or decode (a
+  browser without Ogg Vorbis, a missing file, which gets index.html)
+  falls back to the event's default, then to the Classic tone.
+- **Stage 2:** the message sound plays once when a channel you aren't
+  viewing gets a new message, then stays quiet for that channel until
+  you've read it. "Mute sounds" on any channel, for every user, in the
+  browser only; mentions still play in a muted channel (agreed, as
+  Discord).
 
 ## Architecture
 
@@ -1926,7 +1933,7 @@ to pick their own colours later, so every colour stays a variable.
       forwards `groups.onMembership` people changes for the open
       encrypted channel; `ChannelSnapshot.notices` are now
       `{id, at, text, kind}` and sit among messages by time. Voice
-      join/leave tones (`tones.ts`): two WebAudio notes, rising for a
+      join/leave tones (`tones.ts`; since 2026-11-04 `sounds.ts`, Feature decisions "Custom sounds"): two WebAudio notes, rising for a
       join and falling for a leave, for you connecting/leaving and others
       in your call; people already there when you connect are not
       announced (2 s settle). On by default, "Join and leave sounds" in
@@ -2224,6 +2231,14 @@ to pick their own colours later, so every colour stays a variable.
       loaded from that server, which makes per-server state automatic) in
       Feature decisions, "Server browser and desktop shell"; Ryan is
       thinking it over.
+
+- [x] Custom sounds, stage 1. Done 2026-11-04 (Feature decisions,
+      "Custom sounds"; CS1-CS10).
+- [ ] Custom sounds, stage 2: message sound and per-channel "Mute
+      sounds".
+- [ ] Sounds play on the system's default output, not the Speaker
+      picked in Settings > Voice (as the old tones did).
+      `AudioContext.setSinkId` (Chromium) could follow it.
 
 - [ ] Password strength estimation with zxcvbn (server and client), on top
       of the rules. Ryan asked to discuss later (2026-11-01).

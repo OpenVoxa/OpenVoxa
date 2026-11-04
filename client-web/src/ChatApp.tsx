@@ -24,7 +24,7 @@ import {
   PersonMenu, ShareDialog, Stage, VoiceBar, VoiceRoster,
   usePushToTalk, useVoiceSnapshot,
 } from "./VoiceUI";
-import { playTone, useVoiceTones } from "./tones";
+import { playSound, useVoiceSounds } from "./sounds";
 import { getToggle, MENTION_NOTIFY } from "./settings";
 import { SettingsDialog, type AccountActions, type SettingsTab } from "./SettingsDialog";
 import { ServerSettingsDialog } from "./ServerSettings";
@@ -83,7 +83,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   const [voiceClient, setVoiceClient] = useState<VoiceClient | null>(null);
   const vsnap = useVoiceSnapshot(voiceClient);
   usePushToTalk(voiceClient, vsnap);
-  useVoiceTones(vsnap);
+  useVoiceSounds(vsnap);
   const [stage, setStage] = useState<{ focus: string | null } | null>(null);
   const [person, setPerson] = useState<{ p: VoiceParticipant; at: { x: number; y: number } } | null>(null);
   const call = useMemo(() => apiCall(session.token, onExpired),
@@ -130,7 +130,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
             // Quiet only when you're already looking at that channel.
             const looking = e.open && document.visibilityState === "visible" && document.hasFocus();
             if (looking) return;
-            playTone("mention");
+            void playSound("mention");
             if (getToggle(MENTION_NOTIFY) && typeof Notification !== "undefined"
               && Notification.permission === "granted") {
               const name = channelsRef.current.find((ch) => ch.id === e.channelId)?.name;

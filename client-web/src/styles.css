@@ -836,3 +836,14 @@ button.dot-host { position: relative; }
 .emoji-list .emoji-char { font-size: 18px; margin-right: 4px; }
 .emoji-list li.sticker-option { display: flex; align-items: center; gap: 8px; }
 .emoji-list li.sticker-option .sticker-img, .emoji-list li.sticker-option .sticker-blank { flex: 0 0 auto; }
+
+/* --------------------------------------------------- Settings > Sounds */
+.sound-row { display: flex; flex-direction: column; gap: 8px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.sound-controls { display: flex; align-items: center; gap: 8px; padding-left: 23px; }
+.sound-controls select { flex: 1; min-width: 0; font-size: 14px; padding: 6px 8px; }
+.sound-controls select:disabled, .sound-volume input:disabled { opacity: 0.6; }
+.sound-controls button { white-space: nowrap; }
+.sound-volume { display: flex; align-items: center; gap: 10px; padding-left: 23px; }
+.sound-volume input[type="range"] { flex: 1; }
+.sound-volume .sound-pct { min-width: 3.5em; text-align: right; }
+.sound-row .error { padding-left: 23px; }

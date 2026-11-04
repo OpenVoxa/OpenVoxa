@@ -14,8 +14,6 @@ export interface Toggle {
   readonly fallback: boolean;
 }
 
-/** Join/leave tones in voice calls. */
-export const VOICE_TONES: Toggle = { key: "voice.tones", fallback: true };
 /**
  * Link previews in encrypted channels. Off by default: the server fetches
  * the page, so asking for a preview tells it the link (decisions.md,
@@ -23,8 +21,6 @@ export const VOICE_TONES: Toggle = { key: "voice.tones", fallback: true };
  */
 export const PREVIEWS_ENCRYPTED: Toggle = { key: "chat.previewsEncrypted", fallback: false };
 
-/** A short sound when someone mentions you. */
-export const MENTION_SOUND: Toggle = { key: "chat.mentionSound", fallback: true };
 /**
  * A browser notification when someone mentions you while you aren't
  * looking. Off until turned on, because the browser has to ask first.

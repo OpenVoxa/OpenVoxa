@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /**
- * The Settings dialog (build order 13, M5 session A): Account, Voice and
- * Chat tabs. The user-panel gear opens it on Account, the voice bar's cog
+ * The Settings dialog (build order 13, M5 session A): Account, Voice,
+ * Chat, Sounds and Appearance tabs. The user-panel gear opens it on Account, the voice bar's cog
  * on Voice. The Voice tab loads the voice client (and with it LiveKit)
  * only when it is picked, so text-only use never pays for it.
  *
@@ -21,11 +21,12 @@ import { call as plainCall, type Session } from "./api";
 import { Modal } from "./ChannelDialogs";
 import { checkPassword } from "./password";
 import { PasswordRules } from "./PasswordRules";
-import { IMAGES_IN_TAB, MENTION_NOTIFY, MENTION_SOUND, NAME_COLOURS, PREVIEWS_ENCRYPTED, setToggle, useToggle } from "./settings";
+import { IMAGES_IN_TAB, MENTION_NOTIFY, NAME_COLOURS, PREVIEWS_ENCRYPTED, setToggle, useToggle } from "./settings";
 import { VoiceSettings } from "./VoiceUI";
+import { SoundSettings } from "./SoundSettings";
 import { COLOURS, getColour, setColour, useColour, type ColourSetting } from "./appearance";
 
-export type SettingsTab = "account" | "voice" | "chat" | "appearance";
+export type SettingsTab = "account" | "voice" | "chat" | "sounds" | "appearance";
 
 export interface AccountActions {
   onBackUpNow: () => void;
@@ -61,7 +62,7 @@ export function SettingsDialog({ tab: initialTab, session, call, deviceId, backu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, voice]);
 
-  const tabs: [SettingsTab, string][] = [["account", "Account"], ["voice", "Voice"], ["chat", "Chat"], ["appearance", "Appearance"]];
+  const tabs: [SettingsTab, string][] = [["account", "Account"], ["voice", "Voice"], ["chat", "Chat"], ["sounds", "Sounds"], ["appearance", "Appearance"]];
   return (
     <Modal title="Settings" onClose={onClose} wide fixed>
       <div className="settings-tabs" role="tablist">
@@ -79,6 +80,7 @@ export function SettingsDialog({ tab: initialTab, session, call, deviceId, backu
           ? <VoiceSettings voice={voice} snap={snap} />
           : voiceError ? <p className="error" role="alert">{voiceError}</p> : <p className="muted">Loading…</p>)}
         {tab === "chat" && <ChatSettings />}
+        {tab === "sounds" && <SoundSettings />}
         {tab === "appearance" && <AppearanceSettings />}
       </div>
       <div className="modal-actions modal-foot">
@@ -93,7 +95,6 @@ export function SettingsDialog({ tab: initialTab, session, call, deviceId, backu
 function ChatSettings() {
   const previews = useToggle(PREVIEWS_ENCRYPTED);
   const imagesInTab = useToggle(IMAGES_IN_TAB);
-  const mentionSound = useToggle(MENTION_SOUND);
   const mentionNotify = useToggle(MENTION_NOTIFY);
   const supported = typeof Notification !== "undefined";
   const [denied, setDenied] = useState(supported && Notification.permission === "denied");
@@ -113,13 +114,6 @@ function ChatSettings() {
 
   return (
     <>
-      <label className="check">
-        <input type="checkbox" checked={mentionSound} onChange={(e) => setToggle(MENTION_SOUND, e.target.checked)} />
-        <span>
-          Sound when someone mentions you
-          <span className="muted small block">Plays unless you're already looking at that channel.</span>
-        </span>
-      </label>
       <label className="check">
         <input type="checkbox" checked={mentionNotify && !denied} disabled={!supported}
           onChange={(e) => void toggleNotify(e.target.checked)} />
