@@ -52,7 +52,7 @@ server/            Go server (module root here; go.mod says go 1.26)
   Dockerfile          multi-stage: client-core -> client-web -> Go -> distroless
   internal/httpapi/   HTTP + WS; debugui/chat.html = old debug client
   internal/db/        Postgres, migrations/00NN_*.sql (embedded, ordered;
-                      latest 0022)
+                      latest 0023)
   internal/{auth,blob,config,gif,hub,password,perm,ratelimit,unfurl}
 client-core/       TypeScript protocol + crypto, no UI
   src/mls/provider.ts  MlsProvider interface (swappable)
@@ -185,10 +185,15 @@ No `tls` profile = no Caddy (own proxy + `OPENVOXA_TRUST_PROXY=true`).
 
 ## Current state (update every session)
 
-_Last updated: 2026-11-04. **Emoji picker + `:name:` shortcodes DONE**
-and verified by Ryan (`client-web/src/emoji.tsx`, system font,
-emojibase-data lazy chunk; decisions.md Open items "Emoji"). Reactions
-deferred to their own design pass.
+_Last updated: 2026-11-04. **Reactions DONE** (Ryan chose option A:
+the server sees the emoji, like mentions; decisions.md Feature decisions
+"Reactions are metadata the server sees"): `httpapi/reactions.go`,
+migration 0023, `ChannelView.react`, chips + "React" in `ChannelPane.tsx`.
+Verified by Ryan on Docker (R1-R6: add, toggle, live with 2 accounts,
+encrypted channel, delete, reload). Ban-and-purge now also clears
+mentions and reactions of the purged messages.
+Earlier 2026-11-04: emoji picker + `:name:` shortcodes DONE and verified
+(`client-web/src/emoji.tsx`, system font, emojibase-data lazy chunk).
 Previous session 2026-11-03: **Crypto-shredding is DONE**
 (build order 14, S1-S6, all verified by Ryan; decisions.md Encryption,
 "Account deletion is crypto-shredding"). Plaintext channels: per-account
@@ -252,7 +257,7 @@ period in `server_settings`, migration 0017).
 - Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI;
   now also destroys the key).
 - @mentions and Appearance: done and verified (M1-M6, A1).
-- Next (Ryan to choose): reactions (design first), custom
+- Next (Ryan to choose): custom
   stickers (mods/admins, server-wide, survive account deletion; limits
   still to agree) and later a server browser (decisions.md Open items); "shared computer: erase everything" on sign-out;
   local archive retention sweep; real force-PTT via LiveKit

@@ -128,6 +128,37 @@ and encrypted channels behave the same way.
   The result is a notification with no visible mention, from a person
   who could already message that channel. Accepted.
 
+### Reactions are metadata the server sees
+
+Decided by Ryan, 2026-11-04 (option A of two). Emoji reactions on
+messages (`reactions.go`, `message_reactions`, migration 0023).
+
+- **What the server learns:** who reacted with which emoji to which
+  message, in every channel, encrypted ones too. Never the message text.
+  The same kind of metadata as mentions, and stored the same way: in the
+  clear, not sealed under the reactor's key. The rows go when the message
+  is deleted, expires, or its author is purged (ban-and-purge or account
+  deletion), and when the reacting account is deleted. They can survive
+  in database backups, like mentions and timestamps.
+- **The rejected option (B):** each reaction as an MLS message, so the
+  server sees only that someone reacted. About three times the work,
+  plus the problems edits already have: devices that joined later or
+  can't decrypt would show unreadable reactions, and counts could only
+  be worked out on the client.
+- **Rules:** anyone who may post in the channel may react; not on
+  deleted, pending or (client-side) unreadable messages. Unicode emoji
+  only, checked by the server (`validEmoji`: pictographs and their
+  modifiers, at most 10 code points, no text). Several emoji per person
+  per message; at most 20 different emoji per message (the message row
+  is locked while checking). Rate limit 30 up front, then 2 a second.
+  No notifications for reactions.
+- **API:** `PUT` / `DELETE /messages/{id}/reactions/{emoji}`, both
+  idempotent; a `reaction` event to the channel (message, emoji, user,
+  added). History carries `reactions: [{emoji, users}]` per message.
+- **Client:** chips under the message (count, yours outlined in the
+  accent, hover lists who), click to toggle; "React" on hover and a "+"
+  after the chips open the emoji picker beside the message.
+
 ## Architecture
 
 Five components, three of them off the shelf:
@@ -1872,6 +1903,8 @@ to pick their own colours later, so every colour stays a variable.
       test, one sample per Emoji version (no colour font at all = no
       filtering). **Reactions deferred** to their own design pass
       (server table; what the server sees in encrypted channels).
+      Reactions done 2026-11-04: Feature decisions, "Reactions are
+      metadata the server sees".
       Not built: arrow keys inside the grid, bigger emoji-only messages.
 - [ ] Custom stickers (Ryan, 2026-11-03): images uploaded to the server
       and sent like a GIF. Decided with Ryan:
