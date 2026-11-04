@@ -760,4 +760,23 @@ export const storage = {
   async wipe(): Promise<void> {
     await clearAll(true);
   },
+
+  /**
+   * Erase this account from this browser entirely, keyring included:
+   * "Sign out and erase" (Settings, Devices), for a shared computer.
+   * Every store is cleared first, which works even while another tab
+   * holds the database open; then the database itself is deleted so not
+   * even its name is left. A blocked delete (another tab still open) is
+   * not an error: the contents are already gone, and the browser
+   * finishes the delete once that tab closes. Locks storage.
+   */
+  async destroy(): Promise<void> {
+    dataKey = null;
+    await clearAll(false);
+    const name = dbName;
+    await new Promise<void>((resolve) => {
+      const del = indexedDB.deleteDatabase(name);
+      del.onsuccess = del.onerror = del.onblocked = () => resolve();
+    });
+  },
 };
