@@ -172,7 +172,9 @@ MS1-MS9, MC1-MC9. Details: decisions.md Feature decisions "Custom sounds".
 - Known gaps (decisions.md Open items): K1 recovery flows 2-5 deferred;
   no @everyone/@group; no per-group share limits; sounds ignore the
   Speaker picked in Voice (`AudioContext.setSinkId` could fix it).
-- **Next: Ryan to choose:** server browser + Electron shell (decisions.md
-  "Server browser and desktop shell", three open questions), a per-user
-  upload test in the share dialog, sounds following the Voice Speaker
-  (`setSinkId`), zxcvbn (discuss first).
+- **Next, in order:** (1) sounds follow the Voice Speaker
+  (`AudioContext.setSinkId` in `sounds.ts`; the pick is
+  `VoiceClient.outputDevice`, `voice.ts`). (2) zxcvbn password strength
+  (decisions.md Open items; discuss with Ryan first). Later: server
+  browser + Electron shell ("Server browser and desktop shell", three
+  open questions), per-user upload test in the share dialog.
