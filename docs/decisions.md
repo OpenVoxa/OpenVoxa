@@ -1920,8 +1920,11 @@ to pick their own colours later, so every colour stays a variable.
       signed links to expire). Add/remove go in the moderation log.
       Picking lives in a Stickers tab of the composer's emoji picker
       (Ryan, 2026-11-04: no separate button); reactions stay emoji only.
-      Not built: `:name:` shortcodes for stickers in the composer
-      (search by name is in the picker).
+      `:name:` suggestions (2026-11-04, SC1-SC5 verified): up to 3
+      matching stickers above the emoji in the composer's shortcode
+      list (not when editing). A sticker can't sit inside text, so
+      picking one sends it at once and removes the ":query"; a typed-out
+      ":name:" never sends a sticker by itself (no accidental sends).
       Decided with Ryan:
       - Server-wide: one set for the whole server, not per channel.
       - Moderators and administrators only. Done as a new permission
