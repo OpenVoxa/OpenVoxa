@@ -540,8 +540,14 @@ export function VoiceSettings({ voice, snap }: {
           </select>
         </label>
         {devices && !devices.canPickOutput && <p className="muted small">This browser always uses the system's speaker.</p>}
-        {devices && devices.inputs.every((d) => !d.label) && (
-          <p className="muted small">Device names appear once you've allowed the microphone (join a call once).</p>
+        {devices && !devices.named && (
+          <div className="key-row">
+            <span className="muted small">Your browser only shows your devices once this site may use the microphone.</span>
+            <button className="outline" onClick={() => {
+              voice.listDevices(true).then(setDevices).catch(() =>
+                setError("The microphone wasn't allowed. Allow it in your browser's site settings (the icon left of the address), then try again."));
+            }}>Show My Devices</button>
+          </div>
         )}
 
         <label className="check">
