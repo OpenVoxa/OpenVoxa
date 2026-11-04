@@ -1906,8 +1906,21 @@ to pick their own colours later, so every colour stays a variable.
       Reactions done 2026-11-04: Feature decisions, "Reactions are
       metadata the server sees".
       Not built: arrow keys inside the grid, bigger emoji-only messages.
-- [ ] Custom stickers (Ryan, 2026-11-03): images uploaded to the server
-      and sent like a GIF. Decided with Ryan:
+- [x] Custom stickers (Ryan, 2026-11-03): images uploaded to the server
+      and sent like a GIF. DONE 2026-11-04, verified by Ryan (ST1-ST5,
+      ST7; ST6 only as an administrator). Built as: `httpapi/stickers.go`
+      + `stickerimage.go` (type and size read from the file's header
+      bytes, no image library), migration 0024 (table, limits in
+      server_settings, manage_stickers added to Moderator), blob GC also
+      keeps sticker blobs. A sticker message's text is the token
+      `[sticker:<uuid>]` (client-core `stickers.ts`), so plain and
+      encrypted channels work the same and a rename changes nothing
+      sent; a removed sticker shows "Sticker removed". Images are
+      fetched with the session token and shown from blob: URLs (no
+      signed links to expire). Add/remove go in the moderation log.
+      Not built: `:name:` shortcodes for stickers in the composer
+      (search by name is in the picker).
+      Decided with Ryan:
       - Server-wide: one set for the whole server, not per channel.
       - Moderators and administrators only. Done as a new permission
         (`manage_stickers`) given to the Moderator and Administrator
@@ -1918,14 +1931,14 @@ to pick their own colours later, so every colour stays a variable.
         content, so they are not sealed under the uploader's key and
         are not crypto-shredded; the uploader reference just becomes
         NULL. The upload dialog says so before the first upload.
-      Proposed, not yet agreed (Ryan wants recommendations):
+      Limits agreed with Ryan (2026-11-04):
       - Types: PNG, APNG, GIF, WebP (static or animated). Not SVG: it can
         carry script. The server checks the file's real type from its
         bytes, not the name or what the browser claims.
-      - At most 512 KB per file and 320 x 320 pixels; shown at about
-        160 px. Small enough that a message full of stickers loads fast.
-      - At most 100 stickers per server, both limits in server settings
-        so an operator can raise them.
+      - At most 1 MB per file and 512 x 512 pixels (Ryan chose the larger
+        option for longer/sharper animations); shown at about 160 px.
+      - At most 100 stickers per server. All three limits live in server
+        settings so an operator can change them.
       - Name per sticker (for search and `:name:` style picking) and
         alt text for screen readers.
       Rejected (Ryan, 2026-11-03): personal stickers that travel with
