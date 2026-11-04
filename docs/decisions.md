@@ -2521,6 +2521,11 @@ to pick their own colours later, so every colour stays a variable.
       WS1-WS7).
 - [ ] Desktop app, later: badges via a preload, voice handoff between
       servers, global push-to-talk, tray, notifications.
+- [ ] On-screen push-to-talk button for touchscreens (Ryan,
+      2026-11-04). Push-to-talk is keyboard-only today, so a phone or
+      tablet in push-to-talk mode (or in a channel that requires it)
+      can't talk at all. Design first: where the button sits, hold vs
+      tap, when it shows (touch devices only, or always in PTT mode).
 - [ ] Server icon and name in the pane, set in Server settings (Feature
       decisions, "Planned: server icons, updates, bug reports, channel
       menus, avatars"; Ryan, 2026-11-04).

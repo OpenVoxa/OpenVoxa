@@ -379,7 +379,6 @@ export function ShareDialog({ voice, onClose }: { voice: VoiceClient; onClose: (
   })();
   const [preset, setPreset] = useState(saved.preset ?? 1);
   const [priority, setPriority] = useState<ShareSettings["priority"]>(saved.priority ?? "detail");
-  const [audio, setAudio] = useState(saved.audio ?? true);
   const serverMuted = voice.snapshot().serverMuted;
   const [codec, setCodec] = useState<ShareSettings["codec"]>(saved.codec ?? "h264");
   const [simulcast, setSimulcast] = useState(saved.simulcast ?? false);
@@ -409,8 +408,11 @@ export function ShareDialog({ voice, onClose }: { voice: VoiceClient; onClose: (
 
   async function start() {
     const p = PRESETS[preset] ?? PRESETS[1];
-    const s: ShareSettings = { width: p.width, height: p.height, fps: p.fps, kbps: p.kbps, priority, audio, codec, simulcast };
-    localStore.set(SHARE_PREFS, JSON.stringify({ preset, priority, audio, codec, simulcast }));
+    // Sound is always asked for: whether a share has it is chosen in the
+    // picker (the desktop app's or the browser's), next to what is shared.
+    // A server mute still turns it off (VoiceClient.startShare).
+    const s: ShareSettings = { width: p.width, height: p.height, fps: p.fps, kbps: p.kbps, priority, audio: true, codec, simulcast };
+    localStore.set(SHARE_PREFS, JSON.stringify({ preset, priority, codec, simulcast }));
     setBusy(true);
     setError(null);
     try {
@@ -450,15 +452,7 @@ export function ShareDialog({ voice, onClose }: { voice: VoiceClient; onClose: (
             <option value="motion">Motion: games and video stay smooth</option>
           </select>
         </label>
-        <label className={`check${serverMuted ? " locked" : ""}`}>
-          <input type="checkbox" checked={audio && !serverMuted} disabled={serverMuted}
-            onChange={(e) => setAudio(e.target.checked)} />
-          <span><span className="label-text">Share audio too</span>
-            {serverMuted
-              ? <span className="lock-reason small block">Off: a moderator has muted you, so your share can't have sound.</span>
-              : <span className="muted small block">When the browser offers it (tab audio in most browsers).</span>}
-          </span>
-        </label>
+        {serverMuted && <p className="muted small">A moderator has muted you, so your share won't have sound.</p>}
         <details>
           <summary className="small">Advanced</summary>
           <div className="advanced">
