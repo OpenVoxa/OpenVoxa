@@ -81,13 +81,16 @@ func (a *API) deleteMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Nobody needs to know any more who a deleted message mentioned.
-	if _, err := tx.Exec(r.Context(),
-		`DELETE FROM message_mentions WHERE message_id = $1`, messageID,
-	); err != nil {
-		slog.Error("removing mentions", "err", err)
-		writeError(w, http.StatusInternalServerError, "could not delete the message")
-		return
+	// Nobody needs to know any more who a deleted message mentioned, or
+	// who reacted to it.
+	for _, table := range []string{"message_mentions", "message_reactions"} {
+		if _, err := tx.Exec(r.Context(),
+			`DELETE FROM `+table+` WHERE message_id = $1`, messageID,
+		); err != nil {
+			slog.Error("removing message metadata", "err", err, "table", table)
+			writeError(w, http.StatusInternalServerError, "could not delete the message")
+			return
+		}
 	}
 
 	if _, err := tx.Exec(r.Context(),
@@ -544,6 +547,28 @@ func (a *API) banUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		purged = tag.RowsAffected()
+
+		// Mentions in and reactions to their messages go with them, and
+		// so do the reactions they left on other people's.
+		if _, err := tx.Exec(r.Context(),
+			`DELETE FROM message_mentions
+			  WHERE message_id IN (SELECT id FROM messages WHERE author_id = $1)`,
+			subjectID,
+		); err != nil {
+			slog.Error("purging mentions", "err", err)
+			writeError(w, http.StatusInternalServerError, "could not purge messages")
+			return
+		}
+		if _, err := tx.Exec(r.Context(),
+			`DELETE FROM message_reactions
+			  WHERE user_id = $1
+			     OR message_id IN (SELECT id FROM messages WHERE author_id = $1)`,
+			subjectID,
+		); err != nil {
+			slog.Error("purging reactions", "err", err)
+			writeError(w, http.StatusInternalServerError, "could not purge messages")
+			return
+		}
 
 		if _, err := tx.Exec(r.Context(),
 			`DELETE FROM attachments

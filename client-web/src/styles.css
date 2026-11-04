@@ -291,6 +291,22 @@ button.secondary:hover:not(:disabled) { background: var(--sidebar-active); }
 .msg .actions button.danger { color: var(--danger); }
 .edit-box { display: flex; flex-direction: column; gap: 4px; }
 
+/* Emoji reactions under a message. Yours are outlined in the accent. */
+.reactions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.reaction {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 1px 8px; min-height: 24px; border-radius: 12px;
+  background: var(--panel); color: var(--text); border: 1px solid transparent;
+  font-size: 13px; line-height: 1.2;
+}
+.reaction:hover:not(:disabled) { border-color: var(--muted); }
+.reaction:disabled { opacity: 1; cursor: default; }
+.reaction.mine { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, var(--panel)); }
+.reaction-emoji { font-size: 16px; }
+.reaction-count { font-variant-numeric: tabular-nums; }
+.reaction.add { color: var(--muted); visibility: hidden; font-size: 15px; }
+.msg:hover .reaction.add, .reaction.add:focus-visible { visibility: visible; }
+
 .composer { display: flex; gap: 8px; align-items: flex-end; padding: 0 16px 16px; }
 .composer textarea, .edit-box textarea {
   flex: 1;

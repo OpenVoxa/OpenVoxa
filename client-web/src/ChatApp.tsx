@@ -99,6 +99,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           call,
           wsUrl,
           userId: session.user_id,
+          username: session.username,
           store: localStore,
           onArchived: () => manager.scheduleUpload(),
         });

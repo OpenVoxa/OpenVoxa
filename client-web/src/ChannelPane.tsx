@@ -9,9 +9,10 @@
 
 import {
   useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore,
-  type FormEvent, type KeyboardEvent, type ReactNode,
+  type CSSProperties, type FormEvent, type KeyboardEvent, type ReactNode,
 } from "react";
-import type { AttachmentInfo, ChannelSnapshot, ChannelView, ChatMessage, CryptoState, Mention, Notice, Upload } from "@core/chat";
+import type { AttachmentInfo, ChannelSnapshot, ChannelView, ChatMessage, CryptoState, Mention, Notice, Reaction, Upload } from "@core/chat";
+import { MAX_REACTION_KINDS } from "@core/chat";
 import type { ApiCall } from "@core/identity";
 import { describeRetention, Modal } from "./ChannelDialogs";
 import { firstLink, Markdown } from "./markdown";
@@ -181,6 +182,23 @@ function MessageList({ view, snap, call, previews, userId, username, canDeleteAn
   // the view can stay still while older messages are added above it.
   const anchor = useRef<{ id: string; delta: number } | null>(null);
   const [reporting, setReporting] = useState<ChatMessage | null>(null);
+  // The message whose reaction picker is open, and where to draw it.
+  const [reactingTo, setReactingTo] = useState<{ id: string; style: CSSProperties } | null>(null);
+  const closeReact = useCallback(() => setReactingTo(null), []);
+
+  async function react(m: ChatMessage, emoji: string, on: boolean) {
+    const has = m.reactions.find((r) => r.emoji === emoji);
+    if (on && has?.mine) return;
+    if (on && !has && m.reactions.length >= MAX_REACTION_KINDS) {
+      onError(`A message can have at most ${MAX_REACTION_KINDS} different reactions.`);
+      return;
+    }
+    try {
+      await view.react(m.id, emoji, on);
+    } catch (err) {
+      onError(errText(err));
+    }
+  }
   // Scrolled up more than a screen: show "Jump to latest". lastSeen is
   // the newest message when the reader left the bottom, so the button can
   // say how many arrived since.
@@ -277,6 +295,9 @@ function MessageList({ view, snap, call, previews, userId, username, canDeleteAn
         canDelete={!m.pending && !m.deleted && (m.own || canDeleteAny)}
         canEdit={snap.canPost && m.own && !m.pending && !m.deleted && !m.unreadable}
         canReport={!m.own && !!m.authorId && !m.pending && !m.deleted && !m.unreadable}
+        canReact={snap.canPost && !m.pending && !m.deleted && !m.unreadable}
+        onReact={(emoji, on) => void react(m, emoji, on)}
+        onOpenReact={(el) => setReactingTo({ id: m.id, style: pickerBeside(el) })}
         onReport={() => setReporting(m)}
         editing={editing === m.id}
         onEdit={() => setEditing(m.id)}
@@ -344,6 +365,13 @@ function MessageList({ view, snap, call, previews, userId, username, canDeleteAn
             {newSince > 0 ? `Jump to latest · ${newSince} new` : "Jump to latest"} ↓
           </button>
         </div>
+      )}
+      {reactingTo && (
+        <EmojiPicker label="Add reaction" style={reactingTo.style} onClose={closeReact}
+          onPick={(emoji) => {
+            const m = snap.messages.find((x) => x.id === reactingTo.id);
+            if (m) void react(m, emoji, true);
+          }} />
       )}
       {reporting && (
         <ReportDialog m={reporting} call={call} encrypted={snap.channel.encrypted} onClose={() => setReporting(null)} />
@@ -453,7 +481,59 @@ const UNREADABLE: Record<NonNullable<ChatMessage["unreadable"]>, string> = {
 
 // ------------------------------------------------------------ message
 
-function Message({ m, call, encrypted, previews, compact, userId, username, members, canDelete, canEdit, canReport, editing, onEdit, onCancelEdit, onSaveEdit, onDelete, onReport, onDismiss }: {
+/** Size of the emoji picker, for placing it beside a message. */
+const PICKER_W = 360;
+const PICKER_H = 440;
+
+/** Place the reaction picker by the button that opened it: above it when
+ * there is room, otherwise below, always inside the window. */
+function pickerBeside(el: HTMLElement): CSSProperties {
+  const r = el.getBoundingClientRect();
+  const right = Math.max(8, window.innerWidth - r.right);
+  const top = r.top - PICKER_H - 4 >= 8
+    ? r.top - PICKER_H - 4
+    : Math.max(8, Math.min(r.bottom + 4, window.innerHeight - PICKER_H - 8));
+  return { position: "fixed", top, right, bottom: "auto", width: Math.min(PICKER_W, window.innerWidth - 16), zIndex: 20 };
+}
+
+/** "alice", "alice and bob", "alice, bob and 3 others". */
+function reactors(r: Reaction, userId: string): string {
+  const names = r.users.map((u) => (u.user_id === userId ? "you" : u.username || "someone"));
+  if (names.length <= 3) return names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+  const rest = names.length - 2;
+  return `${names.slice(0, 2).join(", ")} and ${rest} others`;
+}
+
+function Reactions({ m, userId, canReact, onReact, onOpenReact }: {
+  m: ChatMessage;
+  userId: string;
+  canReact: boolean;
+  onReact: (emoji: string, on: boolean) => void;
+  onOpenReact: (el: HTMLElement) => void;
+}) {
+  return (
+    <div className="reactions">
+      {m.reactions.map((r) => {
+        const who = reactors(r, userId);
+        return (
+          <button key={r.emoji} className={r.mine ? "reaction mine" : "reaction"} aria-pressed={r.mine}
+            disabled={!canReact} onClick={() => onReact(r.emoji, !r.mine)}
+            title={`${who} reacted with ${r.emoji}${canReact ? (r.mine ? ". Click to remove yours." : ". Click to add yours.") : ""}`}
+            aria-label={`${r.emoji} ${r.users.length}, ${who}`}>
+            <span className="reaction-emoji">{r.emoji}</span>
+            <span className="reaction-count">{r.users.length}</span>
+          </button>
+        );
+      })}
+      {canReact && m.reactions.length < MAX_REACTION_KINDS && (
+        <button className="reaction add" title="Add reaction" aria-label="Add reaction"
+          onClick={(e) => onOpenReact(e.currentTarget)}>+</button>
+      )}
+    </div>
+  );
+}
+
+function Message({ m, call, encrypted, previews, compact, userId, username, members, canDelete, canEdit, canReport, canReact, editing, onEdit, onCancelEdit, onSaveEdit, onDelete, onReport, onReact, onOpenReact, onDismiss }: {
   m: ChatMessage;
   call: ApiCall;
   encrypted: boolean;
@@ -465,12 +545,15 @@ function Message({ m, call, encrypted, previews, compact, userId, username, memb
   canDelete: boolean;
   canEdit: boolean;
   canReport: boolean;
+  canReact: boolean;
   editing: boolean;
   onEdit: () => void;
   onCancelEdit: () => void;
   onSaveEdit: (text: string) => Promise<void>;
   onDelete: (skipConfirm: boolean) => void;
   onReport: () => void;
+  onReact: (emoji: string, on: boolean) => void;
+  onOpenReact: (el: HTMLElement) => void;
   onDismiss: () => void;
 }) {
   // No author: the account was deleted (the server sends author_id "" and
@@ -510,6 +593,9 @@ function Message({ m, call, encrypted, previews, compact, userId, username, memb
       </div>
       {!m.deleted && m.attachments.length > 0 && <Attachments m={m} encrypted={encrypted} />}
       {link && <LinkPreview call={call} url={link} fetch={previews} />}
+      {!m.deleted && m.reactions.length > 0 && (
+        <Reactions m={m} userId={userId} canReact={canReact} onReact={onReact} onOpenReact={onOpenReact} />
+      )}
       {m.sharedBy && !m.deleted && (
         <div className="muted small">
           Shared by {m.sharedBy.verified ? (m.sharedBy.username ?? "a member") : "an unverified member"}
@@ -520,8 +606,9 @@ function Message({ m, call, encrypted, previews, compact, userId, username, memb
           Not sent: {m.failed}. <button className="link small" onClick={onDismiss}>Dismiss</button>
         </div>
       )}
-      {!editing && (canEdit || canDelete || canReport) && (
+      {!editing && (canEdit || canDelete || canReport || canReact) && (
         <div className="actions">
+          {canReact && <button onClick={(e) => onOpenReact(e.currentTarget)} title="Add reaction">React</button>}
           {canEdit && <button onClick={onEdit} title="Edit">Edit</button>}
           {canReport && <button onClick={onReport} title="Report to the moderators">Report</button>}
           {canDelete && (

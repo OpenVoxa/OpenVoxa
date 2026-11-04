@@ -60,7 +60,7 @@ func (a *API) loadMessages(
 		                     'sealed_name', encode(at.sealed_name, 'base64'))
 		                   ORDER BY at.created_at)
 		             FROM attachments at WHERE at.message_id = m.id),
-		          '[]'::json),`+mentionsJSON+`
+		          '[]'::json),`+mentionsJSON+`,`+reactionsJSON+`
 		   FROM messages m
 		   LEFT JOIN users u ON u.id = m.author_id
 		  WHERE m.channel_id = $1
@@ -82,7 +82,7 @@ func (a *API) loadMessages(
 		var sealed bool
 
 		if err := rows.Scan(&m.ID, &authorID, &m.Username, &body, &sealed, &m.Deleted,
-			&m.CreatedAt, &m.EditedAt, &m.Attachments, &m.Mentions); err != nil {
+			&m.CreatedAt, &m.EditedAt, &m.Attachments, &m.Mentions, &m.Reactions); err != nil {
 			return nil, false, err
 		}
 

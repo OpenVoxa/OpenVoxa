@@ -90,6 +90,8 @@ type API struct {
 	// Message edits, per user: 20 up front, then one a second. Sending is
 	// limited per connection in ws.go; edits come over HTTP.
 	editLimit *ratelimit.Limiter
+	// Reactions, per user: 30 up front, then two a second.
+	reactLimit *ratelimit.Limiter
 
 	// Who is in each voice call; see voicepresence.go.
 	voicePresence  voicePresenceCache
@@ -143,7 +145,8 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 		// looser than uploads: 30 up front, one every 2 seconds.
 		gifLimit: ratelimit.New(0.5, 30, 15*time.Minute),
 
-		editLimit: ratelimit.New(1, 20, 15*time.Minute),
+		editLimit:  ratelimit.New(1, 20, 15*time.Minute),
+		reactLimit: ratelimit.New(2, 30, 15*time.Minute),
 
 		// Join/leave hints: 10 up front, then one every 2 seconds.
 		voiceHintLimit: ratelimit.New(0.5, 10, 15*time.Minute),
@@ -216,6 +219,11 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 	// Only the author edits; see messages.go.
 	mux.HandleFunc("PATCH /api/v1/messages/{id}",
 		withUUIDPath(api.requireAuth(api.editMessage)))
+	// Emoji reactions; anyone who may post in the channel (reactions.go).
+	mux.HandleFunc("PUT /api/v1/messages/{id}/reactions/{emoji}",
+		withUUIDPath(api.requireAuth(api.putReaction)))
+	mux.HandleFunc("DELETE /api/v1/messages/{id}/reactions/{emoji}",
+		withUUIDPath(api.requireAuth(api.deleteReaction)))
 	mux.HandleFunc("POST /api/v1/messages/{id}/report",
 		withUUIDPath(api.requireAuth(api.reportMessage)))
 

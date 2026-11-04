@@ -194,14 +194,17 @@ func (a *API) purgeUser(ctx context.Context, userID string, also func(pgx.Tx) er
 // administrator guard itself. Both callers destroy the account's key
 // after committing; this function does not touch the key store.
 func PurgeUserTx(ctx context.Context, tx pgx.Tx, userID string) error {
-	// Who their messages mentioned goes with the messages. Mentions OF
-	// them go with the user row (cascade).
-	if _, err := tx.Exec(ctx,
-		`DELETE FROM message_mentions
-		  WHERE message_id IN (SELECT id FROM messages WHERE author_id = $1)`,
-		userID,
-	); err != nil {
-		return err
+	// Who their messages mentioned, and reactions to them, go with the
+	// messages. Mentions of them and their own reactions go with the user
+	// row (cascade).
+	for _, table := range []string{"message_mentions", "message_reactions"} {
+		if _, err := tx.Exec(ctx,
+			`DELETE FROM `+table+`
+			  WHERE message_id IN (SELECT id FROM messages WHERE author_id = $1)`,
+			userID,
+		); err != nil {
+			return err
+		}
 	}
 
 	// Empty the bodies rather than dropping the rows.
