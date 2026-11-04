@@ -64,7 +64,7 @@ If this project ever has a monetization strategy, something has gone wrong. Plea
 - **Voice** via a self-hosted LiveKit SFU, tested on desktop and iOS Safari. The server never touches media; it only hands out tokens
 - **Rate limiting** on authentication, per IP and per account
 - **Rich text** (in the debug page for now): markdown, link previews with SSRF-hardened unfurling, file attachments with inline image, audio and video playback, and GIF search that never puts your users in front of a third party
-- **Moderation**: message removal, reports verified against the server's own copy (for unencrypted channels), and bans that cut off live connections and calls immediately
+- **Moderation**: message removal, reports verified against the server's own copy (for unencrypted channels), and bans that cut off live connections and calls immediately, and server mutes (for a while or until lifted) that take someone's microphone away in every voice channel
 - **Retention and deletion** that actually work: channels display their policy and a sweep enforces it, account deletion destroys content (including in the server's backups, by destroying the account's key), and both propagate live to connected clients
 - **TLS** with three documented deployment paths
 
