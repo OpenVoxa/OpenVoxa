@@ -24,7 +24,7 @@ import {
   PersonMenu, ShareDialog, Stage, VoiceBar, VoiceRoster,
   usePushToTalk, useVoiceSnapshot,
 } from "./VoiceUI";
-import { mutedChannels, playSound, useMutedChannels, useVoiceSounds } from "./sounds";
+import { messageCooldown, mutedChannels, playSound, useMutedChannels, useVoiceSounds } from "./sounds";
 import { getToggle, MENTION_NOTIFY } from "./settings";
 import { SettingsDialog, type AccountActions, type SettingsTab } from "./SettingsDialog";
 import { ServerSettingsDialog } from "./ServerSettings";
@@ -57,6 +57,26 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   const channelsRef = useRef<readonly ChannelInfo[]>([]);
   channelsRef.current = channels;
   const [openId, setOpenId] = useState<string | null>(null);
+  // Message sound cooldown (sounds.ts, MESSAGE_COOLDOWNS): when each
+  // channel last played the message or mention sound. Looking at a
+  // channel clears its entry, so its next message plays again.
+  const soundAt = useRef(new Map<string, number>());
+  const openRef = useRef<string | null>(null);
+  openRef.current = openId;
+  useEffect(() => {
+    if (openId) soundAt.current.delete(openId);
+    const back = () => {
+      if (openRef.current && document.visibilityState === "visible" && document.hasFocus()) {
+        soundAt.current.delete(openRef.current);
+      }
+    };
+    window.addEventListener("focus", back);
+    document.addEventListener("visibilitychange", back);
+    return () => {
+      window.removeEventListener("focus", back);
+      document.removeEventListener("visibilitychange", back);
+    };
+  }, [openId]);
   const [view, setView] = useState<ChannelView | null>(null);
   // Permissions and rank move while signed in (perms_changed); start
   // from login's. permsTick counts the changes, so Server settings can
@@ -128,14 +148,21 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
         // first (the server sends channel_activity from a goroutine);
         // the message sound waits a moment in case it doesn't.
         const mentionedIds = new Set<string>();
+        const looking = () => document.visibilityState === "visible" && document.hasFocus();
         c.on((e) => {
           if (e.type === "channels") setChannels(e.channels);
           else if (e.type === "unread") setUnread(e.unread);
           else if (e.type === "mentions") setMentions(e.mentions);
           else if (e.type === "message") {
+            // A background tab or an unfocused window isn't looking.
+            if (e.open && looking()) return;
             if (mutedChannels().has(e.channelId)) return;
             setTimeout(() => {
               if (!live || mentionedIds.has(e.messageId)) return;
+              const last = soundAt.current.get(e.channelId);
+              const wait = messageCooldown();
+              if (last !== undefined && (wait < 0 || Date.now() - last < wait * 1000)) return;
+              soundAt.current.set(e.channelId, Date.now());
               void playSound("message");
             }, 400);
           }
@@ -143,8 +170,9 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
             mentionedIds.add(e.messageId);
             setTimeout(() => mentionedIds.delete(e.messageId), 10_000);
             // Quiet only when you're already looking at that channel.
-            const looking = e.open && document.visibilityState === "visible" && document.hasFocus();
-            if (looking) return;
+            if (e.open && looking()) return;
+            // The mention sound counts towards the channel's cooldown.
+            soundAt.current.set(e.channelId, Date.now());
             void playSound("mention");
             if (getToggle(MENTION_NOTIFY) && typeof Notification !== "undefined"
               && Notification.permission === "granted") {
@@ -195,6 +223,22 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.user_id, session.token]);
+
+  // The open channel only counts as read while you can see it: a
+  // background tab or another window in front leaves it unread.
+  useEffect(() => {
+    if (!chat) return;
+    const update = () => chat.setLooking(document.visibilityState === "visible" && document.hasFocus());
+    update();
+    window.addEventListener("focus", update);
+    window.addEventListener("blur", update);
+    document.addEventListener("visibilitychange", update);
+    return () => {
+      window.removeEventListener("focus", update);
+      window.removeEventListener("blur", update);
+      document.removeEventListener("visibilitychange", update);
+    };
+  }, [chat]);
 
   const readsReports = perms.includes("view_reports") || perms.includes("administrator");
   useEffect(() => {

@@ -47,7 +47,7 @@ export const SOUND_EVENTS: readonly SoundInfo[] = [
   { id: "mention", label: "Mention", help: "Someone mentions you, unless you're already looking at that channel.",
     fallback: "kenney/confirmation_004", legacyKey: "chat.mentionSound" },
   { id: "message", label: "Message",
-    help: "A channel you aren't viewing gets a new message. Plays once, then waits until you've read it.",
+    help: "A channel you aren't looking at gets a new message (a background tab counts as not looking).",
     fallback: "classic" },
 ];
 
@@ -119,6 +119,47 @@ export function getSound(id: SoundEvent): SoundSetting {
 function changed(id: SoundEvent): void {
   cache.delete(id);
   for (const l of listeners) l();
+}
+
+// ------------------------------------------- message sound cooldown
+
+/**
+ * After a channel plays the message sound (or the mention sound), how
+ * long its next new message stays quiet, in seconds. -1: until you've
+ * looked at the channel. Looking at it (open, with the window focused)
+ * always clears the wait.
+ */
+export const MESSAGE_COOLDOWNS: readonly [number, string][] = [
+  [0, "None (every message)"],
+  [60, "1 minute"],
+  [120, "2 minutes"],
+  [300, "5 minutes"],
+  [600, "10 minutes"],
+  [1800, "30 minutes"],
+  [-1, "Until you've read the channel"],
+];
+export const DEFAULT_MESSAGE_COOLDOWN = 120;
+const COOLDOWN_KEY = "sound.message.cooldown";
+
+export function messageCooldown(): number {
+  const v = Number(localStore.get(COOLDOWN_KEY));
+  return localStore.get(COOLDOWN_KEY) !== null && MESSAGE_COOLDOWNS.some(([n]) => n === v)
+    ? v : DEFAULT_MESSAGE_COOLDOWN;
+}
+
+export function setMessageCooldown(seconds: number): void {
+  localStore.set(COOLDOWN_KEY, String(seconds));
+  for (const l of listeners) l();
+}
+
+export function useMessageCooldown(): number {
+  return useSyncExternalStore(
+    (cb) => {
+      listeners.add(cb);
+      return () => listeners.delete(cb);
+    },
+    messageCooldown,
+  );
 }
 
 // ------------------------------------------------- per-channel mute

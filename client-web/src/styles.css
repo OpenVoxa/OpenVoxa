@@ -852,3 +852,7 @@ button.dot-host { position: relative; }
 .sound-volume input[type="range"] { flex: 1; }
 .sound-volume .sound-pct { min-width: 3.5em; text-align: right; }
 .sound-row .error { padding-left: 23px; }
+.sound-cooldown { display: flex; flex-direction: column; gap: 4px; }
+.sound-cooldown select { flex: 1; min-width: 0; font-size: 14px; padding: 6px 8px; }
+.sound-cooldown select:disabled { opacity: 0.6; }
+.sound-cooldown > .block { padding-left: 23px; }

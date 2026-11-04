@@ -153,14 +153,11 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 ## Current state (rewrite every session)
 
 _2026-11-04._ Step 13 (web client M1-M5) and everything since are done;
-latest: **custom sounds, stage 1** (`sounds.ts`, `SoundSettings.tsx`,
-Settings > Sounds): six events (join, leave, stream start / end,
-mention, message), each with on/off, a picker over Kenney's CC0
-Interface Sounds (`client-web/public/sounds/kenney/`) plus "Classic
-tone", the user's own file (browser only, 1 MB / 5 s), reset and
-volume. Defaults are Ryan's picks. Verified CS1-CS10. Details:
-decisions.md Feature decisions "Custom sounds". Before that: server
-mute (SM1-SM10).
+latest: **custom sounds, stages 1 and 2** (`sounds.ts`,
+`SoundSettings.tsx`): per-event sounds, message sound with a per-channel
+cooldown, "Mute Sounds" bell per channel, and `Chat.setLooking` (a
+background tab leaves the open channel unread). Verified CS1-CS10,
+MS1-MS9, MC1-MC9. Details: decisions.md Feature decisions "Custom sounds".
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts: quillbrook (Ryan), staff, secondadmin,
@@ -175,9 +172,7 @@ mute (SM1-SM10).
 - Known gaps (decisions.md Open items): K1 recovery flows 2-5 deferred;
   no @everyone/@group; no per-group share limits; sounds ignore the
   Speaker picked in Voice (`AudioContext.setSinkId` could fix it).
-- **Next: custom sounds stage 2** (agreed, ready to build): the message
-  sound (once per unread channel, quiet until read) and "Mute sounds"
-  per channel (browser only; mentions still play). Then Ryan to choose:
-  server browser + Electron shell (decisions.md "Server browser and
-  desktop shell", three open questions), a per-user upload test in the
-  share dialog, zxcvbn (discuss first).
+- **Next: Ryan to choose:** server browser + Electron shell (decisions.md
+  "Server browser and desktop shell", three open questions), a per-user
+  upload test in the share dialog, sounds following the Voice Speaker
+  (`setSinkId`), zxcvbn (discuss first).

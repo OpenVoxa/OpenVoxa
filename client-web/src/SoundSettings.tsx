@@ -9,8 +9,8 @@
 
 import { useRef, useState } from "react";
 import {
-  isDefault, KENNEY, kenneyLabel, playSound, resetSound, setCustomFile, setSoundChoice, setSoundOn,
-  setSoundVolume, SOUND_EVENTS, useSound, type SoundInfo,
+  DEFAULT_MESSAGE_COOLDOWN, isDefault, KENNEY, kenneyLabel, MESSAGE_COOLDOWNS, playSound, resetSound, setCustomFile, setSoundChoice, setSoundOn,
+  setMessageCooldown, setSoundVolume, SOUND_EVENTS, useMessageCooldown, useSound, type SoundInfo,
 } from "./sounds";
 
 /** Kenney's sounds grouped by the word in their names: "glass" -> [glass_001, ...]. */
@@ -106,7 +106,28 @@ function SoundRow({ s }: { s: SoundInfo }) {
           onKeyUp={() => void playSound(s.id, { choice: set.choice })} />
         <span className="small sound-pct">{set.volume}%</span>
       </div>
+      {s.id === "message" && <MessageCooldown off={off} />}
       {error && <p className="error small" role="alert">{error}</p>}
+    </div>
+  );
+}
+
+function MessageCooldown({ off }: { off: boolean }) {
+  const cooldown = useMessageCooldown();
+  return (
+    <div className="sound-cooldown">
+      <div className="sound-volume">
+        <span className="small">Message notification cooldown</span>
+        <select value={cooldown} disabled={off} aria-label="Message notification cooldown" onChange={(e) => setMessageCooldown(Number(e.target.value))}>
+          {MESSAGE_COOLDOWNS.map(([n, label]) => (
+            <option key={n} value={n}>{label}{n === DEFAULT_MESSAGE_COOLDOWN ? " (default)" : ""}</option>
+          ))}
+        </select>
+      </div>
+      <span className="muted small block">
+        After a channel plays a sound, how long its new messages stay quiet. Each channel waits on its own,
+        and looking at the channel ends the wait. Mentions always play.
+      </span>
     </div>
   );
 }

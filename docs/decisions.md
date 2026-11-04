@@ -310,7 +310,8 @@ Discussed with Ryan, 2026-11-04; he is mulling it over. Nothing is built.
 ### Custom sounds
 
 Discussed with Ryan, 2026-11-04. Stage 1 built and verified the same day
-(CS1-CS10); stage 2 (message sound, per-channel mute) is next.
+(CS1-CS10); stage 2 (message sound, per-channel mute, cooldown) too
+(MS1-MS9, MC1-MC9).
 
 - **Six sounds:** join (you or someone joins your call); leave (leaves or
   drops out, one sound); stream start and stream end (anyone in your
@@ -343,11 +344,33 @@ Discussed with Ryan, 2026-11-04. Stage 1 built and verified the same day
 - **Never silent by accident:** a sound that won't load or decode (a
   browser without Ogg Vorbis, a missing file, which gets index.html)
   falls back to the event's default, then to the Classic tone.
-- **Stage 2:** the message sound plays once when a channel you aren't
-  viewing gets a new message, then stays quiet for that channel until
-  you've read it. "Mute sounds" on any channel, for every user, in the
-  browser only; mentions still play in a muted channel (agreed, as
-  Discord).
+- **Message sound (stage 2):** plays when someone else posts in a text
+  channel you aren't looking at. "Looking" means open *and* the tab
+  visible and the window focused: a background tab doesn't count
+  (Ryan). Client-core emits a `message` ChatEvent for every message
+  from someone else (`open` flag); client-web (`ChatApp.tsx`) decides.
+- **Cooldown:** first built as "once, then quiet until read"; Ryan
+  pointed out that if you're away when the first one lands you never
+  hear the rest. Now each channel waits a cooldown after it plays the
+  message or mention sound: Settings > Sounds > Message, "Message
+  notification cooldown", None / 1 / 2 (default) / 5 / 10 / 30 minutes /
+  until you've read the channel (`sound.message.cooldown`, seconds, -1 =
+  until read). Per channel; looking at the channel (opening it, or
+  coming back to the window while it's open) ends the wait.
+- **No double sound:** a message that mentions you plays only the
+  mention sound. The server sends `mention` straight away and
+  `channel_activity` from a goroutine, so the order isn't fixed: the
+  message sound waits 400 ms and is skipped if a mention for the same
+  message id arrived.
+- **Away means unread:** `Chat.setLooking` (fed by focus, blur and
+  visibilitychange). While not looking, the open channel's new messages
+  leave it unread and mentions there get the @ badge, as for any other
+  channel; coming back marks it read up to the newest one.
+- **Mute Sounds:** bell button in every text channel's header, for every
+  account, this browser only (`sound.mutedChannels`, a list of channel
+  ids). Muted channels show a crossed-out bell in the sidebar. Muting
+  stops only the message sound: mentions still play (agreed, as
+  Discord), and the unread dot still shows.
 
 ## Architecture
 
@@ -2234,8 +2257,9 @@ to pick their own colours later, so every colour stays a variable.
 
 - [x] Custom sounds, stage 1. Done 2026-11-04 (Feature decisions,
       "Custom sounds"; CS1-CS10).
-- [ ] Custom sounds, stage 2: message sound and per-channel "Mute
-      sounds".
+- [x] Custom sounds, stage 2: message sound, per-channel "Mute
+      sounds", message cooldown. Done 2026-11-04 (Feature decisions,
+      "Custom sounds"; MS1-MS9, MC1-MC9).
 - [ ] Sounds play on the system's default output, not the Speaker
       picked in Settings > Voice (as the old tones did).
       `AudioContext.setSinkId` (Chromium) could follow it.
