@@ -83,16 +83,16 @@ func New(provider, apiKey string) *Client {
 // without this, a compromised or hostile provider could point us at
 // anything.
 var mediaHosts = map[string]bool{
-	"media.giphy.com":   true,
-	"media0.giphy.com":  true,
-	"media1.giphy.com":  true,
-	"media2.giphy.com":  true,
-	"media3.giphy.com":  true,
-	"media4.giphy.com":  true,
-	"i.giphy.com":       true,
-	"media.tenor.com":   true,
-	"c.tenor.com":       true,
-	"media1.tenor.com":  true,
+	"media.giphy.com":      true,
+	"media0.giphy.com":     true,
+	"media1.giphy.com":     true,
+	"media2.giphy.com":     true,
+	"media3.giphy.com":     true,
+	"media4.giphy.com":     true,
+	"i.giphy.com":          true,
+	"media.tenor.com":      true,
+	"c.tenor.com":          true,
+	"media1.tenor.com":     true,
 	"tenor.googleapis.com": true,
 }
 

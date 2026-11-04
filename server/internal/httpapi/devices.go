@@ -430,10 +430,10 @@ type claimResponse struct {
 }
 
 type claimedPackage struct {
-	DeviceID     string `json:"device_id"`
-	Label        string `json:"label"`
-	Package      string `json:"package"`
-	WasLastResort bool  `json:"was_last_resort"`
+	DeviceID      string `json:"device_id"`
+	Label         string `json:"label"`
+	Package       string `json:"package"`
+	WasLastResort bool   `json:"was_last_resort"`
 }
 
 // claimKeyPackages hands out one key package per device of a user, so the
