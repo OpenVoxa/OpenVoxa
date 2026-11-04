@@ -2,12 +2,13 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # Build context is the REPOSITORY ROOT, not server/, because the server
-# embeds a bundle built from client-core. See deploy/docker-compose.yml.
+# embeds the web client, which is built from client-web and client-core.
+# See deploy/docker-compose.yml.
 
 # ---------------------------------------------------------------- client
-# Bundles client-core into a single script the server can embed. Kept as
-# its own stage so a change to Go code does not rebuild the JavaScript,
-# and vice versa.
+# Installs client-core and applies its ts-mls patch (npm run build), for
+# client-web to import as source. Kept as its own stage so a change to Go
+# code does not rebuild the JavaScript, and vice versa.
 FROM node:22-alpine AS client
 
 WORKDIR /client
@@ -47,15 +48,9 @@ RUN go mod download
 
 COPY server/ ./
 
-# Must land before `go build`: the embed directive reads the directory at
-# compile time, so a bundle copied in afterwards would not be included.
-COPY --from=client /client/dist/core.js ./internal/httpapi/debugui/core.js
-# LiveKit's browser bundle and its E2EE worker, served from our own origin.
-# See client-core/build.mjs for why they are not loaded from a CDN.
-COPY --from=client /client/dist/livekit-client.umd.js /client/dist/livekit-client.e2ee.worker.js ./internal/httpapi/debugui/
-
-# The web client replaces the placeholder in webui/. Same rule: before
-# `go build`, or the embed holds the placeholder.
+# The web client replaces the placeholder in webui/. Must land before
+# `go build`: the embed directive reads the directory at compile time, so
+# files copied in afterwards would not be included.
 COPY --from=web /app/client-web/dist/ ./internal/httpapi/webui/
 
 RUN CGO_ENABLED=0 go build -o /out/openvoxa-server .

@@ -47,14 +47,14 @@ server/            Go (module root; go.mod says go 1.26)
   main.go, cli.go     host commands: grant-admin, list-admins, list-users, delete-user
   Dockerfile          client-core -> client-web -> Go -> distroless
   internal/httpapi/   HTTP + WS, one file per feature; livekitapi.go = LiveKit
-                      admin calls; debugui/chat.html = old debug client
+                      admin calls; webui/ = embedded client-web build
   internal/db/        Postgres; migrations/00NN_*.sql embedded, ordered (latest 0028)
   internal/{auth,blob,config,gif,hub,keystore,password,perm,ratelimit,sealedfile,unfurl}
 client-core/       TypeScript protocol + crypto, no UI. src/: mls/ (ts-mls,
                    pinned 1.6.2), identity, groups (MLS lifecycle), chat
                    (Chat + ChannelView), voice (VoiceClient, lazy), attachments,
-                   recovery, storage, stickers. build.mjs -> dist/core.js +
-                   LiveKit bundles; scripts/patch-ts-mls.mjs fixes a ts-mls bug
+                   recovery, storage, stickers. npm run build only applies
+                   scripts/patch-ts-mls.mjs (fixes a ts-mls bug in node_modules)
 client-web/        Vite + React + TS, plain CSS; imports client-core source.
                    Embedded into the server (webui.go), served at /.
 deploy/            docker-compose.yml, caddy/, livekit.yaml, .env.example, scripts/
@@ -74,8 +74,7 @@ never in the media path) · Caddy optional for TLS · MLS ciphersuite 1.
   (`ovx-gomod` caches modules). The image build is the final check.
 - Cloud container: go1.24, no proxy; needs a temporary go.mod (handoff
   doc, "Working notes"). Never commit it.
-- core.js, LiveKit bundles and client-web dist are copied in before
-  `go build` (embed). Don't let `go mod tidy` raise the `go` directive
+- client-web dist is copied into `webui/` before `go build` (embed). Don't let `go mod tidy` raise the `go` directive
   above golang:1.26.
 
 Docker stack (from `~/OpenVoxa/deploy`):
@@ -135,12 +134,11 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
   `BigInt`, and `undefined`-vs-`null` blank nodes.
 - ts-mls docs describe intent, not return shapes: verify by experiment.
 - LiveKit track info (size, layer bitrates) is what the browser
-  declared, never measured. LiveKit is self-hosted from `debugui/` and
-  pinned exactly: the E2EE worker must be same-origin, same build.
+  declared, never measured. LiveKit is pinned exactly and its E2EE
+  worker is bundled by Vite from client-core's copy (`voiceWorker.ts`):
+  it must be same-origin, same build.
 - Permission changes must explicitly reach live WebSockets and live
   voice calls (`kickFromLostVoice`).
-- `chat.html` is one script: a throw while wiring handlers kills every
-  handler after it; use the warn-not-throw helper.
 - Defaults: visual pop-ups off, in-page sounds on; least friction for
   end users.
 - **UI:** colours only as variables in `client-web/src/styles.css`
@@ -175,7 +173,8 @@ Implementation notes.
   Ryan is the only user (port 8443).
 - Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI).
 - Known gaps: K1 recovery flows 2-5 deferred; no @everyone/@group; no
-  per-group share limits; debug chat.html doesn't know server mute.
+  per-group share limits. The debug page (`/debug/`, chat.html) was
+  deleted 2026-11-04; the web client is the only client.
 - **Next: Ryan to choose.** Candidates: a server browser (decisions.md
   Open items; design talk first); a per-user upload test in the share
   dialog; zxcvbn (discuss first); Electron shell.

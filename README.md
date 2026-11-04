@@ -72,7 +72,6 @@ Permissions are enforced where it counts. A user without post rights in a voice 
 
 ## What it's meant to do, and doesn't yet
 
-- **The rest of the web client**: attachments, GIFs, link previews, join/leave notices and sounds (next), then settings and admin panes. Until then those live in the deliberately ugly debug page at `/debug/`.
 - **A desktop client** (Electron) with a global push-to-talk key.
 - **Encrypting the local message archive** on your device with the recovery key.
 - **Linking a new device by QR code**, and **two-factor sign-in** (TOTP).

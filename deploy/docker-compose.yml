@@ -58,7 +58,6 @@ services:
     environment:
       OPENVOXA_LISTEN_ADDR: ":8080"
       OPENVOXA_DATABASE_URL: "postgres://openvoxa:${POSTGRES_PASSWORD:-devpassword}@postgres:5432/openvoxa?sslmode=disable"
-      OPENVOXA_DEBUG_UI: "${OPENVOXA_DEBUG_UI:-false}"
 
       # Only safe when a proxy you control sits in front. The tls profile
       # provides exactly that; without it this stays false.

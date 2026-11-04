@@ -7,12 +7,10 @@ package httpapi
 import (
 	"bufio"
 	"crypto/rand"
-	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -35,9 +33,6 @@ import (
 // maxRequestBody caps how much JSON we will read from a client. Auth payloads
 // are tiny; anything larger is a mistake or an attack.
 const maxRequestBody = 64 * 1024
-
-//go:embed debugui
-var debugUI embed.FS
 
 type API struct {
 	pool    *pgxpool.Pool
@@ -102,15 +97,12 @@ type API struct {
 	voiceHintLimit *ratelimit.Limiter
 }
 
-// New returns the server's root handler. debugUIEnabled serves a bare-bones
-// test client at /debug/; it is off unless explicitly turned on.
 // ServeHTTP lets API be used directly as an http.Handler.
 func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	a.handler.ServeHTTP(w, r)
 }
 
 func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keystore.Store) *API {
-	debugUIEnabled := cfg.DebugUI
 	trustProxy := cfg.TrustProxy
 	livekit := cfg.LiveKit
 
@@ -383,11 +375,6 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 		slog.Info("gif search disabled")
 	}
 
-	if debugUIEnabled {
-		slog.Warn("debug UI enabled at /debug/ - do not run this in production")
-		mux.Handle("GET /debug/", http.StripPrefix("/debug/", debugFileServer()))
-	}
-
 	// The web client, at the site root. Registered last only for reading
 	// order: "GET /" is the least specific pattern, so every route above
 	// wins regardless.
@@ -395,17 +382,6 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 
 	api.handler = logRequests(mux)
 	return api
-}
-
-// debugFileServer serves the embedded debugui directory at the root of the
-// returned handler, so /debug/chat.html maps to debugui/chat.html.
-func debugFileServer() http.Handler {
-	sub, err := fs.Sub(debugUI, "debugui")
-	if err != nil {
-		// Embedded at compile time, so a failure here is a build problem.
-		panic(err)
-	}
-	return http.FileServerFS(sub)
 }
 
 type healthResponse struct {
