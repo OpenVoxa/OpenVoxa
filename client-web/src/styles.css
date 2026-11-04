@@ -739,6 +739,17 @@ button.dot-host { position: relative; }
 }
 .colour-row .grow { flex: 1; }
 
+/* name colours by group (names.tsx, Server settings > Groups) */
+.device-list li.group-row { flex-direction: column; align-items: stretch; gap: 8px; }
+.swatch {
+  display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: -1px;
+  border: 1px solid var(--line); border-radius: 3px;
+}
+.group-colour { display: flex; flex-direction: column; gap: 4px; padding-top: 6px; border-top: 1px solid var(--line); }
+.group-colour .colour-row { padding: 2px 0; }
+.group-colour input.hex { width: 90px; font-family: monospace; }
+.colour-preview { font-size: 15px; }
+
 /* emoji picker and :code: autocomplete (emoji.tsx) */
 .emoji-btn { font-size: 18px; padding: 6px 10px; line-height: 1.2; }
 .emoji-btn.on { background: var(--sidebar-active); }

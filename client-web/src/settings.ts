@@ -34,6 +34,12 @@ export const MENTION_NOTIFY: Toggle = { key: "chat.mentionNotify", fallback: fal
 /** Clicking an image in chat opens it in a new tab instead of the in-page viewer. */
 export const IMAGES_IN_TAB: Toggle = { key: "chat.imagesInTab", fallback: false };
 
+/**
+ * Usernames in their group's colour (names.tsx). On by default; the
+ * server can also turn the colours off for everyone.
+ */
+export const NAME_COLOURS: Toggle = { key: "appearance.nameColours", fallback: true };
+
 const listeners = new Set<() => void>();
 
 export function getToggle(t: Toggle): boolean {

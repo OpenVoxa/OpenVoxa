@@ -12,6 +12,7 @@
 
 import { Fragment, type ReactNode } from "react";
 import { matchMember, MENTION_RE, type Mention } from "@core/chat";
+import { useNameColour } from "./names";
 
 /** Who a message mentions, and who is reading. */
 interface MentionCtx {
@@ -116,14 +117,20 @@ function inline(s: string, key: string, ctx: MentionCtx | null): ReactNode[] {
       // A name the server didn't accept (nobody by that name can see the
       // channel) stays plain text, so it can't look like a real mention.
       const who = ctx ? matchMember(m[6], ctx.mentions) : undefined;
-      out.push(who
-        ? <span key={k} className={`mention${who.user_id === ctx!.me ? " me" : ""}`}
-            title={who.user_id === ctx!.me ? "Mentions you" : undefined}>@{who.username}</span>
-        : m[0]);
+      out.push(who ? <MentionChip key={k} who={who} me={who.user_id === ctx!.me} /> : m[0]);
     }
     else out.push(<a key={k} href={m[0]} target="_blank" rel="noopener noreferrer nofollow">{m[0]}</a>);
     last = i + m[0].length;
   }
   if (last < s.length) out.push(s.slice(last));
   return out;
+}
+
+/** An @mention, in the person's name colour (names.tsx). */
+function MentionChip({ who, me }: { who: { user_id: string; username: string }; me: boolean }) {
+  const colour = useNameColour(who.user_id);
+  return (
+    <span className={`mention${me ? " me" : ""}`} style={colour ? { color: colour } : undefined}
+      title={me ? "Mentions you" : undefined}>@{who.username}</span>
+  );
 }

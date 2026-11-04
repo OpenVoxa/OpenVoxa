@@ -30,6 +30,7 @@ import type { ApiCall } from "@core/identity";
 import { Modal } from "./ChannelDialogs";
 import { StickerMessage, StickersTab } from "./stickers";
 import { stickerIdOf } from "@core/stickers";
+import { ColouredName, MIN_NAME_CONTRAST, nameContrast, refreshNames, useServerNameColours } from "./names";
 
 /** What the dialog needs to know about the signed-in account. */
 export interface Me {
@@ -46,6 +47,8 @@ interface PermGroup {
   permissions: string[];
   is_everyone: boolean;
   auto_assign: boolean;
+  /** Name colour, #rrggbb, or null (names.tsx). */
+  colour: string | null;
   members: number;
 }
 
@@ -176,6 +179,8 @@ function GroupsTab({ call, me, reload }: { call: ApiCall; me: Me; reload: number
   const { groups, error, refresh } = useGroupList(call, reload);
   // null: the list; "new": creating; otherwise the id being edited.
   const [editing, setEditing] = useState<string | null>(null);
+  // The group whose colour is being picked, inline in the list.
+  const [colouring, setColouring] = useState<string | null>(null);
   const canManage = me.permissions.includes("manage_groups");
 
   if (error) return <p className="error" role="alert">Couldn't load groups: {error}</p>;
@@ -201,13 +206,20 @@ function GroupsTab({ call, me, reload }: { call: ApiCall; me: Me; reload: number
         only act on people and groups ranked below you. Your rank is {me.rank}, from your highest group.
         Which channels a group can use is set on each channel.
       </p>
+      <NameColoursSwitch call={call} canManage={canManage} onReset={refresh} />
       <ul className="device-list">
         {groups.map((g) => {
           const lock = editLock(me, g);
+          // A colour is cosmetic: allowed on your own rank's group too, so
+          // an administrator can recolour Administrator.
+          const canColour = canManage && g.position <= me.rank;
           return (
-            <li key={g.id}>
+            <li key={g.id} className={colouring === g.id ? "group-row open" : "group-row"}>
+              <div className="member-row">
               <span className="device-name">
-                <strong>{g.name}</strong>
+                <span className="swatch" style={{ background: g.colour ?? "transparent" }}
+                  title={g.colour ? `Name colour ${g.colour}` : "No name colour"} aria-hidden />
+                <strong style={g.colour ? { color: g.colour } : undefined}>{g.name}</strong>
                 <span className="tag small" title="Rank">{g.position}</span>
                 {g.auto_assign && <span className="tag small" title="New accounts join this group">New accounts</span>}
                 <span className="muted small block">
@@ -216,9 +228,26 @@ function GroupsTab({ call, me, reload }: { call: ApiCall; me: Me; reload: number
                   {g.permissions.length ? g.permissions.map(switchLabel).join(", ") : "no switches"}
                 </span>
               </span>
-              {canManage && (lock
-                ? <span className="muted small" title={lock}>Locked</span>
-                : <button className="secondary" onClick={() => setEditing(g.id)}>Edit</button>)}
+              <span className="row-actions">
+                {canColour && (
+                  <button className="secondary" onClick={() => setColouring(colouring === g.id ? null : g.id)}>
+                    Colour
+                  </button>
+                )}
+                {canManage && (lock
+                  ? <span className="muted small" title={lock}>Locked</span>
+                  : <button className="secondary" onClick={() => setEditing(g.id)}>Edit</button>)}
+              </span>
+              </div>
+              {colouring === g.id && (
+                <GroupColour call={call} group={g}
+                  onDone={() => {
+                    setColouring(null);
+                    refresh();
+                    refreshNames();
+                  }}
+                  onCancel={() => setColouring(null)} />
+              )}
             </li>
           );
         })}
@@ -231,6 +260,124 @@ function GroupsTab({ call, me, reload }: { call: ApiCall; me: Me; reload: number
         <p className="muted small">You need the Manage groups switch to change groups.</p>
       )}
     </section>
+  );
+}
+
+/** The server-wide on/off for name colours (Groups tab). */
+function NameColoursSwitch({ call, canManage, onReset }: { call: ApiCall; canManage: boolean; onReset: () => void }) {
+  const enabled = useServerNameColours();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [flash, setFlash] = useState<string | null>(null);
+
+  async function reset() {
+    if (!confirm("Put the default name colours back?\n\nAdministrator orange, Moderator magenta, Member cyan, " +
+      "Everyone none (white). Other groups keep their colours.")) return;
+    setBusy(true);
+    setError(null);
+    setFlash(null);
+    try {
+      const r = await call("/api/v1/name-colours/defaults", { method: "POST" }) as { reset: number; skipped: number };
+      setFlash(r.skipped
+        ? `Defaults restored, except ${r.skipped} group${r.skipped === 1 ? "" : "s"} ranked above you.`
+        : "Default colours restored.");
+      refreshNames();
+      onReset();
+    } catch (err) {
+      setError(errText(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function set(on: boolean) {
+    setBusy(true);
+    setError(null);
+    try {
+      await call("/api/v1/name-colours", { method: "PUT", body: JSON.stringify({ enabled: on }) });
+      refreshNames();
+    } catch (err) {
+      setError(errText(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <label className="check">
+        <input type="checkbox" checked={!!enabled} disabled={!canManage || busy || enabled === null}
+          onChange={(e) => void set(e.target.checked)} />
+        <span>
+          Colour names by group
+          <span className="muted small block">
+            A name shows in the colour of the person's highest group that has one. Everyone on the server sees the
+            same colours; each person can still hide them in Settings, Appearance.
+          </span>
+        </span>
+      </label>
+      {canManage && (
+        <div className="row-actions">
+          <button className="secondary" onClick={() => void reset()} disabled={busy}>Default colours</button>
+        </div>
+      )}
+      {flash && <p className="muted small" role="status">{flash}</p>}
+      {error && <p className="error" role="alert">{error}</p>}
+    </>
+  );
+}
+
+/** Pick (or clear) a group's name colour, with the contrast check. */
+function GroupColour({ call, group, onDone, onCancel }: {
+  call: ApiCall;
+  group: PermGroup;
+  onDone: () => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(group.colour ?? "#ffffff");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const hex = /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : null;
+  const ratio = hex ? nameContrast(hex) : 0;
+  const readable = ratio >= MIN_NAME_CONTRAST;
+
+  async function save(colour: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      await call(`/api/v1/groups/${group.id}`, { method: "PATCH", body: JSON.stringify({ colour }) });
+      onDone();
+    } catch (err) {
+      setError(errText(err));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="group-colour" onSubmit={(e) => { e.preventDefault(); if (hex && readable) void save(hex); }}>
+      <div className="colour-row">
+        <input type="color" value={hex ?? "#ffffff"} onChange={(e) => setValue(e.target.value)}
+          aria-label={`Name colour for ${group.name}`} />
+        <input className="hex" value={value} onChange={(e) => setValue(e.target.value.trim())} maxLength={7}
+          spellCheck={false} aria-label="Colour as #rrggbb" />
+        <strong className="colour-preview" style={hex ? { color: hex } : undefined}>{group.name}</strong>
+      </div>
+      <p className={`small ${hex && !readable ? "error" : "muted"}`}>
+        {!hex ? "Type a colour as #rrggbb."
+          : readable ? `Contrast ${ratio.toFixed(1)}:1 against the background. Readable.`
+          : `Contrast ${ratio.toFixed(1)}:1 is too low (needs ${MIN_NAME_CONTRAST}:1). Pick a lighter colour.`}
+      </p>
+      {error && <p className="error" role="alert">{error}</p>}
+      <div className="row-actions">
+        <button type="button" className="secondary" onClick={onCancel} disabled={busy}>Cancel</button>
+        {group.colour && (
+          <button type="button" className="secondary" onClick={() => void save("")} disabled={busy}>No colour</button>
+        )}
+        <button type="submit" className="primary" disabled={busy || !hex || !readable}>
+          {busy ? "Saving…" : "Save colour"}
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -505,7 +652,7 @@ function MembersTab({ call, me, reload }: { call: ApiCall; me: Me; reload: numbe
             <li key={u.id} className={mode ? "member open" : "member"}>
               <div className="member-row">
                 <span className="device-name">
-                  <strong>{u.username}</strong>
+                  <strong><ColouredName userId={u.id}>{u.username}</ColouredName></strong>
                   {self && <span className="tag small">You</span>}
                   {u.banned && (
                     <span className="tag small danger-tag"

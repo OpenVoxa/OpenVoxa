@@ -21,7 +21,7 @@ import { call as plainCall, type Session } from "./api";
 import { Modal } from "./ChannelDialogs";
 import { checkPassword } from "./password";
 import { PasswordRules } from "./PasswordRules";
-import { IMAGES_IN_TAB, MENTION_NOTIFY, MENTION_SOUND, PREVIEWS_ENCRYPTED, setToggle, useToggle } from "./settings";
+import { IMAGES_IN_TAB, MENTION_NOTIFY, MENTION_SOUND, NAME_COLOURS, PREVIEWS_ENCRYPTED, setToggle, useToggle } from "./settings";
 import { VoiceSettings } from "./VoiceUI";
 import { COLOURS, getColour, setColour, useColour, type ColourSetting } from "./appearance";
 
@@ -157,9 +157,20 @@ function ChatSettings() {
 // ------------------------------------------------------------ appearance
 
 function AppearanceSettings() {
+  const nameColours = useToggle(NAME_COLOURS);
   return (
     <>
       <p className="muted small">Saved in this browser only. Changes show straight away.</p>
+      <label className="check">
+        <input type="checkbox" checked={nameColours} onChange={(e) => setToggle(NAME_COLOURS, e.target.checked)} />
+        <span>
+          Show name colours
+          <span className="muted small block">
+            Names in the colour of the person's highest group, as the server's staff set them. Off: every name
+            in the normal text colour.
+          </span>
+        </span>
+      </label>
       {COLOURS.map((c) => <ColourRow key={c.cssVar} c={c} />)}
       <div className="modal-actions">
         <button className="secondary" onClick={() => COLOURS.forEach((c) => setColour(c, null))}>

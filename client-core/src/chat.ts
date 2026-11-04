@@ -234,6 +234,9 @@ export type ChatEvent =
   | { type: "reports_changed" }
   /** The server's sticker set or its limits changed: refetch the list. */
   | { type: "stickers_changed" }
+  /** Someone's name colour may have changed (group colours, membership,
+   * or the server-wide switch): fetch /name-colours again. */
+  | { type: "names_changed" }
   /** Who is in each voice call (channels you can see, non-empty only). */
   | { type: "voice"; presence: VoicePresence }
   | { type: "error"; message: string };
@@ -288,7 +291,7 @@ function compareMessages(a: ChatMessage, b: ChatMessage): number {
 const GLOBAL_EVENTS = new Set([
   "user_purged", "access_changed", "channel_changed", "channel_deleted",
   "perms_changed", "channel_activity", "voice_changed", "reports_changed",
-  "mention", "stickers_changed",
+  "mention", "stickers_changed", "names_changed",
 ]);
 
 const EVENT_RETRY_MS = 5000;
@@ -701,6 +704,9 @@ export class Chat {
       case "stickers_changed":
         this.#emit({ type: "stickers_changed" });
         break;
+      case "names_changed":
+        this.#emit({ type: "names_changed" });
+        break;
       case "channel_changed":
       case "channel_deleted":
         this.#view?.refreshMembers();
@@ -708,6 +714,8 @@ export class Chat {
         this.#refreshVoiceSoon();
         break;
       case "perms_changed":
+        // Group membership decides name colours too.
+        this.#emit({ type: "names_changed" });
         if (!frame.user_id || frame.user_id === this.userId) {
           this.#emit({ type: "me_changed" });
           this.refreshChannels().catch(() => {});

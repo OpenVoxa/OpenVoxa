@@ -33,18 +33,20 @@ import (
 // though neither of you can then take it away from the other.
 
 type permGroup struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Position    int       `json:"position"`
-	Permissions []string  `json:"permissions"`
-	IsEveryone  bool      `json:"is_everyone"`
-	AutoAssign  bool      `json:"auto_assign"`
-	Members     int       `json:"members"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Position    int      `json:"position"`
+	Permissions []string `json:"permissions"`
+	IsEveryone  bool     `json:"is_everyone"`
+	AutoAssign  bool     `json:"auto_assign"`
+	// Name colour (#rrggbb), or null for none (namecolours.go).
+	Colour    *string   `json:"colour"`
+	Members   int       `json:"members"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 const permGroupColumns = `g.id::text, g.name, g.position, g.permissions,
-	g.is_everyone, g.auto_assign,
+	g.is_everyone, g.auto_assign, g.colour,
 	(CASE WHEN g.is_everyone
 	      THEN (SELECT count(*) FROM users u WHERE u.deleted_at IS NULL)
 	      ELSE (SELECT count(*) FROM user_perm_groups ug
@@ -56,7 +58,7 @@ const permGroupColumns = `g.id::text, g.name, g.position, g.permissions,
 func scanPermGroup(row pgx.Row) (permGroup, error) {
 	var g permGroup
 	err := row.Scan(&g.ID, &g.Name, &g.Position, &g.Permissions,
-		&g.IsEveryone, &g.AutoAssign, &g.Members, &g.CreatedAt)
+		&g.IsEveryone, &g.AutoAssign, &g.Colour, &g.Members, &g.CreatedAt)
 	return g, err
 }
 
@@ -96,6 +98,8 @@ type groupRequest struct {
 	Position    *int      `json:"position"`
 	Permissions *[]string `json:"permissions"`
 	AutoAssign  *bool     `json:"auto_assign"`
+	// "" clears the colour.
+	Colour *string `json:"colour"`
 }
 
 // checkGroupFields validates the fields present in req against the
@@ -133,7 +137,28 @@ func checkGroupFields(actor Session, req groupRequest) (int, string) {
 		}
 		*req.Permissions = clean
 	}
+	if req.Colour != nil {
+		c, msg := checkNameColour(*req.Colour)
+		if msg != "" {
+			return http.StatusBadRequest, msg
+		}
+		*req.Colour = c
+	}
 	return 0, ""
+}
+
+// colourOnly reports whether an edit changes nothing but the colour.
+func (req groupRequest) colourOnly() bool {
+	return req.Colour != nil && req.Name == nil && req.Position == nil &&
+		req.Permissions == nil && req.AutoAssign == nil
+}
+
+// nullIfEmpty turns a cleared colour into SQL NULL.
+func nullIfEmpty(s *string) *string {
+	if s == nil || *s == "" {
+		return nil
+	}
+	return s
 }
 
 func (a *API) createGroupPerm(w http.ResponseWriter, r *http.Request) {
@@ -159,10 +184,10 @@ func (a *API) createGroupPerm(w http.ResponseWriter, r *http.Request) {
 
 	g, err := scanPermGroup(a.pool.QueryRow(r.Context(),
 		`WITH g AS (
-		   INSERT INTO perm_groups (name, position, permissions, auto_assign)
-		   VALUES ($1, $2, $3, $4) RETURNING *)
+		   INSERT INTO perm_groups (name, position, permissions, auto_assign, colour)
+		   VALUES ($1, $2, $3, $4, $5) RETURNING *)
 		 SELECT `+permGroupColumns+` FROM g`,
-		*req.Name, *req.Position, *req.Permissions, *req.AutoAssign))
+		*req.Name, *req.Position, *req.Permissions, *req.AutoAssign, nullIfEmpty(req.Colour)))
 	if err != nil {
 		if isUniqueViolation(err) {
 			writeError(w, http.StatusConflict, "a group with that name already exists")
@@ -187,6 +212,15 @@ func (a *API) createGroupPerm(w http.ResponseWriter, r *http.Request) {
 func (a *API) loadGroupForChange(
 	w http.ResponseWriter, r *http.Request, actor Session, groupID string,
 ) (permGroup, bool) {
+	return a.loadGroupAtRank(w, r, actor, groupID, false)
+}
+
+// loadGroupAtRank is loadGroupForChange, optionally also allowing a group
+// at the caller's own rank: a colour is cosmetic, so an administrator may
+// recolour the Administrator group, which no other change allows.
+func (a *API) loadGroupAtRank(
+	w http.ResponseWriter, r *http.Request, actor Session, groupID string, sameRankOK bool,
+) (permGroup, bool) {
 	g, err := scanPermGroup(a.pool.QueryRow(r.Context(),
 		`SELECT `+permGroupColumns+` FROM perm_groups g WHERE g.id = $1`, groupID))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -198,7 +232,7 @@ func (a *API) loadGroupForChange(
 		writeError(w, http.StatusInternalServerError, "could not load group")
 		return g, false
 	}
-	if !perm.Outranks(actor.Rank, g.Position) {
+	if !perm.Outranks(actor.Rank, g.Position) && !(sameRankOK && actor.Rank == g.Position) {
 		writeError(w, http.StatusForbidden,
 			"you cannot change a group at or above your own rank")
 		return g, false
@@ -213,8 +247,12 @@ func (a *API) editGroupPerm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	g, ok := a.loadGroupForChange(w, r, actor, r.PathValue("id"))
+	g, ok := a.loadGroupAtRank(w, r, actor, r.PathValue("id"), req.colourOnly())
 	if !ok {
+		return
+	}
+	if req.colourOnly() {
+		a.editGroupColour(w, r, actor, g, req)
 		return
 	}
 	if g.IsEveryone && (req.Name != nil || req.Position != nil || req.AutoAssign != nil) {
@@ -252,10 +290,12 @@ func (a *API) editGroupPerm(w http.ResponseWriter, r *http.Request) {
 		     name        = COALESCE($2, name),
 		     position    = COALESCE($3, position),
 		     permissions = COALESCE($4, permissions),
-		     auto_assign = COALESCE($5, auto_assign)
+		     auto_assign = COALESCE($5, auto_assign),
+		     colour      = CASE WHEN $6::boolean THEN $7 ELSE colour END
 		   WHERE id = $1 RETURNING *)
 		 SELECT `+permGroupColumns+` FROM g`,
-		g.ID, req.Name, req.Position, req.Permissions, req.AutoAssign))
+		g.ID, req.Name, req.Position, req.Permissions, req.AutoAssign,
+		req.Colour != nil, nullIfEmpty(req.Colour)))
 	if err != nil {
 		if isUniqueViolation(err) {
 			writeError(w, http.StatusConflict, "a group with that name already exists")
@@ -277,6 +317,33 @@ func (a *API) editGroupPerm(w http.ResponseWriter, r *http.Request) {
 	// Switches decide administrator, which decides channel access, so
 	// treat any edit as a possible access change for its members.
 	a.afterBroadAccessChange(r.Context())
+	writeJSON(w, http.StatusOK, g)
+}
+
+// editGroupColour changes only a group's colour. Nothing about access
+// moves, so clients are only told to refetch the name colours.
+func (a *API) editGroupColour(w http.ResponseWriter, r *http.Request, actor Session, g permGroup, req groupRequest) {
+	if code, msg := checkGroupFields(actor, req); code != 0 {
+		writeError(w, code, msg)
+		return
+	}
+	g, err := scanPermGroup(a.pool.QueryRow(r.Context(),
+		`WITH g AS (
+		   UPDATE perm_groups SET colour = $2 WHERE id = $1 RETURNING *)
+		 SELECT `+permGroupColumns+` FROM g`,
+		g.ID, nullIfEmpty(req.Colour)))
+	if err != nil {
+		slog.Error("changing group colour", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not change the colour")
+		return
+	}
+	detail := "none"
+	if g.Colour != nil {
+		detail = *g.Colour
+	}
+	a.auditGroup(r.Context(), actor.UserID, "", g.ID, g.Name, "colour", detail)
+	slog.Info("group colour changed", "actor_id", actor.UserID, "group_id", g.ID)
+	a.notifyNamesChanged()
 	writeJSON(w, http.StatusOK, g)
 }
 
