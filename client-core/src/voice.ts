@@ -165,8 +165,10 @@ export interface VoiceOptions {
 export interface AudioDevices {
   inputs: MediaDeviceInfo[];
   outputs: MediaDeviceInfo[];
-  /** The browser can route output to a chosen device (not Firefox/Safari). */
+  /** The browser can route output to a chosen device (not Safari). */
   canPickOutput: boolean;
+  /** Device names are visible (the page may use the microphone). */
+  named: boolean;
 }
 
 /**
@@ -903,14 +905,20 @@ export class VoiceClient {
 
   // ------------------------------------------------------------ devices
 
-  async listDevices(): Promise<AudioDevices> {
-    const [inputs, outputs] = await Promise.all([
-      Room.getLocalDevices("audioinput", false),
-      Room.getLocalDevices("audiooutput", false),
-    ]);
+  /**
+   * Until the page may use the microphone, browsers hide device names
+   * and list one unnamed placeholder per kind. `ask` asks for the
+   * microphone (the browser's prompt; the mic is released straight
+   * away) so the real list comes back.
+   */
+  async listDevices(ask = false): Promise<AudioDevices> {
+    const inputs = await Room.getLocalDevices("audioinput", ask);
+    const outputs = await Room.getLocalDevices("audiooutput", false);
+    const real = (l: MediaDeviceInfo[]) => l.filter((d) => d.deviceId !== "");
     return {
-      inputs,
-      outputs,
+      inputs: real(inputs),
+      outputs: real(outputs),
+      named: inputs.some((d) => d.label !== ""),
       canPickOutput: typeof HTMLMediaElement !== "undefined" && "setSinkId" in HTMLMediaElement.prototype,
     };
   }
