@@ -1918,6 +1918,8 @@ to pick their own colours later, so every colour stays a variable.
       sent; a removed sticker shows "Sticker removed". Images are
       fetched with the session token and shown from blob: URLs (no
       signed links to expire). Add/remove go in the moderation log.
+      Picking lives in a Stickers tab of the composer's emoji picker
+      (Ryan, 2026-11-04: no separate button); reactions stay emoji only.
       Not built: `:name:` shortcodes for stickers in the composer
       (search by name is in the picker).
       Decided with Ryan:

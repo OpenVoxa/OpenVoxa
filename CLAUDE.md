@@ -190,7 +190,8 @@ ST1-ST5 + ST7; decisions.md Open items "Custom stickers"): limits 1 MB,
 512 x 512 px, 100 per server (admin-editable, Server settings >
 Stickers), `manage_stickers` switch (Moderator by default), migration
 0024, `httpapi/stickers.go`, client-core `stickers.ts` (message token
-`[sticker:<uuid>]`), client-web `stickers.tsx` (picker 🏷️ + tab). Also:
+`[sticker:<uuid>]`), client-web `stickers.tsx` (Stickers tab inside the composer's emoji
+picker, not for reactions; Server settings tab). Also:
 the client now refetches `/me` on start, so a switch added by a server
 update shows without signing out. Go test cache volume `ovx-gomod` on
 Docker (`-v ovx-gomod:/go/pkg/mod` in the docker run test command).
