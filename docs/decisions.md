@@ -328,12 +328,16 @@ Decided with Ryan, 2026-11-04 (desktop step 2).
   sound, works for whole screens on Windows, and is greyed out and
   unticked (with the reason) for windows and on other systems. All
   system sound includes the call's own voices, so the others could
-  hear themselves back (SD2: no echo seen, recheck with per-app sound).
+  hear themselves back (SD2). Fixed in step 3 with `restrictOwnAudio`
+  (RS2, "Per-app share sound"). Minimized windows are left out of
+  Edge's picker (RS3); ours very likely too (unchecked). To look at
+  with window sound.
 - **Next (Ryan: "important"):** per-app sound, below.
 
-### Per-app share sound (desktop step 3, to design)
+### Per-app share sound (desktop step 3)
 
-Raised by Ryan, 2026-11-04, after SP2. Not designed yet: discuss first.
+Raised by Ryan, 2026-11-04, after SP2. Design agreed with Ryan the same
+day (A-D below); background first.
 
 - **The limit is Electron's, not Windows'.** Since Windows 10 2004
   (build 19041) Windows can record one process tree's sound
@@ -349,6 +353,47 @@ Raised by Ryan, 2026-11-04, after SP2. Not designed yet: discuss first.
   in "Server browser and desktop shell": a tiny preload API checked by
   sender), offering only "the sound for the share just picked". Linux
   and Mac stay as they are.
+
+Agreed design (Windows 10 2004 or later; older Windows, Mac and Linux
+unchanged):
+
+- **What is sent.** A window share: the sound of the program owning the
+  window and everything it starts. A whole-screen share: all sound
+  except OpenVoxa's own process tree, so the call never hears itself.
+- **A. Separate helper program, not an addon.** `openvoxa-audio.exe`
+  (Rust) ships in the app folder; the main process starts it when Share
+  is clicked ("include this window's process tree" or "exclude
+  OpenVoxa") and reads raw PCM from it. A crash costs only the share's
+  sound, no rebuild per Electron version, and it cross-builds on Docker.
+  About 5-20 ms extra latency, fine for share sound. The helper finds
+  the window's process itself (`GetWindowThreadProcessId` on the HWND in
+  the source ID).
+- **B. Process tree, not the exact process.** Covers nearly every app.
+  Apps whose sound comes from an unrelated process (some Store apps,
+  games run through a separate launcher): share the screen instead.
+- **C. Try Chromium first for screens.** Recent Chromium has a
+  constraint that leaves the browser's own sound out of a system-sound
+  share (`restrictOwnAudio`). If Electron 45 honours it with `loopback`,
+  the echo half needs no helper. Checked by experiment before relying
+  on it; window sound needs the helper either way. **Result
+  (2026-11-04): it works.** RO1, a throwaway Electron 45 test app on
+  Ryan's Windows PC, recorded its own 1 kHz beep through `loopback`
+  without the constraint and not with it. The web client now always
+  asks for share sound with `restrictOwnAudio: true` (ignored where
+  unknown); RS1-RS3 passed (screen share still carries other apps'
+  sound, no echo of the call's voices, Edge tab sharing unchanged). So
+  the helper is needed for window sound only.
+- **D. Share Sound tickbox.** Enabled for windows too where supported,
+  ticked by default as for screens; greyed out with the reason
+  elsewhere.
+- **The page's side.** A narrow preload in server views hands the page
+  the PCM for the share just picked, and nothing else; the page cannot
+  start a recording, only the user's click in the picker can. The page
+  turns it into an audio track published as the share's sound (E2EE as
+  usual). The helper stops when the share ends or the page goes away.
+- **Order:** (1) test build for C, (2) the helper alone, tested on
+  Windows by writing a WAV, (3) preload and page side, (4) full test
+  steps.
 
 ### Stay signed in
 
