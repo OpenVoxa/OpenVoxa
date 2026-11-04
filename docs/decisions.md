@@ -309,6 +309,23 @@ the pane is desktop-only (browser users keep one server per tab).
   picker; we draw our own) and E2EE tested inside it. Tray,
   notifications, auto-update and installers later.
 
+### Stay signed in
+
+Decided by Ryan, 2026-11-04, after ED5 (the desktop app signed him out
+on every restart, since closing it is closing the tab).
+
+- **"Stay signed in"** on the login and sign-up page, ticked by default,
+  remembered per browser. Ticked: the session and the unlock copy of the
+  local data key go in localStorage and survive closing the tab, the
+  browser or the desktop app, until the 30-day expiry or sign-out.
+  Unticked: sessionStorage, as before (gone when the tab closes).
+- **Still locked by the server:** the unlock copy is encrypted under the
+  per-session secret the server holds, so signing the session out (here,
+  "end other sessions", or from another device) still locks a lost
+  laptop's keys.
+- **Tabs:** a second tab picks up the stored session but is refused by
+  the one-tab-per-account Web Lock, as before; it never signs anyone out.
+
 ### Speaking indicator
 
 Ryan, 2026-11-04 (ED7): the green ring lagged about a second both ways.
