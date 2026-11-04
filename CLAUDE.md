@@ -172,8 +172,6 @@ IDs (AR1-AR6): decisions.md Open items and Implementation notes.
 - Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI).
 - Known gaps: K1 recovery flows 2-5 deferred; no @everyone/@group;
   force-PTT is advisory only; no per-group share limits.
-- Pre-existing `gofmt` drift in httpapi.go, devices.go, modlog.go,
-  gif.go (import order, alignment); harmless, fix in its own commit.
 - **Next: Ryan to choose.** Candidates: a server browser (decisions.md
   Open items); real force-PTT (`setPublishSources` in livekitapi.go is
   ready); a per-user upload test in the share dialog; zxcvbn (discuss

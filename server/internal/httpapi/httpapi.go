@@ -23,10 +23,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/openvoxa/openvoxa/server/internal/blob"
-	"github.com/openvoxa/openvoxa/server/internal/keystore"
 	"github.com/openvoxa/openvoxa/server/internal/config"
 	"github.com/openvoxa/openvoxa/server/internal/gif"
 	"github.com/openvoxa/openvoxa/server/internal/hub"
+	"github.com/openvoxa/openvoxa/server/internal/keystore"
 	"github.com/openvoxa/openvoxa/server/internal/perm"
 	"github.com/openvoxa/openvoxa/server/internal/ratelimit"
 	"github.com/openvoxa/openvoxa/server/internal/unfurl"
@@ -76,8 +76,8 @@ type API struct {
 
 	// One key per account for what the server can read; destroyed on
 	// account deletion (crypto-shredding). See sealing.go.
-	keys *keystore.Store
-	uploadLimit   *ratelimit.Limiter
+	keys        *keystore.Store
+	uploadLimit *ratelimit.Limiter
 
 	// Signs attachment download links. Generated per process: a restart
 	// invalidates outstanding links, and clients refetch history to get

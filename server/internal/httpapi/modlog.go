@@ -16,10 +16,10 @@ import (
 // a report depending on the action, and the row may be gone by now, so
 // both names are best effort and may be empty.
 type modLogEntry struct {
-	ID        string    `json:"id"`
-	Actor     string    `json:"actor"`
-	Action    string    `json:"action"`
-	SubjectID *string   `json:"subject_id"`
+	ID        string  `json:"id"`
+	Actor     string  `json:"actor"`
+	Action    string  `json:"action"`
+	SubjectID *string `json:"subject_id"`
 	// The account acted on: the banned or deleted user, the author of a
 	// deleted message, or the accused in a report.
 	SubjectUser string `json:"subject_user"`
