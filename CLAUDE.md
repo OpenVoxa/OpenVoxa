@@ -159,13 +159,15 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 
 ## Current state (rewrite every session)
 
-_2026-11-04._ **Desktop app step 2** done (`3898da4`): our own screen
-share picker in the pane (Screens/Windows tabs, live thumbnails;
-ED8, SP1-SP7, SD1 passed). Sound = Electron's whole-system loopback,
-whole screens on Windows only. Electron gotchas (display-capture
-permission, cancel = AbortError, Xvfb needs `-extension MIT-SHM` and
-openbox) in decisions.md Implementation notes. Step 1 (`8cfe8fa`):
+_2026-11-04._ **Desktop step 3 (per-app share sound) under way.**
+Design agreed with Ryan (decisions.md Feature decisions "Per-app share
+sound", A-D and build order). Stage 1 done (`369814d`): share sound asks
+for `restrictOwnAudio`, which Electron 45 (Chromium 156) honours with
+`loopback`, so whole-screen shares no longer carry OpenVoxa's own sound
+(RO1, RS1-RS3 passed). The helper is now needed for window sound only.
+Step 2 (`3898da4`): our own picker in the pane. Step 1 (`8cfe8fa`):
 shell, one sandboxed view + partition per server, origin lock.
+Electron gotchas in decisions.md Implementation notes.
 
 - **Stay signed in** on login, ticked by default (SS1-SS4 passed).
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
@@ -180,11 +182,13 @@ shell, one sandboxed view + partition per server, origin lock.
 - Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI).
 - Known gaps (decisions.md Open items): K1 recovery flows 2-5 deferred;
   no @everyone/@group; no per-group share limits.
-- **Next (Ryan: important): desktop step 3, per-app share sound.**
-  Windows process loopback (one app's sound for a window share; all
-  sound except OpenVoxa for a screen share, which also ends the echo
-  risk). Needs a Rust native helper and the first, narrow preload for
-  server views. Design with Ryan first: decisions.md Feature
-  decisions "Per-app share sound". Then Ryan's backlog (decisions.md
-  "Planned: server icons, updates, bug reports, channel menus,
-  avatars"): discuss each before building.
+- **Next: step 3 stage 2, the Rust helper** `openvoxa-audio.exe`:
+  process-loopback capture of one window's process tree (HWND from the
+  source ID -> `GetWindowThreadProcessId`), PCM on stdout. Cross-build
+  on Docker (`rust:1-bookworm` is pulled; add the
+  `x86_64-pc-windows-gnu` target + mingw). Test alone on Ryan's PC by
+  writing a WAV, then stage 3: preload + page track, picker tickbox for
+  windows. Minimized windows: check whether our picker lists them.
+  Ryan's PC test files are served from the scratchpad, never committed.
+  Then Ryan's backlog (decisions.md "Planned: server icons, updates,
+  bug reports, channel menus, avatars"): discuss each before building.
