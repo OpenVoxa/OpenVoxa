@@ -394,6 +394,13 @@ unchanged):
 - **Order:** (1) test build for C, (2) the helper alone, tested on
   Windows by writing a WAV, (3) preload and page side, (4) full test
   steps.
+- **Stage 2 done (2026-11-04):** `client-desktop/audio-helper/`
+  (`build-windows.sh` cross-builds on Docker; system DLLs only). Tested
+  through a throwaway Electron app reading its stdout as the app will:
+  WH1 (an Edge window: `msedge.exe` found from the picker's source ID
+  `window:<HWND>:0`, 7.98 s of 8 received, first sound after about
+  40 ms, clean WAV, exits when stdin closes), WH2 (another app's sound
+  stays out), WH3 (a silent window: silence, no error).
 
 ### Stay signed in
 
@@ -1746,6 +1753,18 @@ constraints`, not NotAllowedError, so the web client treats both as
 `-extension MIT-SHM` or screen capture fails ("Failed to initialize
 pixel buffer", empty source list), and run a window manager (openbox)
 or no windows are listed.
+
+**Windows process loopback (desktop step 3, found by experiment).**
+Chromium 156's `restrictOwnAudio` constraint works with Electron's
+`loopback`: the app's own sound is left out of a whole-screen share
+(RO1). In the helper (`windows` crate 0.62): the activation
+PROPVARIANT and AUDIOCLIENT_ACTIVATION_PARAMS are laid out by hand
+(`#[repr(C)]`) because the crate's PROPVARIANT type keeps changing; the
+completion handler must also implement IAgileObject (empty
+`IAgileObject_Impl`); `CreateEventW` needs the `Win32_Security`
+feature. Windows sends packets continuously while the target is silent
+(WH3), so the reader gets a steady 192,000 bytes a second. Electron's
+`desktopCapturer` window IDs are `window:<HWND as decimal>:0`.
 
 **Only a device removes its own duplicate leaves.** After rejoining from
 a GroupInfo a device can hold two leaves. Another member cannot tell

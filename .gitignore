@@ -14,6 +14,7 @@ build/
 # Electron
 /client-desktop/out/
 /client-desktop/release/
+/client-desktop/audio-helper/target/
 
 # Environment and secrets
 .env
