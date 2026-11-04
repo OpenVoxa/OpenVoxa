@@ -30,8 +30,8 @@ import {
   createLocalAudioTrack,
   createLocalScreenTracks,
   isE2EESupported,
+  LocalAudioTrack,
   type AudioCaptureOptions,
-  type LocalAudioTrack,
   type LocalTrack,
   type Participant,
   type RemoteParticipant,
@@ -168,6 +168,20 @@ export interface VoiceOptions {
   createWorker: () => Worker;
   /** Remembered choices (devices, volumes, push-to-talk). */
   store: KeyValueStore;
+  /**
+   * The desktop app's window share sound: asked for after a share that
+   * wanted sound came back without any (a window share). Null when there
+   * is none (a browser, or Share Sound unticked). onFail reports the
+   * sound stopping on its own mid-share.
+   */
+  windowShareSound?: (onFail: (reason: string) => void) => Promise<ShareSound | null>;
+}
+
+/** A share's sound from outside getDisplayMedia (the desktop app). */
+export interface ShareSound {
+  track: MediaStreamTrack;
+  /** Stops the recording behind the track. */
+  stop: () => void;
 }
 
 /** Which audio devices exist; labels are empty until mic permission. */
@@ -298,6 +312,8 @@ export class VoiceClient {
   /** A share's sound, taken down by a server mute and kept for the unmute
    * (screen capture audio can't be reopened without the browser's picker). */
   #heldShareAudio: LocalTrack | null = null;
+  /** Stops the desktop app's window share sound, if one runs. */
+  #stopWindowSound: (() => void) | null = null;
   #canPublish = false;
   #muted = false;
   #deafened = false;
@@ -645,6 +661,8 @@ export class VoiceClient {
     this.#screenTracks = [];
     this.#heldShareAudio?.stop();
     this.#heldShareAudio = null;
+    this.#stopWindowSound?.();
+    this.#stopWindowSound = null;
     this.#mic?.stop();
     this.#mic = null;
     for (const el of this.#audioEls.values()) el.remove();
@@ -985,10 +1003,28 @@ export class VoiceClient {
       audio: s.audio ? SHARE_AUDIO : false,
       resolution: { width: s.width, height: s.height, frameRate: s.fps },
     });
+    // A window share in the desktop app: its sound comes separately.
+    let windowSound: ShareSound | null = null;
+    if (s.audio && !tracks.some((t) => t.kind === Track.Kind.Audio) && this.#opts.windowShareSound) {
+      try {
+        windowSound = await this.#opts.windowShareSound((reason) => {
+          if (this.#stopWindowSound === windowSound?.stop) this.#notice(`Your share's sound stopped: ${reason}`);
+        });
+      } catch (err) {
+        this.#notice(`Couldn't share the window's sound: ${errorText(err)}`);
+      }
+      if (windowSound) {
+        const audio = new LocalAudioTrack(windowSound.track, undefined, false);
+        audio.source = Track.Source.ScreenShareAudio;
+        tracks.push(audio);
+      }
+    }
     if (this.#room !== room) {
       for (const t of tracks) t.stop(); // left the call meanwhile
+      windowSound?.stop();
       return;
     }
+    this.#stopWindowSound = windowSound?.stop ?? null;
     this.#screenTracks = tracks;
     if (limit) {
       for (const t of tracks) if (t.kind === Track.Kind.Video) await capToLimit(t, limit);
@@ -1065,6 +1101,8 @@ export class VoiceClient {
     this.#screenTracks = [];
     this.#heldShareAudio?.stop();
     this.#heldShareAudio = null;
+    this.#stopWindowSound?.();
+    this.#stopWindowSound = null;
     for (const t of tracks) {
       try {
         await this.#room?.localParticipant.unpublishTrack(t, true);

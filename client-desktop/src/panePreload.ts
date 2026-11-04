@@ -10,7 +10,7 @@ import { contextBridge, ipcRenderer } from "electron";
 
 type ServerList = { servers: { origin: string }[]; selected: string | null };
 type ServerError = { origin: string; message: string | null };
-type ShareOpen = { host: string; audio: boolean; soundSupported: boolean };
+type ShareOpen = { host: string; audio: boolean; screenSound: boolean; windowSound: boolean };
 type ShareSource = { id: string; name: string; screen: boolean; thumbnail: string | null; icon: string | null };
 
 contextBridge.exposeInMainWorld("shell", {
