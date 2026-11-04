@@ -335,6 +335,56 @@ LiveKit's speaker updates (`ActiveSpeakersChanged`) default to every
 enough, the fallback is measuring levels in each client (WebAudio on
 every incoming track): near-instant, but CPU per participant.
 
+### Planned: server icons, updates, bug reports, channel menus, avatars
+
+Ryan's list, 2026-11-04. Recorded, not designed in detail yet: each gets
+a design talk before it is built. Recommendations below are Claude's.
+
+- **Server icon in the pane.** The administrator uploads an icon in
+  Server settings (with the server name); the pane shows it in place
+  of the letter, same 48 px circle, same hover and selected look; no
+  icon means the letter, as now. Recommended: an unauthenticated
+  `GET /api/v1/server-info` (name, icon URL) that the shell fetches,
+  since the pane must show icons before anyone signs in. The shell
+  accepts PNG, JPEG or WebP only (no SVG: it can carry script), checks
+  the size, and hands the pane a `data:` URL, so the pane never loads
+  anything from a server. Open: size limits; a square crop tool or
+  centre crop.
+- **Updates.** Two parts update separately. The web client already
+  updates itself: each server serves its own, so a refresh picks it up.
+  Only the desktop shell needs an updater. Ryan: the user chooses when
+  to update, with a note like "Some features may not work properly, or
+  at all, until you update", but updating must be easy (one click).
+  Recommended: electron-updater checking GitHub Releases; the app
+  downloads in the background and shows the note with "Restart to
+  Update". Needs an installer (NSIS) instead of the zip, and ideally
+  code signing (otherwise Windows warns on every install). Open:
+  signing (cost), how often to check, whether a server can say "this
+  server needs app version X or later".
+- **Bug reports.** Ryan is one person and can't test everything, so
+  users need an easy way to report bugs. Open: where reports go. Each
+  server is an island, but client bugs belong to the OpenVoxa project,
+  not the server's administrator. Options: (a) GitHub Issues (public,
+  needs a GitHub account; a "Report a Bug" button opens a prefilled
+  issue with app and server version), (b) in-app form sent to the
+  server's administrator (like message reports, but they are not the
+  developer), (c) both: admin first, who forwards. Whatever is
+  chosen, a report must never include message content or keys without
+  the user seeing it first.
+- **Right-click menus on text and voice channels.** Like the menu on a
+  person in a call. Open: the entries. Likely: text: Mark as Read, Mute
+  Sounds, Copy Link, Channel Settings and Delete Channel (with
+  `manage_channels`; greyed out otherwise); voice: Join, Mute Sounds,
+  Channel Settings, Delete Channel.
+- **User avatars.** In voice (and messages, member lists) everyone shows
+  a generic letter. Users upload their own picture in Settings
+  (crop to a circle, same footprint as the letter), per server (islands:
+  a picture on one server is not on another). Stored as a server blob,
+  visible to everyone on that server, so not end-to-end encrypted
+  (like usernames). Open: size and type limits, animated GIFs, whether
+  moderators can remove an offensive avatar (likely yes, logged in
+  the moderation log).
+
 ### Custom sounds
 
 Discussed with Ryan, 2026-11-04. Stage 1 built and verified the same day
@@ -2337,8 +2387,15 @@ to pick their own colours later, so every colour stays a variable.
       `display-capture` is refused and the share dialog just closes,
       ED8), then E2EE screen share tested inside the app.
 - [ ] Desktop app, later: badges via a preload, voice handoff between
-      servers, global push-to-talk, server name and icon from Server
-      settings, tray, notifications, auto-update, installers, signing.
+      servers, global push-to-talk, tray, notifications.
+- [ ] Server icon and name in the pane, set in Server settings (Feature
+      decisions, "Planned: server icons, updates, bug reports, channel
+      menus, avatars"; Ryan, 2026-11-04).
+- [ ] Desktop updates: user-confirmed, one click, with a "may not work
+      until you update" note; installer and signing (same section).
+- [ ] Bug reports from users (same section; where they go is open).
+- [ ] Right-click menus on text and voice channels (same section).
+- [ ] User avatars, uploaded in Settings, per server (same section).
 
 - [x] Custom sounds, stage 1. Done 2026-11-04 (Feature decisions,
       "Custom sounds"; CS1-CS10).

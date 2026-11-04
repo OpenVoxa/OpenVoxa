@@ -15,8 +15,8 @@ Fixed decisions (decisions.md "Blocking decisions"; don't reopen):
 
 - **Go server** + PostgreSQL. Rust only for pieces that need it.
 - **Electron desktop client** (bundled Chromium = same WebRTC/E2EE/screen
-  capture on every OS) plus the web client. Not started
-  (`client-desktop/` doesn't exist); it will load the same bundles.
+  capture on every OS) plus the web client. `client-desktop/`: a shell
+  with a server pane; each server's own web client loads in its own view.
 - **AGPLv3** (`AGPL-3.0-or-later` SPDX header on every file), DCO sign-off.
 - **Our own protocol, not Matrix**; MLS (RFC 9420) for group crypto.
 - **No federation in v1.** Server identity stays in the protocol.
@@ -57,6 +57,9 @@ client-core/       TypeScript protocol + crypto, no UI. src/: mls/ (ts-mls,
                    scripts/patch-ts-mls.mjs (fixes a ts-mls bug in node_modules)
 client-web/        Vite + React + TS, plain CSS; imports client-core source.
                    Embedded into the server (webui.go), served at /.
+client-desktop/    Electron shell: src/main.ts (window, server views,
+                   permissions, origin lock), src/panePreload.ts (the only
+                   bridge, pane only), pane/ (server pane, plain HTML/JS).
 deploy/            docker-compose.yml, caddy/, livekit.yaml, .env.example, scripts/
 ```
 
@@ -68,6 +71,10 @@ never in the media path) · Caddy optional for TLS · MLS ciphersuite 1.
 - `cd client-core && npm run build` (and `npx tsc --noEmit`: the build
   doesn't type-check)
 - `cd client-web && npm run build` (runs tsc)
+- `cd client-desktop && npm run package:win`: Windows zip in `release/`.
+  Smoke-test in a throwaway `node:22-bookworm` container with Xvfb
+  (`--remote-debugging-port` to eval JS). For Ryan: `python3 -m
+  http.server 8099 --bind 10.0.3.9`, new file name per build, check he fetched it.
 - Go is not installed on Docker. Quick compile, vet and tests from
   `server/`:
   `docker run --rm -v "$PWD":/src -v ovx-gomod:/go/pkg/mod -w /src golang:1.26 sh -c 'go vet ./internal/httpapi/ && go test ./internal/<pkg>/ && go build ./...'`
@@ -152,25 +159,30 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 
 ## Current state (rewrite every session)
 
-_2026-11-04._ Step 13 (web client M1-M5) and everything since are done;
-latest: **zxcvbn password strength** (server only, score >= 3, replaces
-the 3-of-4 kinds and pattern rules; `POST /api/v1/auth/password-check`
-drives a meter on sign-up and password change; ZX1-ZX7 passed). Before
-that: custom sounds, sounds on the Voice Speaker, Show My Devices.
-Details: decisions.md Feature decisions "Password rules".
+_2026-11-04._ **Desktop app step 1** done and pushed (`8cfe8fa`): Electron
+shell, server pane, one sandboxed view + partition per server, origin
+lock, permission allowlist (ED1-ED7, ED9-ED11 passed). Server browser
+design decided: own view per server, background servers stay
+connected, pane desktop-only (decisions.md Feature decisions "Server
+browser and desktop shell"). LiveKit speaking updates every 200 ms,
+smoothing 2 (`e8f9d2e`, VA3 passed).
 
+- **Stay signed in** on login, ticked by default (localStorage; SS1-SS4
+  passed; decisions.md Feature decisions "Stay signed in").
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts: tuckilufigus (Ryan), staff, openvoxaadmin,
   test0user. Voice channels: voice-general, vip-voice (admins only).
-- Docker deploy: LiveKit v1.13.11 on host networking (server reaches it
+- Docker deploy: LiveKit v1.13.11, host networking (server reaches it
   at `host.docker.internal:7880`), `update-node-ip.sh` on cron. Blobs on
   bind mount `/mnt/openvoxa-blobs`. Account keys in volume
   `deploy_key-data`, wrapped under a KEK (Ryan holds the only copies),
   backed up daily 03:30 to `~/openvoxa-key-backups` (7 days). Closed off:
-  Ryan is the only user (port 8443).
+  Ryan is the only user. Ryan's desktop app runs build `-b`.
 - Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI).
 - Known gaps (decisions.md Open items): K1 recovery flows 2-5 deferred;
   no @everyone/@group; no per-group share limits.
-- **Next:** server browser + Electron shell (decisions.md "Server browser
-  and desktop shell", three open questions: discuss with Ryan first).
-  Later: per-user upload test in the share dialog.
+- **Next:** desktop step 2, our own screen share picker (ED8: today
+  `display-capture` is refused and the share dialog just closes; also
+  make the web client say why). Ryan's backlog, recorded not designed
+  (decisions.md "Planned: server icons, updates, bug reports, channel
+  menus, avatars"): discuss each before building.
