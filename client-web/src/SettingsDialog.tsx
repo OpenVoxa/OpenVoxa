@@ -19,7 +19,7 @@ import { storage } from "@core/storage";
 import type { VoiceClient, VoiceSnapshot } from "@core/voice";
 import { call as plainCall, type Session } from "./api";
 import { Modal } from "./ChannelDialogs";
-import { checkPassword } from "./password";
+import { usePasswordCheck } from "./password";
 import { PasswordRules } from "./PasswordRules";
 import { IMAGES_IN_TAB, MENTION_NOTIFY, NAME_COLOURS, PREVIEWS_ENCRYPTED, setToggle, useToggle } from "./settings";
 import { VoiceSettings } from "./VoiceUI";
@@ -281,7 +281,7 @@ function PasswordSection({ session }: { session: Session }) {
   const [done, setDone] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const pw = checkPassword(next, session.username);
+  const pw = usePasswordCheck(next, session.username);
   const mismatch = pw.ok && confirm !== "" && confirm !== next;
 
   async function submit(e: FormEvent) {
@@ -344,7 +344,7 @@ function PasswordSection({ session }: { session: Session }) {
             <input type="password" value={next} onChange={(e) => { setNext(e.target.value); setError(null); }}
               autoComplete="new-password" required />
           </label>
-          <PasswordRules pw={pw} />
+          <PasswordRules pw={pw} empty={next === ""} />
           <label>
             Confirm new password
             <input type="password" value={confirm} onChange={(e) => { setConfirm(e.target.value); setError(null); }}

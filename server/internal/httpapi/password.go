@@ -16,7 +16,55 @@ import (
 )
 
 // The password rules live in internal/password; this file holds the
-// change-password endpoint.
+// change-password endpoint and the as-you-type strength check.
+
+type passwordCheckRequest struct {
+	Password string `json:"password"`
+	Username string `json:"username"`
+}
+
+type passwordCheckResponse struct {
+	// Problem is what registering or changing to this password would be
+	// refused with, or "" when it would be accepted.
+	Problem string `json:"problem"`
+	// Score is zxcvbn's 0-4; MinScore is the lowest accepted.
+	Score    int  `json:"score"`
+	MinScore int  `json:"min_score"`
+	Common   bool `json:"common"`
+	// Warning and Suggestions are the hint under the strength meter.
+	Warning     string   `json:"warning"`
+	Suggestions []string `json:"suggestions"`
+}
+
+// checkPassword scores a password the user is typing, for the strength
+// meter on sign-up and password change (decisions.md, "Password rules").
+// Nothing is stored or logged. Open to anyone, since sign-up has no
+// session yet; the scoring is cheap (under 15 ms even for 256
+// characters), and pwCheckLimit keeps it that way per address.
+func (a *API) checkPassword(w http.ResponseWriter, r *http.Request) {
+	ip := a.clientIP(r)
+	if !a.pwCheckLimit.Allow(ip) {
+		writeTooManyRequests(w, a.pwCheckLimit.RetryAfter(ip))
+		return
+	}
+	var req passwordCheckRequest
+	if !decodeJSONLimit(w, r, &req, 4096) {
+		return
+	}
+	c := password.Evaluate(req.Password, strings.TrimSpace(req.Username))
+	resp := passwordCheckResponse{
+		Problem:     c.Problem,
+		Score:       c.Strength.Score,
+		MinScore:    password.MinScore,
+		Common:      c.Strength.Common,
+		Warning:     c.Strength.Warning,
+		Suggestions: c.Strength.Suggestions,
+	}
+	if resp.Suggestions == nil {
+		resp.Suggestions = []string{}
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
 
 type changePasswordRequest struct {
 	CurrentPassword string `json:"current_password"`

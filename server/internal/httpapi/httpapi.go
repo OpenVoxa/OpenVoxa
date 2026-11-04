@@ -95,6 +95,7 @@ type API struct {
 	// Who is in each voice call; see voicepresence.go.
 	voicePresence  voicePresenceCache
 	voiceHintLimit *ratelimit.Limiter
+	pwCheckLimit   *ratelimit.Limiter
 }
 
 // ServeHTTP lets API be used directly as an http.Handler.
@@ -146,6 +147,10 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 
 		// Join/leave hints: 10 up front, then one every 2 seconds.
 		voiceHintLimit: ratelimit.New(0.5, 10, 15*time.Minute),
+
+		// Password strength as you type: the client waits for a pause, so
+		// 30 up front, then two a second, is plenty for a person.
+		pwCheckLimit: ratelimit.New(2, 30, 15*time.Minute),
 	}
 
 	if _, err := rand.Read(api.attachKey); err != nil {
@@ -158,6 +163,7 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 
 	mux.HandleFunc("POST /api/v1/auth/register", api.limitByIP(api.register))
 	mux.HandleFunc("GET /api/v1/setup", api.setupStatus)
+	mux.HandleFunc("POST /api/v1/auth/password-check", api.checkPassword)
 	mux.HandleFunc("POST /api/v1/auth/login", api.limitByIP(api.login))
 	mux.HandleFunc("POST /api/v1/auth/logout", api.requireAuth(api.logout))
 

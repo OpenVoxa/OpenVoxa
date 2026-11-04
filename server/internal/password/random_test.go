@@ -8,8 +8,7 @@ import (
 	"testing"
 )
 
-// Random passwords that pass the length and kind rules should almost
-// never be refused as common or a pattern.
+// Random 12-character passwords should almost never be refused.
 func TestRandomPasswordsMostlyAccepted(t *testing.T) {
 	const cs = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*-_"
 	r := rand.New(rand.NewSource(1))
@@ -20,9 +19,6 @@ func TestRandomPasswordsMostlyAccepted(t *testing.T) {
 			b[j] = cs[r.Intn(len(cs))]
 		}
 		pw := string(b)
-		if len(missingKinds(pw)) > 4-RequiredKinds {
-			continue
-		}
 		if p := Problem(pw, "someuser"); p != "" {
 			refused++
 			t.Log(pw, p)
