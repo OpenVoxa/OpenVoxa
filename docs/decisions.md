@@ -371,6 +371,17 @@ Discussed with Ryan, 2026-11-04. Stage 1 built and verified the same day
   ids). Muted channels show a crossed-out bell in the sidebar. Muting
   stops only the message sound: mentions still play (agreed, as
   Discord), and the unread dot still shows.
+- **Speaker (2026-11-04, SO1-SO7):** sounds follow the Speaker picked in
+  Settings > Voice (`voice.output`, read by `sounds.ts` before each
+  sound, so no voice code loads). Chromium: `AudioContext.setSinkId`.
+  Firefox has `setSinkId` only on media elements, so sounds go through a
+  hidden `<audio>` fed by a MediaStreamDestination. A missing speaker
+  falls back to the default and is retried on the next sound.
+- **Device names (SO0a-SO0c):** browsers hide device names, listing one
+  unnamed placeholder per kind, until the page may use the microphone.
+  Settings > Voice then shows "Show My Devices", which asks for the mic
+  (released straight away) and lists the real devices
+  (`VoiceClient.listDevices(true)`); placeholders are filtered out.
 
 ## Architecture
 
@@ -2260,9 +2271,9 @@ to pick their own colours later, so every colour stays a variable.
 - [x] Custom sounds, stage 2: message sound, per-channel "Mute
       sounds", message cooldown. Done 2026-11-04 (Feature decisions,
       "Custom sounds"; MS1-MS9, MC1-MC9).
-- [ ] Sounds play on the system's default output, not the Speaker
-      picked in Settings > Voice (as the old tones did).
-      `AudioContext.setSinkId` (Chromium) could follow it.
+- [x] Sounds follow the Speaker picked in Settings > Voice; "Show My
+      Devices" when the browser hides device names. Done 2026-11-04
+      (Feature decisions, "Custom sounds"; SO0a-SO0c, SO1-SO7).
 
 - [ ] Password strength estimation with zxcvbn (server and client), on top
       of the rules. Ryan asked to discuss later (2026-11-01).
