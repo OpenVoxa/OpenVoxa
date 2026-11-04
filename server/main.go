@@ -93,7 +93,8 @@ func run() error {
 	// The sweep reports what it removed so connected clients can drop the
 	// same messages locally instead of displaying rows that no longer
 	// exist.
-	db.StartRetentionSweep(ctx, pool, api.NotifyChannelPurged)
+	// A retention change wakes it, so a shorter policy applies at once.
+	api.SetRetentionWake(db.StartRetentionSweep(ctx, pool, api.NotifyChannelPurged))
 	db.StartBlobGC(ctx, pool, blobs)
 
 	// Revoking an idle device needs members to remove it from their

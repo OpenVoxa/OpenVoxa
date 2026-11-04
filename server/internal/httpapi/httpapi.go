@@ -70,6 +70,10 @@ type API struct {
 	blobs         *blob.Store
 	maxAttachment int64
 
+	// Runs a retention pass now (db.StartRetentionSweep). Set once in
+	// main before the server starts serving; nil in tests.
+	retentionWake func()
+
 	// One key per account for what the server can read; destroyed on
 	// account deletion (crypto-shredding). See sealing.go.
 	keys *keystore.Store
@@ -691,4 +695,10 @@ func (a *API) clientIP(r *http.Request) string {
 		return r.RemoteAddr
 	}
 	return host
+}
+
+// SetRetentionWake gives the API the retention sweep's wake function, so
+// a changed policy is applied at once. Call it before serving.
+func (a *API) SetRetentionWake(wake func()) {
+	a.retentionWake = wake
 }
