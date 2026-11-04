@@ -185,7 +185,11 @@ No `tls` profile = no Caddy (own proxy + `OPENVOXA_TRUST_PROXY=true`).
 
 ## Current state (update every session)
 
-_Last updated: 2026-11-04. **Custom stickers DONE** (verified by Ryan,
+_Last updated: 2026-11-04. **Sign out and erase DONE** (E1-E5 verified;
+decisions.md Encryption, "Sign out and erase"): Settings > Account >
+Devices, "This browser" row; backs up, revokes the device, deletes the
+account's IndexedDB (`storage.destroy` / `eraseIdentity`), signs out.
+Earlier 2026-11-04: **Custom stickers DONE** (verified by Ryan,
 ST1-ST7, Member check with test0user; decisions.md Open items "Custom stickers"): limits 1 MB,
 512 x 512 px, 100 per server (admin-editable, Server settings >
 Stickers), `manage_stickers` switch (Moderator by default), migration
@@ -270,7 +274,7 @@ period in `server_settings`, migration 0017).
 - Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI;
   now also destroys the key).
 - @mentions and Appearance: done and verified (M1-M6, A1).
-- Next (Ryan to choose): a server browser (decisions.md Open items); "shared computer: erase everything" on sign-out;
+- Next (Ryan to choose): a server browser (decisions.md Open items);
   local archive retention sweep; real force-PTT via LiveKit
   `MutePublishedTrack`; bitrate ceiling; zxcvbn (discuss first);
   Electron shell.

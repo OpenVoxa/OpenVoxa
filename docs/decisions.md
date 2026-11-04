@@ -561,8 +561,20 @@ bytes, but UNENCRYPTED".
   Devices. Its next sign-in wipes it (`Identity.start`, before client-web
   picks a recovery screen) and goes to the recovery-key screen. A signed
   out device stays in its groups, like a closed tab. Account deletion
-  still wipes everything. Possible later: a "shared computer, erase
-  everything" choice on sign-out.
+  still wipes everything.
+- *Sign out and erase (shared computer).* Built 2026-11-04, verified by
+  Ryan (E1-E5). Settings, Account, Devices, on the "This browser" row;
+  plain Log out stays one click (an extra choice on every sign-out is
+  friction for the common case). It uploads the backup if this browser
+  can, revokes this device on the server (`DELETE /devices/{id}`, so it
+  leaves encrypted channels at once, not after 30 days), deletes this
+  account's whole IndexedDB database including the keyring
+  (`storage.destroy`: clear every store, then `deleteDatabase`; a
+  blocked delete is fine since the contents are gone) and the
+  `recoveryAsked` flag, then signs out. Per-browser preferences
+  (colours, voice devices, notification switches) and other accounts'
+  databases stay. A failed step does not stop the erase; the login page
+  names it. Signing in again is a new device: recovery key for history.
 - *Limits, stated plainly.* Protects a stolen or powered-off machine,
   copied disks and backups, and the browser profile while signed out.
   Someone with this browser AND the password can read the history kept
