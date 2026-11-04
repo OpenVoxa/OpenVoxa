@@ -17,6 +17,7 @@ import { describeRetention, Modal } from "./ChannelDialogs";
 import { firstLink, Markdown } from "./markdown";
 import { LinkPreview } from "./previews";
 import { GifPicker, useGifsEnabled } from "./gifs";
+import { EmojiPicker, useEmojiShortcodes } from "./emoji";
 import { PREVIEWS_ENCRYPTED, useToggle } from "./settings";
 import { PlainAttachment, SealedAttachment, UploadTray, useUploads } from "./attachments";
 
@@ -564,6 +565,7 @@ function EditBox({ initial, members, onSave, onCancel }: {
   const [busy, setBusy] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
   const picker = useMentionPicker(members, text, setText, ref);
+  const codes = useEmojiShortcodes(text, setText, ref);
   useEffect(() => {
     const el = ref.current;
     if (el) {
@@ -581,7 +583,7 @@ function EditBox({ initial, members, onSave, onCancel }: {
   }
 
   function onKey(e: KeyboardEvent<HTMLTextAreaElement>) {
-    if (picker.onKey(e)) return;
+    if (codes.onKey(e) || picker.onKey(e)) return;
     if (e.key === "Escape") {
       e.preventDefault();
       onCancel();
@@ -594,7 +596,12 @@ function EditBox({ initial, members, onSave, onCancel }: {
   return (
     <div className="edit-box">
       {picker.list}
-      <AutoTextarea ref={ref} value={text} onChange={setText} onKeyDown={onKey} onSelect={picker.onSelect}
+      {codes.list}
+      <AutoTextarea ref={ref} value={text} onChange={setText} onKeyDown={onKey}
+        onSelect={(e) => {
+          picker.onSelect(e);
+          codes.onSelect(e);
+        }}
         disabled={busy} label="Edit message" />
       <span className="muted small">
         Esc to <button className="link small" onClick={onCancel}>cancel</button> · Enter to{" "}
@@ -623,6 +630,8 @@ function Composer({ snap, call, uploads, onSend, onEditLast }: {
 }) {
   const [text, setText] = useState("");
   const [gifs, setGifs] = useState(false);
+  const [emoji, setEmoji] = useState(false);
+  const closeEmoji = useCallback(() => setEmoji(false), []);
   const gifsEnabled = useGifsEnabled(call);
   const closeGifs = useCallback(() => setGifs(false), []);
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -633,6 +642,20 @@ function Composer({ snap, call, uploads, onSend, onEditLast }: {
   const ready = files.flatMap((f) => (f.status === "ready" && f.result ? [f.result] : []));
   const canSend = !reason && !uploading && (!!text.trim() || ready.length > 0);
   const mentionPicker = useMentionPicker(snap.members, text, setText, ref);
+  const emojiCodes = useEmojiShortcodes(text, setText, ref);
+
+  /** Put picked emoji at the caret (or over the selection). */
+  const insertEmoji = useCallback((value: string) => {
+    const el = ref.current;
+    if (!el) return;
+    const start = el.selectionStart, end = el.selectionEnd;
+    setText(el.value.slice(0, start) + value + el.value.slice(end));
+    const caret = start + value.length;
+    requestAnimationFrame(() => {
+      el.focus();
+      el.setSelectionRange(caret, caret);
+    });
+  }, []);
 
   // Focus follows the channel.
   useEffect(() => {
@@ -649,7 +672,7 @@ function Composer({ snap, call, uploads, onSend, onEditLast }: {
   }
 
   function onKey(e: KeyboardEvent<HTMLTextAreaElement>) {
-    if (mentionPicker.onKey(e)) return;
+    if (emojiCodes.onKey(e) || mentionPicker.onKey(e)) return;
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       void send();
@@ -664,6 +687,8 @@ function Composer({ snap, call, uploads, onSend, onEditLast }: {
     <UploadTray items={files} onRemove={uploads.remove} />
     <div className="composer">
       {mentionPicker.list}
+      {emojiCodes.list}
+      {emoji && !reason && <EmojiPicker onPick={insertEmoji} onClose={closeEmoji} />}
       {gifs && !reason && (
         <GifPicker call={call} channelId={snap.channel.id} onClose={closeGifs}
           onPick={async (a) => {
@@ -685,7 +710,10 @@ function Composer({ snap, call, uploads, onSend, onEditLast }: {
         value={text}
         onChange={setText}
         onKeyDown={onKey}
-        onSelect={mentionPicker.onSelect}
+        onSelect={(e) => {
+          mentionPicker.onSelect(e);
+          emojiCodes.onSelect(e);
+        }}
         onPaste={(e) => {
           // A pasted screenshot or copied file. Text pastes as usual.
           if (reason || !e.clipboardData.files.length) return;
@@ -699,8 +727,17 @@ function Composer({ snap, call, uploads, onSend, onEditLast }: {
       {gifsEnabled && (
         <button className={`secondary gif-btn${gifs ? " on" : ""}`} disabled={!!reason}
           onMouseDown={(e) => e.stopPropagation()}
-          onClick={() => setGifs((g) => !g)} title="Send a GIF" aria-expanded={gifs}>GIF</button>
+          onClick={() => {
+            setEmoji(false);
+            setGifs((g) => !g);
+          }} title="Send a GIF" aria-expanded={gifs}>GIF</button>
       )}
+      <button className={`secondary emoji-btn${emoji ? " on" : ""}`} disabled={!!reason}
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={() => {
+          setGifs(false);
+          setEmoji((v) => !v);
+        }} title="Emoji" aria-label="Emoji" aria-expanded={emoji}>😊</button>
       <button className="primary" onClick={() => void send()} disabled={!canSend}
         title={uploading ? "Waiting for uploads to finish" : undefined}>Send</button>
     </div>
