@@ -307,6 +307,41 @@ Discussed with Ryan, 2026-11-04; he is mulling it over. Nothing is built.
   picker; we draw our own) and E2EE tested inside it. Tray,
   notifications, auto-update and installers later.
 
+### Custom sounds (proposed, mostly agreed)
+
+Discussed with Ryan, 2026-11-04. Nothing is built. Today `tones.ts`
+synthesises join, leave and mention beeps (WebAudio, no files) behind
+two toggles in Settings.
+
+- **Six sounds:** join (someone joins your call); leave (leaves or
+  disconnects, one sound); message (a channel you're not viewing gets a
+  new message); stream start and stream end (someone in your call
+  starts or stops screen sharing); mention.
+- **Three layers, first one set wins** (agreed): the user's own choice
+  (Settings > Sounds, in the browser only, per device); the server's
+  default set (uploaded by an administrator in Server settings > Sounds,
+  stored as server blobs); the built-in sounds.
+- **Built-in sounds stay the synthesised tones** (new ones for message
+  and stream start / end), not files. Ryan's sounds are royalty-free
+  downloads, and royalty-free licences often forbid redistributing the
+  raw files, so they must not go in the public repository. They become
+  his server's default set, uploaded through the browser; nothing has to
+  be copied to Docker.
+- **Message sound** (Ryan): plays once when a channel you aren't viewing
+  gets a new message, then stays quiet for that channel until you've
+  read it.
+- **Per-channel mute** (Ryan): "Mute sounds" on any channel, for every
+  user. Proposed: mentions still play in a muted channel (as Discord).
+- **Per sound, for each user:** play (preview), upload, reset to the
+  server default, on / off, volume. The existing two toggles fold into
+  this.
+- **Limits (proposed):** MP3, OGG or WAV, about 1 MB and a few seconds at
+  most, checked by both client and server.
+- **Open:** who manages the server set (administrator only, or a new
+  switch like manage_stickers); mentions in a muted channel; whether the
+  per-channel mute and the user's own sounds should sync across devices
+  (server-side, per account) rather than stay in the browser.
+
 ## Architecture
 
 Five components, three of them off the shelf:

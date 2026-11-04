@@ -178,5 +178,7 @@ Implementation notes.
 - **Next: Ryan to choose.** He is mulling over the server browser +
   Electron shell design (decisions.md Feature decisions, "Server browser
   and desktop shell": one isolated view per server; three open
-  questions). Other candidates: a per-user upload test in the share
+  questions), and custom sounds (Feature decisions, "Custom sounds":
+  mostly agreed, Ryan uploads his own set as the server default; three
+  open points). Other candidates: a per-user upload test in the share
   dialog; zxcvbn (discuss first).
