@@ -22,7 +22,8 @@
   --alert: #e5483d;
   --radius: 6px;
   color-scheme: dark;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji";
 }
 
 * { box-sizing: border-box; }
@@ -721,3 +722,27 @@ button.dot-host { position: relative; }
   border: 1px solid var(--line); border-radius: 4px; background: none; cursor: pointer;
 }
 .colour-row .grow { flex: 1; }
+
+/* emoji picker and :code: autocomplete (emoji.tsx) */
+.emoji-btn { font-size: 18px; padding: 6px 10px; line-height: 1.2; }
+.emoji-btn.on { background: var(--sidebar-active); }
+.emoji-picker { position: absolute; right: 16px; bottom: calc(100% + 4px); width: min(360px, calc(100% - 32px));
+  background: var(--sidebar); border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: 0 6px 24px #0008; padding: 8px; display: flex; flex-direction: column; gap: 6px; z-index: 5; }
+.emoji-top { display: flex; gap: 6px; }
+.emoji-top input { flex: 1; min-width: 0; }
+.emoji-tone { font-size: 18px; padding: 2px 8px; }
+.emoji-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+.emoji-tabs button { flex: 1; padding: 3px 0; font-size: 17px; background: none; border: 0; border-radius: 4px;
+  cursor: pointer; filter: grayscale(.6); }
+.emoji-tabs button:hover { background: var(--sidebar-active); filter: none; }
+.emoji-grid { height: 300px; overflow-y: auto; }
+.emoji-grid h4 { margin: 6px 2px 2px; font-size: 12px; font-weight: 700; text-transform: uppercase;
+  color: var(--muted); position: sticky; top: 0; background: var(--sidebar); padding: 2px 0; }
+.emoji-cells { display: grid; grid-template-columns: repeat(auto-fill, minmax(36px, 1fr)); }
+.emoji-cell { font-size: 24px; line-height: 1; padding: 5px 0; background: none; border: 0; border-radius: 4px; cursor: pointer; }
+.emoji-cell:hover, .emoji-cell:focus-visible { background: var(--sidebar-active); }
+.emoji-foot { display: flex; align-items: center; gap: 8px; min-height: 32px; border-top: 1px solid var(--line); padding-top: 4px; }
+.emoji-big { font-size: 26px; line-height: 1; }
+.emoji-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.emoji-list .emoji-char { font-size: 18px; margin-right: 4px; }
