@@ -159,15 +159,16 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 
 ## Current state (rewrite every session)
 
-_2026-11-04._ **Desktop step 3 (per-app share sound) under way.**
-Design agreed with Ryan (decisions.md Feature decisions "Per-app share
-sound", A-D and build order). Stage 1 done (`369814d`): share sound asks
-for `restrictOwnAudio`, which Electron 45 (Chromium 156) honours with
-`loopback`, so whole-screen shares no longer carry OpenVoxa's own sound
-(RO1, RS1-RS3 passed). The helper is now needed for window sound only.
-Step 2 (`3898da4`): our own picker in the pane. Step 1 (`8cfe8fa`):
-shell, one sandboxed view + partition per server, origin lock.
-Electron gotchas in decisions.md Implementation notes.
+_2026-11-04._ **Desktop step 3, per-app share sound: done.** Whole
+screens: `restrictOwnAudio` keeps OpenVoxa out (`369814d`). Windows: the
+Rust helper `client-desktop/audio-helper/` (process loopback, PCM on
+stdout, `build-windows.sh` cross-builds; `package:win` runs it) feeds
+the page through `viewPreload.ts`, the first server-view preload
+(`f1359ec`). Sound is chosen only in the picker (`28ef9e5`). Shares are
+received on demand: picture while a tile shows it, sound after Listen
+(`4c731b0`). Tests RO1, RS, WH, WS, ST, LS all passed. Ryan's desktop
+app runs build `-e`. Gotchas: decisions.md Implementation notes
+("Windows process loopback").
 
 - **Stay signed in** on login, ticked by default (SS1-SS4 passed).
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
@@ -178,17 +179,17 @@ Electron gotchas in decisions.md Implementation notes.
   bind mount `/mnt/openvoxa-blobs`. Account keys in volume
   `deploy_key-data`, wrapped under a KEK (Ryan holds the only copies),
   backed up daily 03:30 to `~/openvoxa-key-backups` (7 days). Closed off:
-  Ryan is the only user. Ryan's desktop app runs build `-d`.
+  Ryan is the only user.
 - Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI).
 - Known gaps (decisions.md Open items): K1 recovery flows 2-5 deferred;
   no @everyone/@group; no per-group share limits.
-- **Next: step 3 stage 2, the Rust helper** `openvoxa-audio.exe`:
-  process-loopback capture of one window's process tree (HWND from the
-  source ID -> `GetWindowThreadProcessId`), PCM on stdout. Cross-build
-  on Docker (`rust:1-bookworm` is pulled; add the
-  `x86_64-pc-windows-gnu` target + mingw). Test alone on Ryan's PC by
-  writing a WAV, then stage 3: preload + page track, picker tickbox for
-  windows. Minimized windows: check whether our picker lists them.
-  Ryan's PC test files are served from the scratchpad, never committed.
-  Then Ryan's backlog (decisions.md "Planned: server icons, updates,
-  bug reports, channel menus, avatars"): discuss each before building.
+- **Next: the voice channel view** (decisions.md Feature decisions,
+  "Voice channel view (to design)"): tiles per person, a sharer's tile
+  shows the share with Hide / Listen / Fullscreen. Three open
+  questions to settle with Ryan first: preview cost (simulcast layer,
+  full copy, or refreshed still), letter circles vs avatars first, and
+  whether clicking a voice channel shows it before joining.
+- Backlog after that: touchscreen push-to-talk button (Open items);
+  Ryan's list (decisions.md "Planned: server icons, updates, bug
+  reports, channel menus, avatars"): discuss each before building.
+  Minimized windows probably missing from our picker (unchecked).
