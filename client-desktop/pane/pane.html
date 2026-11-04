@@ -33,6 +33,27 @@
         <button type="button" id="retry" class="primary">Try Again</button>
       </div>
     </div>
+    <div id="share" class="card wide" role="dialog" aria-labelledby="share-title" hidden>
+      <h1 id="share-title">Share Your Screen</h1>
+      <p id="share-host" class="muted"></p>
+      <div class="tabs" role="tablist">
+        <button type="button" id="tab-screens" role="tab" class="on">Screens</button>
+        <button type="button" id="tab-windows" role="tab">Windows</button>
+      </div>
+      <ul id="sources" class="sources"></ul>
+      <p id="sources-empty" class="muted" hidden></p>
+      <div class="share-foot">
+        <label class="check" id="sound-label">
+          <input type="checkbox" id="sound" checked>
+          <span>Share Sound</span>
+        </label>
+        <p id="sound-note" class="muted note" hidden></p>
+        <div class="actions">
+          <button type="button" id="share-cancel" class="outline">Cancel</button>
+          <button type="button" id="share-go" class="primary" disabled>Share</button>
+        </div>
+      </div>
+    </div>
   </main>
   <script src="pane.js"></script>
 </body>

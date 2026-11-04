@@ -417,9 +417,18 @@ export function ShareDialog({ voice, onClose }: { voice: VoiceClient; onClose: (
       await voice.startShare(s);
       onClose();
     } catch (err) {
-      // Cancelling the browser's picker is not an error worth showing.
-      if ((err as { name?: string }).name === "NotAllowedError") onClose();
-      else setError(err instanceof Error ? err.message : String(err));
+      // Cancelling the picker is not an error worth showing: browsers say
+      // NotAllowedError, the desktop app's own picker "AbortError: Invalid
+      // capture constraints" (Electron, found by experiment). The
+      // operating system refusing (Chromium: "Permission denied by
+      // system", e.g. macOS Screen Recording off) is worth showing: say why.
+      const e = err as { name?: string; message?: string };
+      const msg = e.message ?? "";
+      if (e.name === "NotAllowedError" && /by system/i.test(msg)) {
+        setError("Your computer blocked screen capture. Allow this app or browser to record the screen in your system's privacy settings, then try again.");
+      } else if (e.name === "NotAllowedError" || (e.name === "AbortError" && /invalid capture constraints/i.test(msg))) {
+        onClose();
+      } else setError(err instanceof Error ? err.message : String(err));
       setBusy(false);
     }
   }

@@ -17,6 +17,7 @@ const loadErrorText = document.getElementById("load-error-text");
 let servers = [];
 let selected = null;
 let adding = false;
+let picking = false;
 const errors = new Map(); // origin -> message, for servers that failed to load
 
 function host(origin) {
@@ -41,6 +42,7 @@ function render() {
       b.title = host(s.origin);
       b.setAttribute("aria-label", host(s.origin));
       b.addEventListener("click", () => {
+        cancelPick();
         if (adding) closeForm();
         window.shell.select(s.origin);
       });
@@ -56,14 +58,17 @@ function render() {
   // The pane covers the window (and the server view is hidden) while the
   // form is open, when there are no servers yet, or when the selected
   // server failed to load.
+  // The screen share picker, while open, is the only thing shown.
   const failed = selected !== null && errors.has(selected);
-  const showForm = adding || servers.length === 0;
+  const showForm = !picking && (adding || servers.length === 0);
   form.hidden = !showForm;
   addCancel.hidden = servers.length === 0;
-  loadError.hidden = showForm || !failed;
+  loadError.hidden = picking || showForm || !failed;
   if (failed) loadErrorText.textContent = `${host(selected)}: ${errors.get(selected)}`;
-  content.hidden = !(showForm || failed);
-  window.shell.setOverlay(showForm || failed);
+  shareCard.hidden = !picking;
+  content.hidden = !(picking || showForm || failed);
+  // The main process owns the overlay while the picker is open.
+  if (!picking) window.shell.setOverlay(showForm || failed);
 }
 
 function openForm() {
@@ -79,10 +84,15 @@ function closeForm() {
   render();
 }
 
-document.getElementById("add").addEventListener("click", openForm);
+document.getElementById("add").addEventListener("click", () => {
+  cancelPick();
+  openForm();
+});
 addCancel.addEventListener("click", closeForm);
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && adding && servers.length > 0) closeForm();
+  if (e.key !== "Escape") return;
+  if (picking) cancelPick();
+  else if (adding && servers.length > 0) closeForm();
 });
 
 form.addEventListener("submit", async (e) => {
@@ -126,6 +136,152 @@ window.shell.onServers((s) => {
 window.shell.onServerError(({ origin, message }) => {
   if (message) errors.set(origin, message);
   else errors.delete(origin);
+  render();
+});
+
+// ---- Screen share picker (opened by the main process) ----
+
+const shareCard = document.getElementById("share");
+const shareHost = document.getElementById("share-host");
+const tabScreens = document.getElementById("tab-screens");
+const tabWindows = document.getElementById("tab-windows");
+const sourceList = document.getElementById("sources");
+const sourcesEmpty = document.getElementById("sources-empty");
+const soundLabel = document.getElementById("sound-label");
+const sound = document.getElementById("sound");
+const soundNote = document.getElementById("sound-note");
+const shareGo = document.getElementById("share-go");
+
+let shareReq = null; // { host, audio, soundSupported }
+let sources = [];
+let tab = "screens";
+let chosen = null; // source id
+let listError = null;
+let listed = false; // the first list has arrived
+let soundWanted = true; // the tickbox as the user left it
+
+function renderShare() {
+  tabScreens.classList.toggle("on", tab === "screens");
+  tabWindows.classList.toggle("on", tab === "windows");
+  tabScreens.setAttribute("aria-selected", String(tab === "screens"));
+  tabWindows.setAttribute("aria-selected", String(tab === "windows"));
+  const shown = sources.filter((s) => s.screen === (tab === "screens"));
+  // The choice is always one you can see: dropped when its window closes
+  // or the tab changes; a lone screen is chosen for you.
+  if (chosen && !shown.some((s) => s.id === chosen)) chosen = null;
+  if (!chosen && tab === "screens" && shown.length === 1) chosen = shown[0].id;
+
+  sourceList.replaceChildren(
+    ...shown.map((s) => {
+      const li = document.createElement("li");
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "source" + (s.id === chosen ? " on" : "");
+      b.title = s.name;
+      b.setAttribute("aria-pressed", String(s.id === chosen));
+      const thumb = document.createElement("div");
+      thumb.className = "thumb";
+      if (s.thumbnail) {
+        const img = document.createElement("img");
+        img.src = s.thumbnail;
+        img.alt = "";
+        thumb.append(img);
+      }
+      const name = document.createElement("div");
+      name.className = "source-name";
+      if (s.icon) {
+        const icon = document.createElement("img");
+        icon.src = s.icon;
+        icon.alt = "";
+        icon.className = "app-icon";
+        name.append(icon);
+      }
+      const text = document.createElement("span");
+      text.textContent = s.name;
+      name.append(text);
+      b.append(thumb, name);
+      b.addEventListener("click", () => {
+        chosen = s.id;
+        renderShare();
+      });
+      b.addEventListener("dblclick", () => window.shell.share(s.id, sound.checked));
+      li.append(b);
+      return li;
+    }),
+  );
+  sourcesEmpty.hidden = shown.length > 0;
+  sourcesEmpty.textContent = listError ?? (listed ? `No ${tab} to share.` : "Looking for screens and windows...");
+
+  // Sound: only asked for if the page wants it; Electron can capture it
+  // only for a whole screen, and only on Windows.
+  soundLabel.hidden = !shareReq?.audio;
+  let why = null;
+  if (shareReq?.audio) {
+    if (!shareReq.soundSupported) why = "Sound can only be shared from Windows in the desktop app.";
+    else if (tab === "windows") why = "Sound can only be shared with a whole screen, not a single window.";
+    else why = "Shares everything your computer plays.";
+  }
+  const soundOk = !!shareReq?.soundSupported && tab === "screens";
+  sound.disabled = !soundOk;
+  sound.checked = soundOk && soundWanted; // greyed out = not shared, so not ticked
+  soundLabel.classList.toggle("locked", !soundOk);
+  soundNote.hidden = !why;
+  soundNote.textContent = why ?? "";
+  shareGo.disabled = !chosen;
+}
+
+tabScreens.addEventListener("click", () => {
+  tab = "screens";
+  renderShare();
+});
+tabWindows.addEventListener("click", () => {
+  tab = "windows";
+  renderShare();
+});
+sound.addEventListener("change", () => {
+  soundWanted = sound.checked;
+});
+// Like the web client's dialogs: Cancel, Escape, a click outside the
+// picker, or any pane button closes it without sharing.
+function cancelPick() {
+  if (picking) window.shell.share(null, false);
+}
+document.getElementById("share-cancel").addEventListener("click", cancelPick);
+content.addEventListener("mousedown", (e) => {
+  if (picking && e.target === content) cancelPick();
+});
+shareGo.addEventListener("click", () => {
+  if (chosen) window.shell.share(chosen, sound.checked);
+});
+
+window.shell.onShareOpen((req) => {
+  shareReq = req;
+  sources = [];
+  tab = "screens";
+  chosen = null;
+  listError = null;
+  listed = false;
+  soundWanted = true;
+  shareHost.textContent = `${req.host} wants to see a screen or window.`;
+  picking = true;
+  render();
+  renderShare();
+});
+window.shell.onShareSources((list) => {
+  sources = list;
+  listed = true;
+  listError = null;
+  renderShare();
+});
+window.shell.onShareError((message) => {
+  listError = message;
+  renderShare();
+});
+window.shell.onShareClose(() => {
+  picking = false;
+  shareReq = null;
+  sources = [];
+  sourceList.replaceChildren();
   render();
 });
 
