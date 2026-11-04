@@ -4,16 +4,10 @@
 package httpapi
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
 	"log/slog"
-	"net/http"
 	"strings"
 	"time"
-
-	"github.com/livekit/protocol/auth"
 )
 
 // kickFromLostVoice removes a user from every voice call they may no
@@ -133,47 +127,12 @@ func (a *API) kickLostFromAllVoice() {
 // a LiveKit room. A room nobody is in does not exist, which is not an
 // error.
 func (a *API) listParticipants(ctx context.Context, room string) ([]string, error) {
-	admin := auth.NewAccessToken(a.livekit.APIKey, a.livekit.APISecret).
-		SetVideoGrant(&auth.VideoGrant{RoomAdmin: true, Room: room}).
-		SetValidFor(time.Minute)
-	token, err := admin.ToJWT()
-	if err != nil {
-		return nil, fmt.Errorf("minting admin token: %w", err)
-	}
-
-	body, _ := json.Marshal(map[string]string{"room": room})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		a.liveKitAPIURL()+"/twirp/livekit.RoomService/ListParticipants",
-		bytes.NewReader(body))
+	people, err := a.liveKitParticipants(ctx, room)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-
-	switch {
-	case res.StatusCode == http.StatusNotFound:
-		return nil, nil
-	case res.StatusCode != http.StatusOK:
-		return nil, fmt.Errorf("livekit answered %s", res.Status)
-	}
-
-	var out struct {
-		Participants []struct {
-			Identity string `json:"identity"`
-		} `json:"participants"`
-	}
-	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("decoding participants: %w", err)
-	}
-	ids := make([]string, 0, len(out.Participants))
-	for _, p := range out.Participants {
+	ids := make([]string, 0, len(people))
+	for _, p := range people {
 		ids = append(ids, p.Identity)
 	}
 	return ids, nil
@@ -189,41 +148,9 @@ func (a *API) liveKitAPIURL() string {
 	return strings.Replace(u, "ws://", "http://", 1)
 }
 
-// removeParticipant calls LiveKit's RoomService.RemoveParticipant over
-// Twirp with JSON, which needs no client library beyond the token signer
-// already used for join tokens. Reports false when the user was not in
-// that room, which is the usual case.
+// removeParticipant takes a user out of a LiveKit room. Reports false
+// when the user was not in that room, which is the usual case.
 func (a *API) removeParticipant(ctx context.Context, room, identity string) (bool, error) {
-	admin := auth.NewAccessToken(a.livekit.APIKey, a.livekit.APISecret).
-		SetVideoGrant(&auth.VideoGrant{RoomAdmin: true, Room: room}).
-		SetValidFor(time.Minute)
-	token, err := admin.ToJWT()
-	if err != nil {
-		return false, fmt.Errorf("minting admin token: %w", err)
-	}
-
-	body, _ := json.Marshal(map[string]string{"room": room, "identity": identity})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		a.liveKitAPIURL()+"/twirp/livekit.RoomService/RemoveParticipant",
-		bytes.NewReader(body))
-	if err != nil {
-		return false, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return false, err
-	}
-	defer res.Body.Close()
-
-	switch {
-	case res.StatusCode == http.StatusOK:
-		return true, nil
-	case res.StatusCode == http.StatusNotFound:
-		return false, nil // not in this room, or the room does not exist
-	default:
-		return false, fmt.Errorf("livekit answered %s", res.Status)
-	}
+	return a.roomService(ctx, "RemoveParticipant", roomAdmin(room),
+		map[string]string{"room": room, "identity": identity}, nil)
 }

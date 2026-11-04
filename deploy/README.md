@@ -273,6 +273,14 @@ Delete each one it prints with `docker run --rm -v deploy_key-data:/keys alpine 
 
 With no backup, everything already written in plaintext channels becomes unreadable for good: messages and report copies show as empty, and attachments fail to download (the server answers 410 Gone). New messages work at once, since the server makes new keys as needed. Encrypted channels, voice and screen share are unaffected.
 
+## Screen share limit
+
+Voice and screen sharing go through LiveKit, which sends a separate copy of each screen share to every viewer. Your upload therefore carries roughly the share's bitrate times the number of people watching: a 1440p 60fps share (14 Mbps) to 5 viewers is about 70 Mbps. On a home connection with a slow upload, one share can fill it.
+
+An administrator can set a limit in **Server settings > Voice and Video**. There is none by default. The same tab has a **Test upload speed** button: the server (not your browser) uploads test data to Cloudflare's speed test (speed.cloudflare.com) for about 10 seconds and suggests a limit for the number of viewers you expect. Nothing is published, and nothing is sent unless you click it. Shares running during the test may stutter.
+
+With a limit set, the share menu hides the qualities above it, and the server stops any share that declares more (that person can share again after rejoining the call). It can only check what the browser declares, so a modified client could get round it. If that matters for your deployment, cap the host's outgoing traffic on LiveKit's media ports with the operating system's traffic shaping (for example `tc` on Linux, on ports 50000-50100/udp and 7881/tcp); that slows every share down together rather than stopping one.
+
 ## GIF search
 
 Off by default. To enable it, set both of these in `.env`:
