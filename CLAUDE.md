@@ -48,7 +48,7 @@ server/            Go (module root; go.mod says go 1.26)
   Dockerfile          client-core -> client-web -> Go -> distroless
   internal/httpapi/   HTTP + WS, one file per feature; livekitapi.go = LiveKit
                       admin calls; debugui/chat.html = old debug client
-  internal/db/        Postgres; migrations/00NN_*.sql embedded, ordered (latest 0027)
+  internal/db/        Postgres; migrations/00NN_*.sql embedded, ordered (latest 0028)
   internal/{auth,blob,config,gif,hub,keystore,password,perm,ratelimit,sealedfile,unfurl}
 client-core/       TypeScript protocol + crypto, no UI. src/: mls/ (ts-mls,
                    pinned 1.6.2), identity, groups (MLS lifecycle), chat
@@ -155,14 +155,18 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 ## Current state (rewrite every session)
 
 _2026-11-04._ Step 13 (web client M1-M5) and everything since are done;
-latest: the **local archive retention sweep** (an open app drops copies
-of messages deleted or expired in encrypted channels it isn't viewing;
-a retention change wakes the server's sweep at once). Details and test
-IDs (AR1-AR6): decisions.md Open items and Implementation notes.
+latest: **server mute** (`voicemute.go`, migration 0028, switch
+`server_mute`): a moderator takes away someone's mic and screen share
+audio in every voice channel, until unmuted or 10 min / 1 h / 1 day;
+enforced through LiveKit publish sources (join token + live
+`UpdateParticipant`). Force-PTT closed as advisory by design. Details,
+reasons and test IDs (SM1-SM10): decisions.md Feature decisions
+"Server mute"; LiveKit gotcha (`stopLocalTrackOnUnpublish`) in
+Implementation notes.
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts: tuckilufigus (Ryan), staff, openvoxaadmin,
-  test0user.
+  test0user. Voice channels: voice-general, vip-voice (admins only).
 - Docker deploy: LiveKit v1.13.11 on host networking (server reaches it
   at `host.docker.internal:7880`), `update-node-ip.sh` on cron. Blobs on
   bind mount `/mnt/openvoxa-blobs`. Account keys in volume
@@ -170,9 +174,8 @@ IDs (AR1-AR6): decisions.md Open items and Implementation notes.
   backed up daily 03:30 to `~/openvoxa-key-backups` (7 days). Closed off:
   Ryan is the only user (port 8443).
 - Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI).
-- Known gaps: K1 recovery flows 2-5 deferred; no @everyone/@group;
-  force-PTT is advisory only; no per-group share limits.
+- Known gaps: K1 recovery flows 2-5 deferred; no @everyone/@group; no
+  per-group share limits; debug chat.html doesn't know server mute.
 - **Next: Ryan to choose.** Candidates: a server browser (decisions.md
-  Open items); real force-PTT (`setPublishSources` in livekitapi.go is
-  ready); a per-user upload test in the share dialog; zxcvbn (discuss
-  first); Electron shell.
+  Open items; design talk first); a per-user upload test in the share
+  dialog; zxcvbn (discuss first); Electron shell.

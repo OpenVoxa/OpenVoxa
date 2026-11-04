@@ -69,7 +69,7 @@ over.
 | Guest access | Off by default, admin-toggleable per instance |
 | File attachments | Content-addressed blobs on local disk, deduplicated by SHA-256. Per-file size limit set by the admin. Attachments inherit their channel's retention through the message that carries them. |
 | Moderation | Client-supplied plaintext with server-side signature verification |
-| Voice input | Push-to-talk and voice activation, user-selectable; moderators can force PTT per voice channel |
+| Voice input | Push-to-talk and voice activation, user-selectable; moderators can force PTT per voice channel (advisory: the client complies) and server-mute people (enforced by LiveKit). See "Server mute". |
 | Media stack | LiveKit, self-hosted. MIT-licensed, built-in E2EE, SFU relays ciphertext only. |
 | GIF provider | Admin-selectable between Giphy and Tenor, or disabled entirely (the default). Every image is proxied by the server and a chosen GIF is stored locally as an attachment, so clients never contact the provider. |
 | Moderation | Message removal by author or moderator; reports verified server-side; bans that revoke sessions and live connections. Purging a banned user's history is administrator-only and separate from the ban itself. |
@@ -202,6 +202,48 @@ Per-group limits were considered and left for later.
   address; LibreSpeed's volunteer servers often can't take a gigabit
   upload. The endpoint is not a documented API, so failures are shown
   as such. A per-user test (sharer's upload) is for later.
+
+### Server mute
+
+Decided with Ryan, 2026-11-04, instead of enforcing force-PTT.
+
+- **Why force-PTT stays advisory:** only the client knows whether a
+  push-to-talk key is down, and voice is end-to-end encrypted, so the
+  server cannot check what a client claims. A modified client would just
+  report "held" forever. Toggling the microphone source on each key
+  press would also cost every press a republish (LiveKit unpublishes a
+  track the moment its source is taken away), clipping the first words.
+  The honest app already forces PTT on and greys the setting out.
+- **What it is instead:** a holder of the new `server_mute` switch
+  (Moderator by default, migration 0028) takes away someone's microphone
+  and screen share audio in **every** voice channel. Screen video stays
+  allowed. Same rank rule as bans (only people below you); unmute works
+  on anyone, like unban. Logged as `voice_mute` (detail: the duration)
+  and `voice_unmute`.
+- **How long:** until unmuted (the default), or 10 minutes, 1 hour or 1
+  day (Ryan wanted both). `voice_mutes` holds one row per account; a
+  15 s sweep deletes expired rows and gives the microphone back live.
+- **Enforcement (`voicemute.go`):** the database row is the truth. The
+  join token's `canPublishSources` leaves the microphone out (camera +
+  screen share, since an empty list means "any"), so rejoining is no way
+  out. Mute, unmute and expiry call `applyVoiceMute`, which edits the
+  live participant's sources through `UpdateParticipant`. The client's
+  post-join `voice/changed` hint re-applies it for that room, closing the
+  gap between minting a token and arriving. The share limit edits the
+  current list too, so neither undoes the other (`editSources`; never
+  an empty list).
+- **Client:** muted means the allowed sources omit MICROPHONE
+  (`micTakenAway`); LiveKit sends every participant's permissions to
+  everyone, so rosters and the moderator's menu show it live. The muted
+  person's mic is released and republished on unmute (`#syncMic`); the
+  mic button gets a red outline and X (not the greyed self-mute look),
+  and "Share audio too" is struck through with the reason.
+- **UI:** "Server Mute" in the right-click menu on a person in a call;
+  Mute / Unmute and a "Muted" tag in Server settings > Members.
+- Tested on Docker SM1-SM10 (mute, rejoin, unmute without rejoining,
+  share audio dropped and restored mid-share, timed expiry, log, rank
+  refusal, and that leaving or the browser's Stop sharing still release
+  the capture).
 
 ## Architecture
 
@@ -1365,6 +1407,16 @@ networking can't do this: the "internal" address would be the
 container's. Caddy and the server reach LiveKit at
 `host.docker.internal:7880` (`extra_hosts: host-gateway`).
 
+**LiveKit stops a local track the server unpublishes.** Found on Docker
+2026-11-04 (livekit-client 2.23.0): when the server takes a source away,
+the client calls `unpublishTrack` with the Room option
+`stopLocalTrackOnUnpublish`, true by default, which ends the capture. A
+screen share's audio can't be reopened without the browser's picker, so
+an unmute had nothing to send. The Room now sets it to false; every
+place that should end a track (`stopShare`, `#syncMic`, `#cleanup`)
+stops it itself, and a server-muted share's audio waits in
+`#heldShareAudio` until the source is allowed again.
+
 **Old LiveKit servers hang publishing.** Against livekit-server 1.9.0 the
 2.23 client connected but publishing timed out in negotiation; 1.10.1
 works. Docker runs `livekit/livekit-server:latest`.
@@ -1393,7 +1445,7 @@ Build-order step 12, decided by Ryan 2026-10-31.
 **Switches decide what you can do; rank decides whom you can do it to.**
 A group carries permission switches (`perm.All`: administrator,
 manage_groups, manage_channels, delete_messages, view_reports, ban,
-force_ptt). An account holds the union of its groups' switches. Groups
+force_ptt, server_mute, manage_stickers). An account holds the union of its groups' switches. Groups
 are ranked by `position`, and an account's rank is its highest group's.
 Rank grants nothing on its own: Member and Everyone carry no switches,
 so an ordinary account cannot ban a guest whatever the order. Rank only
@@ -2082,11 +2134,10 @@ to pick their own colours later, so every colour stays a variable.
       share quality limit"), with an upload speed test of the server.
       Not built: per-group limits, a per-user upload test in the share
       dialog.
-- [ ] Force-PTT is advisory: the server tells the client and the client
-      complies. Real enforcement could take the microphone source away
-      with `setPublishSources` (livekitapi.go, as the share limit does)
-      while the key is up, or call `MutePublishedTrack`; verify which
-      LiveKit lets the client undo.
+- [x] Force-PTT is advisory: the server tells the client and the client
+      complies. Closed 2026-11-04 as advisory by design (the server can't
+      know whether a key is down; Feature decisions, "Server mute"). Built
+      the enforceable tool instead: server mute.
 - [ ] Guest accounts can be assigned but there is no anonymous or invite
       flow to create one
 - [ ] Reproducible builds
