@@ -791,3 +791,5 @@ button.dot-host { position: relative; }
 .emoji-big { font-size: 26px; line-height: 1; }
 .emoji-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .emoji-list .emoji-char { font-size: 18px; margin-right: 4px; }
+.emoji-list li.sticker-option { display: flex; align-items: center; gap: 8px; }
+.emoji-list li.sticker-option .sticker-img, .emoji-list li.sticker-option .sticker-blank { flex: 0 0 auto; }

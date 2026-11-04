@@ -738,7 +738,7 @@ function Composer({ snap, call, uploads, canManageStickers, onSend, onEditLast }
   const ready = files.flatMap((f) => (f.status === "ready" && f.result ? [f.result] : []));
   const canSend = !reason && !uploading && (!!text.trim() || ready.length > 0);
   const mentionPicker = useMentionPicker(snap.members, text, setText, ref);
-  const emojiCodes = useEmojiShortcodes(text, setText, ref);
+  const emojiCodes = useEmojiShortcodes(text, setText, ref, (s) => onSend(stickerToken(s.id)));
 
   /** Put picked emoji at the caret (or over the selection). */
   const insertEmoji = useCallback((value: string) => {

@@ -191,7 +191,10 @@ ST1-ST7, Member check with test0user; decisions.md Open items "Custom stickers")
 Stickers), `manage_stickers` switch (Moderator by default), migration
 0024, `httpapi/stickers.go`, client-core `stickers.ts` (message token
 `[sticker:<uuid>]`), client-web `stickers.tsx` (Stickers tab inside the composer's emoji
-picker, not for reactions; Server settings tab). Also:
+picker, not for reactions; Server settings tab). `:name:` sticker
+suggestions DONE too (SC1-SC5 verified): matching stickers top the
+emoji shortcode list in the composer (not edits); picking one sends it
+at once, a typed-out `:name:` never does. Also:
 the client now refetches `/me` on start, so a switch added by a server
 update shows without signing out. Go test cache volume `ovx-gomod` on
 Docker (`-v ovx-gomod:/go/pkg/mod` in the docker run test command).
@@ -267,8 +270,7 @@ period in `server_settings`, migration 0017).
 - Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI;
   now also destroys the key).
 - @mentions and Appearance: done and verified (M1-M6, A1).
-- Next (Ryan to choose): `:name:` sticker shortcodes (small), later
-  a server browser (decisions.md Open items); "shared computer: erase everything" on sign-out;
+- Next (Ryan to choose): a server browser (decisions.md Open items); "shared computer: erase everything" on sign-out;
   local archive retention sweep; real force-PTT via LiveKit
   `MutePublishedTrack`; bitrate ceiling; zxcvbn (discuss first);
   Electron shell.

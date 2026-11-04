@@ -23,7 +23,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent } from "react";
 import { localStore } from "./core";
 import type { StickerInfo } from "@core/stickers";
-import { StickerPanel, useStickers } from "./stickers";
+import { matchStickers, StickerImg, StickerPanel, useStickers } from "./stickers";
 
 export interface Emoji {
   /** The emoji itself, default (yellow) skin. */
@@ -420,11 +420,24 @@ const MAX_SUGGESTIONS = 8;
  * closing colon. Text that merely looks like a time (12:30) is left alone,
  * since the colon must follow a space, a bracket, or the start.
  */
+/** At most this many stickers in the list, above the emoji. */
+const MAX_STICKER_SUGGESTIONS = 3;
+
+type Suggestion = { kind: "emoji"; e: Emoji } | { kind: "sticker"; s: StickerInfo };
+
+/**
+ * sendSticker: composer only. Matching stickers are listed first;
+ * picking one sends it at once as its own message (a sticker can't sit
+ * inside text) and removes the ":query" from the box. A complete
+ * ":name:" never sends a sticker by itself, only a pick from the list.
+ */
 export function useEmojiShortcodes(
   text: string,
   setText: (v: string) => void,
   ref: React.RefObject<HTMLTextAreaElement | null>,
+  sendSticker?: (s: StickerInfo) => Promise<boolean>,
 ) {
+  useStickers(); // redraw when the sticker list arrives or changes
   const [query, setQuery] = useState<{ at: number; q: string } | null>(null);
   const [active, setActive] = useState(0);
   // Set on the keydown of a ":" so the following select event can finish
@@ -432,7 +445,12 @@ export function useEmojiShortcodes(
   const typedColon = useRef(false);
   const data = useEmojiData(query !== null);
 
-  const matches = query && data ? searchEmoji(data, query.q, MAX_SUGGESTIONS) : [];
+  const stickerHits = query && sendSticker ? matchStickers(query.q, MAX_STICKER_SUGGESTIONS) : [];
+  const emojiHits = query && data ? searchEmoji(data, query.q, MAX_SUGGESTIONS - stickerHits.length) : [];
+  const matches: Suggestion[] = [
+    ...stickerHits.map((s) => ({ kind: "sticker" as const, s })),
+    ...emojiHits.map((e) => ({ kind: "emoji" as const, e })),
+  ];
   const open = matches.length > 0;
 
   /** Swap text[from, to) for `value`; `space` adds one after it, like @mentions. */
@@ -480,10 +498,19 @@ export function useEmojiShortcodes(
     }
   };
 
-  const pick = (e: Emoji) => {
+  const pick = (m: Suggestion) => {
     if (!query) return;
-    noteRecent(e);
-    replace(query.at, query.at + 1 + query.q.length, withTone(e, readTone()), true);
+    if (m.kind === "emoji") {
+      noteRecent(m.e);
+      replace(query.at, query.at + 1 + query.q.length, withTone(m.e, readTone()), true);
+      return;
+    }
+    // Take the ":query" out first; put it back if the send fails.
+    const before = ref.current?.value ?? text;
+    replace(query.at, query.at + 1 + query.q.length, "", false);
+    void sendSticker!(m.s).then((ok) => {
+      if (!ok) setText(before);
+    });
   };
 
   /** Handle a key if the list is open; true if it was used. */
@@ -515,14 +542,20 @@ export function useEmojiShortcodes(
   const list = open ? (
     <ul className="mention-list emoji-list" role="listbox" aria-label="Emoji">
       {matches.map((m, i) => (
-        <li key={m.hexcode} role="option" aria-selected={i === active}
-          className={i === active ? "active" : undefined}
+        <li key={m.kind === "emoji" ? m.e.hexcode : `s:${m.s.id}`} role="option" aria-selected={i === active}
+          className={[i === active ? "active" : "", m.kind === "sticker" ? "sticker-option" : ""].filter(Boolean).join(" ") || undefined}
           onMouseDown={(e) => {
             e.preventDefault(); // keep focus in the textarea
             pick(m);
           }}
           onMouseEnter={() => setActive(i)}>
-          <span className="emoji-char">{withTone(m, readTone())}</span> :{m.codes[0]}:
+          {m.kind === "emoji"
+            ? <><span className="emoji-char">{withTone(m.e, readTone())}</span> :{m.e.codes[0]}:</>
+            : <>
+              <StickerImg id={m.s.id} box={28} label={m.s.alt || m.s.name} />
+              <span>:{m.s.name}:</span>
+              <span className="muted small">sticker, sends now</span>
+            </>}
         </li>
       ))}
     </ul>

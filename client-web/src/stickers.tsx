@@ -76,6 +76,16 @@ export function useStickers(): StickerList | null {
   return useStickerState().list;
 }
 
+/** Stickers for a typed ":query": names starting with it first, then
+ * names containing it. */
+export function matchStickers(q: string, max: number): StickerInfo[] {
+  const all = state.list?.stickers ?? [];
+  q = q.toLowerCase();
+  const starts = all.filter((s) => s.name.startsWith(q));
+  const inside = all.filter((s) => !s.name.startsWith(q) && s.name.includes(q));
+  return [...starts, ...inside].slice(0, max);
+}
+
 /** The image as a blob: URL, or null if it can't be fetched (removed). */
 function stickerUrl(id: string): Promise<string | null> {
   let p = images.get(id);
@@ -110,7 +120,7 @@ function useStickerUrl(id: string): string | null | undefined {
 const SHOWN_PX = 160;
 
 /** The image alone, scaled into a square box. */
-function StickerImg({ id, box, label }: { id: string; box: number; label: string }) {
+export function StickerImg({ id, box, label }: { id: string; box: number; label: string }) {
   const url = useStickerUrl(id);
   if (!url) return <span className="sticker-blank" style={{ width: box, height: box }} aria-label={label} />;
   return <img className="sticker-img" src={url} alt={label} title={label}
