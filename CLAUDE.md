@@ -159,16 +159,15 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 
 ## Current state (rewrite every session)
 
-_2026-11-04._ **Desktop app step 1** done and pushed (`8cfe8fa`): Electron
-shell, server pane, one sandboxed view + partition per server, origin
-lock, permission allowlist (ED1-ED7, ED9-ED11 passed). Server browser
-design decided: own view per server, background servers stay
-connected, pane desktop-only (decisions.md Feature decisions "Server
-browser and desktop shell"). LiveKit speaking updates every 200 ms,
-smoothing 2 (`e8f9d2e`, VA3 passed).
+_2026-11-04._ **Desktop app step 2** done (`3898da4`): our own screen
+share picker in the pane (Screens/Windows tabs, live thumbnails;
+ED8, SP1-SP7, SD1 passed). Sound = Electron's whole-system loopback,
+whole screens on Windows only. Electron gotchas (display-capture
+permission, cancel = AbortError, Xvfb needs `-extension MIT-SHM` and
+openbox) in decisions.md Implementation notes. Step 1 (`8cfe8fa`):
+shell, one sandboxed view + partition per server, origin lock.
 
-- **Stay signed in** on login, ticked by default (localStorage; SS1-SS4
-  passed; decisions.md Feature decisions "Stay signed in").
+- **Stay signed in** on login, ticked by default (SS1-SS4 passed).
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts: tuckilufigus (Ryan), staff, openvoxaadmin,
   test0user. Voice channels: voice-general, vip-voice (admins only).
@@ -177,12 +176,15 @@ smoothing 2 (`e8f9d2e`, VA3 passed).
   bind mount `/mnt/openvoxa-blobs`. Account keys in volume
   `deploy_key-data`, wrapped under a KEK (Ryan holds the only copies),
   backed up daily 03:30 to `~/openvoxa-key-backups` (7 days). Closed off:
-  Ryan is the only user. Ryan's desktop app runs build `-b`.
+  Ryan is the only user. Ryan's desktop app runs build `-d`.
 - Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI).
 - Known gaps (decisions.md Open items): K1 recovery flows 2-5 deferred;
   no @everyone/@group; no per-group share limits.
-- **Next:** desktop step 2, our own screen share picker (ED8: today
-  `display-capture` is refused and the share dialog just closes; also
-  make the web client say why). Ryan's backlog, recorded not designed
-  (decisions.md "Planned: server icons, updates, bug reports, channel
-  menus, avatars"): discuss each before building.
+- **Next (Ryan: important): desktop step 3, per-app share sound.**
+  Windows process loopback (one app's sound for a window share; all
+  sound except OpenVoxa for a screen share, which also ends the echo
+  risk). Needs a Rust native helper and the first, narrow preload for
+  server views. Design with Ryan first: decisions.md Feature
+  decisions "Per-app share sound". Then Ryan's backlog (decisions.md
+  "Planned: server icons, updates, bug reports, channel menus,
+  avatars"): discuss each before building.
