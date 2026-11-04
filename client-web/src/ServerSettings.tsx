@@ -30,6 +30,7 @@ import type { ApiCall } from "@core/identity";
 import { Modal } from "./ChannelDialogs";
 import { StickerMessage, StickersTab } from "./stickers";
 import { VoiceTab } from "./shareLimit";
+import { MUTE_DURATIONS } from "./VoiceUI";
 import { stickerIdOf } from "@core/stickers";
 import { ColouredName, MIN_NAME_CONTRAST, nameContrast, refreshNames, useServerNameColours } from "./names";
 
@@ -62,6 +63,9 @@ interface UserSummary {
   banned: boolean;
   /** null with banned: permanent. */
   banned_until: string | null;
+  voice_muted: boolean;
+  /** null with voice_muted: until unmuted. */
+  voice_muted_until: string | null;
 }
 
 /** Every switch, in the server's display order (perm.All). */
@@ -73,6 +77,7 @@ const SWITCHES: { id: string; label: string; help: string }[] = [
   { id: "view_reports", label: "View reports", help: "Read and resolve reported messages." },
   { id: "ban", label: "Ban", help: "Ban and unban people below their rank." },
   { id: "force_ptt", label: "Force push-to-talk", help: "Require push-to-talk in a voice channel." },
+  { id: "server_mute", label: "Server mute", help: "Take away the microphone of people below their rank, in every voice channel." },
   { id: "manage_stickers", label: "Manage stickers", help: "Add, rename and remove the server's stickers." },
 ];
 const switchLabel = (id: string) => SWITCHES.find((s) => s.id === id)?.label ?? id;
@@ -146,7 +151,7 @@ export function ServerSettingsDialog({ call, me, reload, openReports, onClose }:
   const tabs: [ServerTab, string][] = [["groups", "Groups"], ["members", "Members"]];
   if (has("view_reports")) tabs.push(["reports", openReports ? `Reports (${openReports})` : "Reports"]);
   if (has("ban")) tabs.push(["bans", "Bans"]);
-  if (has("ban") || has("view_reports") || has("delete_messages")) tabs.push(["log", "Log"]);
+  if (has("ban") || has("view_reports") || has("delete_messages") || has("server_mute")) tabs.push(["log", "Log"]);
   // Every staff member can see the set; managing it needs the switch.
   tabs.push(["stickers", "Stickers"]);
   if (has("administrator")) tabs.push(["voice", "Voice and Video"]);
@@ -579,13 +584,28 @@ function MembersTab({ call, me, reload }: { call: ApiCall; me: Me; reload: numbe
   const { users, error, refresh: refreshUsers } = useUserList(call, reload);
   const [filter, setFilter] = useState("");
   // Which row is open, and on what.
-  const [open, setOpen] = useState<{ id: string; mode: "groups" | "ban" | "delete" } | null>(null);
+  const [open, setOpen] = useState<{ id: string; mode: "groups" | "ban" | "mute" | "delete" } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [rowError, setRowError] = useState<{ id: string; msg: string } | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const canManage = me.permissions.includes("manage_groups");
   const canBan = me.permissions.includes("ban");
   const isAdmin = me.permissions.includes("administrator");
+  const canMute = isAdmin || me.permissions.includes("server_mute");
+
+  async function unmute(u: UserSummary) {
+    setBusy(`${u.id}:unmute`);
+    setRowError(null);
+    try {
+      await call(`/api/v1/users/${u.id}/voice-mute`, { method: "DELETE" });
+      setFlash(`${u.username} is unmuted.`);
+    } catch (err) {
+      setRowError({ id: u.id, msg: errText(err) });
+    } finally {
+      setBusy(null);
+      refreshUsers();
+    }
+  }
 
   async function unban(u: UserSummary) {
     setBusy(`${u.id}:unban`);
@@ -639,6 +659,7 @@ function MembersTab({ call, me, reload }: { call: ApiCall; me: Me; reload: numbe
         {users.length} account{users.length === 1 ? "" : "s"}. Everyone is in Everyone, so it isn't listed.
         {canManage ? " You can change the groups of people ranked below you." : ""}
         {canBan ? " You can ban people ranked below you." : ""}
+        {canMute ? " You can server-mute people ranked below you." : ""}
       </p>
       {flash && <p className="small" role="status">{flash}</p>}
       <ul className="device-list">
@@ -646,12 +667,12 @@ function MembersTab({ call, me, reload }: { call: ApiCall; me: Me; reload: numbe
           const self = u.id === me.userId;
           const lock = self ? "That's you." : u.rank >= me.rank ? "Ranked at or above you." : null;
           const mode = open?.id === u.id ? open.mode : null;
-          const toggle = (m: "groups" | "ban" | "delete") => {
+          const toggle = (m: "groups" | "ban" | "mute" | "delete") => {
             setRowError(null);
             setFlash(null);
             setOpen(mode === m ? null : { id: u.id, mode: m });
           };
-          const actions = !lock && (canManage || canBan || isAdmin);
+          const actions = !lock && (canManage || canBan || canMute || isAdmin);
           return (
             <li key={u.id} className={mode ? "member open" : "member"}>
               <div className="member-row">
@@ -662,15 +683,30 @@ function MembersTab({ call, me, reload }: { call: ApiCall; me: Me; reload: numbe
                     <span className="tag small danger-tag"
                       title={u.banned_until ? `Until ${when(u.banned_until)}` : "Permanent"}>Banned</span>
                   )}
+                  {u.voice_muted && (
+                    <span className="tag small danger-tag"
+                      title={u.voice_muted_until ? `Until ${when(u.voice_muted_until)}` : "Until unmuted"}>Muted</span>
+                  )}
                   <span className="muted small block">
                     {u.groups.length ? u.groups.map((g) => g.name).join(", ") : "No groups"} · rank {u.rank}
                     {" · joined "}{new Date(u.created_at).toLocaleDateString()}
                     {u.banned && (u.banned_until ? ` · banned until ${when(u.banned_until)}` : " · banned permanently")}
+                    {u.voice_muted && (u.voice_muted_until ? ` · muted until ${when(u.voice_muted_until)}` : " · muted until unmuted")}
                   </span>
                 </span>
                 {canBan && u.banned && (
                   <button className="secondary" onClick={() => void unban(u)} disabled={busy !== null}>
                     {busy === `${u.id}:unban` ? "Unbanning…" : "Unban"}
+                  </button>
+                )}
+                {canMute && u.voice_muted && (
+                  <button className="secondary" onClick={() => void unmute(u)} disabled={busy !== null}>
+                    {busy === `${u.id}:unmute` ? "Unmuting…" : "Unmute"}
+                  </button>
+                )}
+                {actions && canMute && !u.voice_muted && (
+                  <button className="secondary" onClick={() => toggle("mute")} aria-expanded={mode === "mute"}>
+                    {mode === "mute" ? "Close" : "Mute"}
                   </button>
                 )}
                 {actions && canManage && (
@@ -688,11 +724,22 @@ function MembersTab({ call, me, reload }: { call: ApiCall; me: Me; reload: numbe
                     {mode === "delete" ? "Close" : "Delete"}
                   </button>
                 )}
-                {lock && !self && (canManage || canBan) && <span className="muted small" title={lock}>Locked</span>}
+                {lock && !self && (canManage || canBan || canMute) && <span className="muted small" title={lock}>Locked</span>}
               </div>
               {mode === "ban" && !lock && (
                 <div className="member-groups">
                   <BanForm call={call} me={me} user={u}
+                    onCancel={() => setOpen(null)}
+                    onDone={(msg) => {
+                      setOpen(null);
+                      setFlash(msg);
+                      refreshUsers();
+                    }} />
+                </div>
+              )}
+              {mode === "mute" && !lock && (
+                <div className="member-groups">
+                  <MuteForm call={call} user={u}
                     onCancel={() => setOpen(null)}
                     onDone={(msg) => {
                       setOpen(null);
@@ -826,6 +873,53 @@ function BanForm({ call, me, user, onDone, onCancel }: {
         <button type="button" className="secondary" onClick={onCancel} disabled={busy}>Cancel</button>
         <button type="submit" className="danger solid" disabled={busy}>
           {busy ? "Banning…" : purge ? `Ban ${user.username} and delete messages` : `Ban ${user.username}`}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/** Server-mute one account: no microphone in any voice channel. */
+function MuteForm({ call, user, onDone, onCancel }: {
+  call: ApiCall;
+  user: { id: string; username: string };
+  onDone: (message: string) => void;
+  onCancel: () => void;
+}) {
+  const [duration, setDuration] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function mute(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await call(`/api/v1/users/${user.id}/voice-mute`, { method: "PUT", body: JSON.stringify({ duration }) });
+      onDone(`${user.username} is server-muted ${duration ? `for ${duration}` : "until unmuted"}.`);
+    } catch (err) {
+      setError(errText(err));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="settings-form" onSubmit={mute}>
+      <label>
+        How long
+        <select value={duration} onChange={(e) => setDuration(e.target.value)} autoFocus>
+          {MUTE_DURATIONS.map(([v, label]) => <option key={label} value={v}>{label}</option>)}
+        </select>
+      </label>
+      <p className="muted small">
+        {user.username} can still join voice channels and listen, but can't speak or share sound, straight away and
+        every time they join until the mute ends. Sharing a screen without sound still works.
+      </p>
+      {error && <p className="error" role="alert">{error}</p>}
+      <div className="row-actions">
+        <button type="button" className="secondary" onClick={onCancel} disabled={busy}>Cancel</button>
+        <button type="submit" className="danger solid" disabled={busy}>
+          {busy ? "Muting…" : `Mute ${user.username}`}
         </button>
       </div>
     </form>
@@ -1211,6 +1305,10 @@ function describe(e: LogEntry): { text: string; note?: string } {
       return { text: `banned ${who} and deleted their messages`, note: e.detail || undefined };
     case "unban":
       return { text: `unbanned ${who}` };
+    case "voice_mute":
+      return { text: `server-muted ${who}`, note: e.detail ? `For ${e.detail}` : "Until unmuted" };
+    case "voice_unmute":
+      return { text: `unmuted ${who}` };
     case "delete_message":
       return { text: `deleted a message by ${e.subject_user || "a deleted account"}${where}` };
     case "resolve_report":
@@ -1294,7 +1392,7 @@ function LogTab({ call, me, reload }: { call: ApiCall; me: Me; reload: number })
         ))}
       </div>
       <p className="muted small">
-        Moderation actions, newest first: bans, deleting other people's messages, closing reports and deleting accounts.
+        Moderation actions, newest first: bans, server mutes, deleting other people's messages, closing reports and deleting accounts.
         People deleting their own messages aren't listed.
         {period && (view === "recent"
           ? ` Entries older than ${period} move to Archived.`

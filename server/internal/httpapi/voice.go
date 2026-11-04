@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/livekit/protocol/auth"
+	"github.com/livekit/protocol/livekit"
 )
 
 // voiceTokenTTL is how long a minted token may be used to join. It bounds
@@ -23,6 +24,10 @@ type voiceTokenResponse struct {
 	Room       string `json:"room"`
 	CanPublish bool   `json:"can_publish"`
 	ForcePTT   bool   `json:"force_ptt"`
+	// ServerMuted: a moderator took the microphone away (voicemute.go);
+	// ServerMutedUntil is nil for "until unmuted".
+	ServerMuted      bool       `json:"server_muted"`
+	ServerMutedUntil *time.Time `json:"server_muted_until"`
 }
 
 // voiceToken issues a LiveKit join token for a voice channel.
@@ -67,12 +72,26 @@ func (a *API) voiceToken(w http.ResponseWriter, r *http.Request) {
 	forcePTT := p.ForcePTT
 	canSubscribe := true
 
+	muted, mutedUntil, err := voiceMuteState(r.Context(), a.pool, session.UserID)
+	if err != nil {
+		slog.Error("reading voice mute", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not join channel")
+		return
+	}
+
 	grant := &auth.VideoGrant{
 		Room:           channelID,
 		RoomJoin:       true,
 		CanPublish:     &canPublish,
 		CanSubscribe:   &canSubscribe,
 		CanPublishData: &canPublish,
+	}
+	// Server-muted: everything but the microphone and screen audio.
+	// Camera is listed because the app never publishes it and the list
+	// must name something (empty would mean any source).
+	if muted && canPublish {
+		grant.SetCanPublishSources([]livekit.TrackSource{
+			livekit.TrackSource_CAMERA, livekit.TrackSource_SCREEN_SHARE})
 	}
 
 	// Identity is the user ID, not the username. It is what LiveKit uses to
@@ -97,6 +116,9 @@ func (a *API) voiceToken(w http.ResponseWriter, r *http.Request) {
 		Room:       channelID,
 		CanPublish: canPublish,
 		ForcePTT:   forcePTT,
+
+		ServerMuted:      muted && canPublish,
+		ServerMutedUntil: mutedUntil,
 	})
 }
 

@@ -25,6 +25,10 @@ type userSummary struct {
 	// permanent one.
 	Banned      bool       `json:"banned"`
 	BannedUntil *time.Time `json:"banned_until"`
+	// VoiceMuted is set while a server mute is in force; VoiceMutedUntil
+	// is nil for "until unmuted".
+	VoiceMuted      bool       `json:"voice_muted"`
+	VoiceMutedUntil *time.Time `json:"voice_muted_until"`
 }
 
 type userGroupName struct {
@@ -46,8 +50,11 @@ func (a *API) listUsers(w http.ResponseWriter, r *http.Request) {
 		                    FROM user_perm_groups ug
 		                    JOIN perm_groups g ON g.id = ug.group_id
 		                   WHERE ug.user_id = u.id), '[]'::json),
-		        u.created_at, b.user_id IS NOT NULL, b.expires_at
+		        u.created_at, b.user_id IS NOT NULL, b.expires_at,
+		        vm.user_id IS NOT NULL, vm.expires_at
 		   FROM users u
+		   LEFT JOIN voice_mutes vm
+		          ON vm.user_id = u.id AND (vm.expires_at IS NULL OR vm.expires_at > now())
 		   LEFT JOIN LATERAL (
 		        SELECT user_id, expires_at FROM bans
 		         WHERE user_id = u.id AND (expires_at IS NULL OR expires_at > now())
@@ -64,7 +71,7 @@ func (a *API) listUsers(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var u userSummary
 		if err := rows.Scan(&u.ID, &u.Username, &u.Rank, &u.Groups, &u.CreatedAt,
-			&u.Banned, &u.BannedUntil); err != nil {
+			&u.Banned, &u.BannedUntil, &u.VoiceMuted, &u.VoiceMutedUntil); err != nil {
 			slog.Error("scanning user", "err", err)
 			writeError(w, http.StatusInternalServerError, "could not list users")
 			return

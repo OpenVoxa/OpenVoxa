@@ -58,6 +58,8 @@ export interface VoiceParticipant {
   readonly volume: number;
   /** Silenced on this device only. */
   readonly localMuted: boolean;
+  /** A moderator took their microphone away (server mute). */
+  readonly serverMuted: boolean;
 }
 
 export interface ScreenShare {
@@ -75,6 +77,8 @@ export interface VoiceSnapshot {
   readonly screens: readonly ScreenShare[];
   /** May speak and share (post permission in the channel). */
   readonly canPublish: boolean;
+  /** A moderator server-muted this account: no mic, no screen audio. */
+  readonly serverMuted: boolean;
   /** The mute button (ignored in push-to-talk mode). */
   readonly muted: boolean;
   readonly deafened: boolean;
@@ -123,8 +127,19 @@ export function presetAllowed(p: { width: number; height: number; fps: number; k
   return !limit || (Math.min(p.width, p.height) <= limit.res && p.fps <= limit.fps && p.kbps <= limit.kbps);
 }
 
-/** LiveKit's TrackSource.SCREEN_SHARE (protocol enum value). */
+/** LiveKit's TrackSource values (protocol enum). */
+const SOURCE_MICROPHONE = 2;
 const SOURCE_SCREEN_SHARE = 3;
+const SOURCE_SCREEN_SHARE_AUDIO = 4;
+
+/**
+ * Server-muted: the server's allowed-sources list leaves the microphone
+ * out (voicemute.go). An empty list means every source.
+ */
+function micTakenAway(p: Participant): boolean {
+  const sources = p.permissions?.canPublishSources ?? [];
+  return sources.length > 0 && !sources.includes(SOURCE_MICROPHONE);
+}
 
 const SHARE_BLOCKED =
   "Screen sharing is blocked until you rejoin the call: your last share was above this server's quality limit.";
@@ -261,12 +276,17 @@ export class VoiceClient {
   #epoch: number | null = null;
   #poll: ReturnType<typeof setInterval> | undefined;
   #chain: Promise<unknown> = Promise.resolve();
+  /** Mic publish/release, one at a time (separate from group operations). */
+  #micChain: Promise<unknown> = Promise.resolve();
   #offAuto: (() => void) | null = null;
   /** Per person: when the current run of decryption errors began, and the last one. */
   #decryptErrors = new Map<string, { since: number; last: number; told: boolean }>();
 
   #mic: LocalAudioTrack | null = null;
   #screenTracks: LocalTrack[] = [];
+  /** A share's sound, taken down by a server mute and kept for the unmute
+   * (screen capture audio can't be reopened without the browser's picker). */
+  #heldShareAudio: LocalTrack | null = null;
   #canPublish = false;
   #muted = false;
   #deafened = false;
@@ -316,6 +336,7 @@ export class VoiceClient {
             sharing: vids.length > 0,
             volume: local ? 1 : this.#volumeOf(p.identity),
             localMuted: !local && this.#localMutedOf(p.identity),
+            serverMuted: (local ? this.#canPublish : !!p.permissions?.canPublish) && micTakenAway(p),
           });
           for (const pub of vids) {
             screens.push({ id: pub.trackSid, participantId: p.identity, name: p.name || p.identity, isLocal: local });
@@ -328,6 +349,7 @@ export class VoiceClient {
         participants: people,
         screens,
         canPublish: this.#canPublish,
+        serverMuted: this.#serverMuted(),
         muted: this.#muted,
         deafened: this.#deafened,
         pttMode: this.#pttMode || this.#forcePTT,
@@ -459,6 +481,10 @@ export class VoiceClient {
         dynacast: true,
         encryption: { keyProvider: this.#keys, worker: this.#worker },
         audioOutput: output ? { deviceId: output } : undefined,
+        // LiveKit would otherwise stop a capture whenever the server
+        // takes its track away, and a share's sound can't be reopened.
+        // Every place that should stop a track does so itself.
+        stopLocalTrackOnUnpublish: false,
       });
       this.#room = room;
       // Before connect, so nothing is ever published unencrypted.
@@ -472,20 +498,8 @@ export class VoiceClient {
       this.#audioBlocked = !room.canPlaybackAudio;
 
       if (data.can_publish) {
-        const input = this.#opts.store.get("voice.input") ?? undefined;
-        this.#mic = await createLocalAudioTrack({
-          deviceId: input,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        });
-        // Silent while publishing, so push-to-talk never leaks a moment of
-        // audio; then muted properly (which also tells the others) or opened.
-        this.#mic.mediaStreamTrack.enabled = false;
-        await room.localParticipant.publishTrack(this.#mic);
-        if (this.#micOpen()) this.#mic.mediaStreamTrack.enabled = true;
-        else await this.#mic.mute();
-        this.#changed();
+        if (this.#serverMuted()) this.#notice("A moderator has muted you on this server: you can listen but not speak.");
+        await this.#syncMic(room);
       } else {
         this.#notice("Listen-only: you can't speak in this channel.");
       }
@@ -521,6 +535,56 @@ export class VoiceClient {
       }
       this.#fail(`Couldn't join voice: ${errorText(err)}`);
     }
+  }
+
+  /** Whether a moderator has taken this account's microphone away. */
+  #serverMuted(): boolean {
+    const room = this.#room;
+    return !!room && this.#canPublish && micTakenAway(room.localParticipant);
+  }
+
+  /**
+   * Have a published microphone exactly when allowed to speak: published
+   * at join, released while server-muted (LiveKit unpublishes it, and the
+   * device is let go), published again on unmute.
+   */
+  #syncMic(room: Room): Promise<void> {
+    const run = this.#micChain.then(async () => {
+      if (this.#room !== room) return;
+      const allowed = this.#canPublish && !this.#serverMuted();
+      if (!allowed && this.#mic) {
+        const mic = this.#mic;
+        this.#mic = null;
+        try {
+          await room.localParticipant.unpublishTrack(mic, true);
+        } catch {
+          /* LiveKit already took it down */
+        }
+        mic.stop();
+      } else if (allowed && !this.#mic) {
+        const input = this.#opts.store.get("voice.input") ?? undefined;
+        const mic = await createLocalAudioTrack({
+          deviceId: input,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        });
+        if (this.#room !== room) {
+          mic.stop(); // left meanwhile
+          return;
+        }
+        this.#mic = mic;
+        // Silent while publishing, so push-to-talk never leaks a moment of
+        // audio; then muted properly (which also tells the others) or opened.
+        mic.mediaStreamTrack.enabled = false;
+        await room.localParticipant.publishTrack(mic);
+        if (this.#micOpen()) mic.mediaStreamTrack.enabled = true;
+        else await mic.mute();
+      }
+      this.#changed();
+    });
+    this.#micChain = run.catch(() => {});
+    return run;
   }
 
   #fail(why: string): void {
@@ -568,6 +632,8 @@ export class VoiceClient {
     this.#offAuto = null;
     for (const t of this.#screenTracks) t.stop();
     this.#screenTracks = [];
+    this.#heldShareAudio?.stop();
+    this.#heldShareAudio = null;
     this.#mic?.stop();
     this.#mic = null;
     for (const el of this.#audioEls.values()) el.remove();
@@ -623,19 +689,36 @@ export class VoiceClient {
       .on(RoomEvent.TrackUnmuted, this.#changed)
       .on(RoomEvent.LocalTrackPublished, this.#changed)
       .on(RoomEvent.LocalTrackUnpublished, (pub: { track?: Track }) => {
-        // The server (or LiveKit) took a share down without us: release
-        // the capture too, or the browser goes on sharing to nobody.
-        if (pub.track && this.#screenTracks.includes(pub.track as LocalTrack)) {
-          void this.stopShare();
+        const track = pub.track as LocalTrack | undefined;
+        if (track && this.#screenTracks.includes(track)) {
+          if (track.source === Track.Source.ScreenShareAudio && this.#screenTracks.length > 1) {
+            // A server mute takes only the share's sound: the picture goes
+            // on, and the sound is kept to publish again on unmute.
+            this.#screenTracks = this.#screenTracks.filter((t) => t !== track);
+            this.#heldShareAudio = track;
+          } else {
+            // The server (or LiveKit) took a share down without us: release
+            // the capture too, or the browser goes on sharing to nobody.
+            void this.stopShare();
+          }
         }
         this.#changed();
       })
-      .on(RoomEvent.ParticipantPermissionsChanged, (_prev: unknown, p: Participant) => {
-        if (p !== room.localParticipant) return;
+      .on(RoomEvent.ParticipantPermissionsChanged, (prev: { canPublishSources?: number[] } | undefined, p: Participant) => {
+        if (p !== room.localParticipant) {
+          this.#changed();
+          return;
+        }
         if (this.#shareBlocked(room)) {
           if (this.#screenTracks.length) void this.stopShare();
           this.#notice("Your screen share was stopped: it was above this server's quality limit. Rejoin the call to share again.");
         }
+        const was = (prev?.canPublishSources?.length ?? 0) > 0 && !prev!.canPublishSources!.includes(SOURCE_MICROPHONE);
+        const now = this.#serverMuted();
+        if (now && !was) this.#notice("A moderator has muted you on this server: you can listen but not speak.");
+        if (!now && was) this.#notice("A moderator has unmuted you: you can speak again.");
+        void this.#syncMic(room).catch((err) => this.#notice(`Couldn't turn your microphone back on: ${errorText(err)}`));
+        void this.#restoreShareAudio(room);
         this.#changed();
       })
       .on(RoomEvent.TrackPublished, this.#changed)
@@ -871,6 +954,8 @@ export class VoiceClient {
     if (!room || !this.#canPublish) throw new Error("you can't share here");
     if (this.#screenTracks.length) return;
     if (this.#shareBlocked(room)) throw new Error(SHARE_BLOCKED);
+    // Server-muted: picture only (LiveKit would refuse the sound).
+    if (s.audio && this.#serverMuted()) s = { ...s, audio: false };
 
     // Held to the server's limit whatever was asked for, so an honest
     // client is never the one the server has to stop.
@@ -941,9 +1026,28 @@ export class VoiceClient {
     return sources.length > 0 && !sources.includes(SOURCE_SCREEN_SHARE);
   }
 
+  /** Unmuted mid-share: send the share's sound again. */
+  async #restoreShareAudio(room: Room): Promise<void> {
+    const track = this.#heldShareAudio;
+    if (!track || this.#room !== room || !this.#screenTracks.length) return;
+    const sources = room.localParticipant.permissions?.canPublishSources ?? [];
+    if (sources.length && !sources.includes(SOURCE_SCREEN_SHARE_AUDIO)) return;
+    this.#heldShareAudio = null;
+    try {
+      await room.localParticipant.publishTrack(track);
+      this.#screenTracks = [...this.#screenTracks, track];
+    } catch (err) {
+      track.stop();
+      this.#notice(`Couldn't turn your share's sound back on: ${errorText(err)}`);
+    }
+    this.#changed();
+  }
+
   async stopShare(): Promise<void> {
     const tracks = this.#screenTracks;
     this.#screenTracks = [];
+    this.#heldShareAudio?.stop();
+    this.#heldShareAudio = null;
     for (const t of tracks) {
       try {
         await this.#room?.localParticipant.unpublishTrack(t, true);

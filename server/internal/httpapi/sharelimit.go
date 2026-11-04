@@ -192,9 +192,12 @@ func (a *API) checkShareLimit(parent context.Context) {
 				if !overShareLimit(t, *limit) {
 					continue
 				}
-				// Microphone only: the share and its audio stop, and no
-				// new share is allowed until they rejoin.
-				if _, err := a.setPublishSources(ctx, room.Name, p, []string{"MICROPHONE"}); err != nil {
+				// The share and its audio stop, and no new share is
+				// allowed until they rejoin. Whatever else was taken away
+				// (a server mute) stays away.
+				cur, _ := publishSources(p)
+				next, _ := editSources(cur, []string{"SCREEN_SHARE", "SCREEN_SHARE_AUDIO"}, nil)
+				if _, err := a.setPublishSources(ctx, room.Name, p, next); err != nil {
 					slog.Error("stopping a share over the limit", "err", err,
 						"channel_id", room.Name, "user_id", p.Identity)
 				} else {

@@ -257,6 +257,10 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 		withUUIDPath(api.requirePerm(perm.Ban, api.banUser)))
 	mux.HandleFunc("DELETE /api/v1/users/{id}/ban",
 		withUUIDPath(api.requirePerm(perm.Ban, api.unbanUser)))
+	mux.HandleFunc("PUT /api/v1/users/{id}/voice-mute",
+		withUUIDPath(api.requirePerm(perm.ServerMute, api.muteVoice)))
+	mux.HandleFunc("DELETE /api/v1/users/{id}/voice-mute",
+		withUUIDPath(api.requirePerm(perm.ServerMute, api.unmuteVoice)))
 
 	// MLS identity. The server stores and routes this material and never
 	// parses it; see docs/decisions.md.
