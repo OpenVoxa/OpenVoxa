@@ -230,6 +230,9 @@ export type ChatEvent =
   /** Someone just mentioned you (for a sound or a notification).
    * `open`: in the channel open right now. */
   | { type: "mentioned"; channelId: string; messageId: string; authorId: string; username: string; open: boolean }
+  /** A channel you aren't viewing just went from read to unread (for the
+   * message sound: once per unread stretch, not per message). */
+  | { type: "message"; channelId: string; messageId: string }
   /** The open report queue changed; sent only to people who can read it. */
   | { type: "reports_changed" }
   /** The server's sticker set or its limits changed: refetch the list. */
@@ -640,7 +643,7 @@ export class Chat {
     });
   }
 
-  #onActivity(channelId: string, authorId: string, createdAt: string): void {
+  #onActivity(channelId: string, authorId: string, createdAt: string, messageId: string): void {
     // Your own messages, and the channel you are looking at, are read.
     if (authorId === this.userId || channelId === this.#view?.channel.id) {
       this.markRead(channelId, createdAt);
@@ -649,6 +652,7 @@ export class Chat {
     if (!this.#unread.has(channelId)) {
       this.#unread = new Set(this.#unread).add(channelId);
       this.#emit({ type: "unread", unread: this.#unread });
+      this.#emit({ type: "message", channelId, messageId });
     }
   }
 
@@ -698,7 +702,7 @@ export class Chat {
   handleGlobal(frame: GlobalFrame): void {
     switch (frame.type) {
       case "channel_activity":
-        this.#onActivity(frame.channel_id!, frame.author_id ?? "", frame.created_at!);
+        this.#onActivity(frame.channel_id!, frame.author_id ?? "", frame.created_at!, frame.message_id ?? "");
         break;
       case "mention":
         this.#onMention(frame);

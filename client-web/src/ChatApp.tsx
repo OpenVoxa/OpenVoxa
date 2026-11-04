@@ -18,13 +18,13 @@ import type { BackupStatus } from "@core/recovery";
 import type { Session } from "./api";
 import type { BackupManager } from "./backup";
 import { apiCall, cryptoSession, localStore, wsUrl } from "./core";
-import { ChannelPane } from "./ChannelPane";
+import { BellIcon, ChannelPane } from "./ChannelPane";
 import { ChannelSettingsDialog, CreateChannelDialog } from "./ChannelDialogs";
 import {
   PersonMenu, ShareDialog, Stage, VoiceBar, VoiceRoster,
   usePushToTalk, useVoiceSnapshot,
 } from "./VoiceUI";
-import { playSound, useVoiceSounds } from "./sounds";
+import { mutedChannels, playSound, useMutedChannels, useVoiceSounds } from "./sounds";
 import { getToggle, MENTION_NOTIFY } from "./settings";
 import { SettingsDialog, type AccountActions, type SettingsTab } from "./SettingsDialog";
 import { ServerSettingsDialog } from "./ServerSettings";
@@ -82,6 +82,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   // use never needs.
   const [voiceClient, setVoiceClient] = useState<VoiceClient | null>(null);
   const vsnap = useVoiceSnapshot(voiceClient);
+  const muted = useMutedChannels();
   usePushToTalk(voiceClient, vsnap);
   useVoiceSounds(vsnap);
   const [stage, setStage] = useState<{ focus: string | null } | null>(null);
@@ -122,11 +123,25 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           onArchived: () => manager.scheduleUpload(),
         });
         started = c;
+        // Messages that mentioned you, so their message sound is skipped:
+        // the mention sound covers them. The mention usually arrives
+        // first (the server sends channel_activity from a goroutine);
+        // the message sound waits a moment in case it doesn't.
+        const mentionedIds = new Set<string>();
         c.on((e) => {
           if (e.type === "channels") setChannels(e.channels);
           else if (e.type === "unread") setUnread(e.unread);
           else if (e.type === "mentions") setMentions(e.mentions);
+          else if (e.type === "message") {
+            if (mutedChannels().has(e.channelId)) return;
+            setTimeout(() => {
+              if (!live || mentionedIds.has(e.messageId)) return;
+              void playSound("message");
+            }, 400);
+          }
           else if (e.type === "mentioned") {
+            mentionedIds.add(e.messageId);
+            setTimeout(() => mentionedIds.delete(e.messageId), 10_000);
             // Quiet only when you're already looking at that channel.
             const looking = e.open && document.visibilityState === "visible" && document.hasFocus();
             if (looking) return;
@@ -352,6 +367,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
                   <span className="hash" aria-hidden>#</span>
                   <span className="name">{c.name}</span>
                   {c.encrypted && <LockIcon />}
+                  {muted.has(c.id) && <span className="muted-bell" title="Sounds muted"><BellIcon off size={12} /></span>}
                   {mentions.has(c.id)
                     ? <span className="mention-badge" aria-label="you were mentioned" title="You were mentioned">@</span>
                     : unread.has(c.id) && <span className="dot" aria-label="unread" />}
