@@ -172,8 +172,9 @@ mute (SM1-SM10).
   backed up daily 03:30 to `~/openvoxa-key-backups` (7 days). Closed off:
   Ryan is the only user (port 8443).
 - Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI).
-- Known gaps: K1 recovery flows 2-5 deferred; no @everyone/@group; no
-  per-group share limits; sounds ignore the Speaker picked in Voice.
+- Known gaps (decisions.md Open items): K1 recovery flows 2-5 deferred;
+  no @everyone/@group; no per-group share limits; sounds ignore the
+  Speaker picked in Voice (`AudioContext.setSinkId` could fix it).
 - **Next: custom sounds stage 2** (agreed, ready to build): the message
   sound (once per unread channel, quiet until read) and "Mute sounds"
   per channel (browser only; mentions still play). Then Ryan to choose:
