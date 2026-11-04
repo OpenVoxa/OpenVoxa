@@ -29,6 +29,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 import type { ApiCall } from "@core/identity";
 import { Modal } from "./ChannelDialogs";
 import { StickerMessage, StickersTab } from "./stickers";
+import { VoiceTab } from "./shareLimit";
 import { stickerIdOf } from "@core/stickers";
 import { ColouredName, MIN_NAME_CONTRAST, nameContrast, refreshNames, useServerNameColours } from "./names";
 
@@ -126,7 +127,7 @@ function useUserList(call: ApiCall, reload: number) {
 
 const when = (at: string) => new Date(at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
-export type ServerTab = "groups" | "members" | "reports" | "bans" | "log" | "stickers";
+export type ServerTab = "groups" | "members" | "reports" | "bans" | "log" | "stickers" | "voice";
 
 /**
  * reload changes whenever the server says permissions moved, so the lists
@@ -148,6 +149,7 @@ export function ServerSettingsDialog({ call, me, reload, openReports, onClose }:
   if (has("ban") || has("view_reports") || has("delete_messages")) tabs.push(["log", "Log"]);
   // Every staff member can see the set; managing it needs the switch.
   tabs.push(["stickers", "Stickers"]);
+  if (has("administrator")) tabs.push(["voice", "Voice and Video"]);
   return (
     <Modal title="Server settings" onClose={onClose} wide fixed>
       <div className="settings-tabs" role="tablist">
@@ -156,6 +158,7 @@ export function ServerSettingsDialog({ call, me, reload, openReports, onClose }:
             onClick={() => setTab(id)}>{label}</button>
         ))}
       </div>
+      {tab === "voice" ? <VoiceTab call={call} onClose={onClose} /> : (<>
       <div className="modal-body">
         {tab === "groups" && <GroupsTab call={call} me={me} reload={reload} />}
         {tab === "members" && <MembersTab call={call} me={me} reload={reload} />}
@@ -169,6 +172,7 @@ export function ServerSettingsDialog({ call, me, reload, openReports, onClose }:
       <div className="modal-actions modal-foot">
         <button className="primary" onClick={onClose}>Done</button>
       </div>
+      </>)}
     </Modal>
   );
 }

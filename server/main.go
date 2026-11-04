@@ -100,6 +100,9 @@ func run() error {
 	// groups, which the access_changed event asks them to do.
 	db.StartDeviceExpirySweep(ctx, pool, api.NotifyAccessChanged)
 
+	// Stops screen shares above the server's quality limit, if one is set.
+	api.StartShareLimitWatch(ctx)
+
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           api,

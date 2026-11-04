@@ -313,6 +313,15 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 	mux.HandleFunc("GET /api/v1/voice/participants", api.requireAuth(api.voiceParticipants))
 	mux.HandleFunc("POST /api/v1/channels/{id}/voice/changed",
 		withUUIDPath(api.requireAuth(api.voiceChanged)))
+	// Screen share quality limit (sharelimit.go, migration 0026).
+	mux.HandleFunc("GET /api/v1/voice/share-limit", api.requireAuth(api.getShareLimit))
+	mux.HandleFunc("PUT /api/v1/voice/share-limit",
+		api.requirePerm(perm.Administrator, api.putShareLimit))
+	// This server's upload speed test (uploadtest.go, migration 0027).
+	mux.HandleFunc("GET /api/v1/voice/upload-test",
+		api.requirePerm(perm.Administrator, api.getUploadTest))
+	mux.HandleFunc("POST /api/v1/voice/upload-test",
+		api.requirePerm(perm.Administrator, api.runUploadTest))
 	mux.HandleFunc("PATCH /api/v1/channels/{id}/force-ptt",
 		withUUIDPath(api.requirePerm(perm.ForcePTT, api.setForcePTT)))
 	mux.HandleFunc("PATCH /api/v1/channels/{id}/retention",

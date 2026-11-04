@@ -107,6 +107,28 @@ export interface ShareSettings {
   simulcast: boolean;
 }
 
+/**
+ * The server's screen share quality limit (null: none). res is the "p"
+ * of a preset, the shorter side of the picture; kbps is the best layer's
+ * bitrate. The server stops shares that declare more (sharelimit.go).
+ */
+export interface ShareLimit {
+  res: number;
+  fps: number;
+  kbps: number;
+}
+
+/** Whether a preset fits within a limit (always, with no limit). */
+export function presetAllowed(p: { width: number; height: number; fps: number; kbps: number }, limit: ShareLimit | null): boolean {
+  return !limit || (Math.min(p.width, p.height) <= limit.res && p.fps <= limit.fps && p.kbps <= limit.kbps);
+}
+
+/** LiveKit's TrackSource.SCREEN_SHARE (protocol enum value). */
+const SOURCE_SCREEN_SHARE = 3;
+
+const SHARE_BLOCKED =
+  "Screen sharing is blocked until you rejoin the call: your last share was above this server's quality limit.";
+
 export const SHARE_PRESETS: readonly { label: string; width: number; height: number; fps: number; kbps: number }[] = [
   { label: "720p 30fps", width: 1280, height: 720, fps: 30, kbps: 2500 },
   { label: "1080p 30fps", width: 1920, height: 1080, fps: 30, kbps: 4000 },
@@ -130,6 +152,27 @@ export interface AudioDevices {
   outputs: MediaDeviceInfo[];
   /** The browser can route output to a chosen device (not Firefox/Safari). */
   canPickOutput: boolean;
+}
+
+/**
+ * Scale a capture down so its shorter side fits the limit. LiveKit asks
+ * the browser for the preset size only as an "ideal", so a bigger screen
+ * or window can come through at full size; max constraints, worked out
+ * from the captured aspect ratio, hold it inside the limit.
+ */
+async function capToLimit(track: LocalTrack, limit: ShareLimit): Promise<void> {
+  const { width, height } = track.mediaStreamTrack.getSettings();
+  if (!width || !height || Math.min(width, height) <= limit.res) return;
+  const f = limit.res / Math.min(width, height);
+  try {
+    await track.mediaStreamTrack.applyConstraints({
+      width: { max: Math.floor(width * f) },
+      height: { max: Math.floor(height * f) },
+      frameRate: { max: limit.fps },
+    });
+  } catch (err) {
+    console.warn("couldn't scale the share to the server's limit:", err);
+  }
 }
 
 // ------------------------------------------------------------ media keys
@@ -579,7 +622,22 @@ export class VoiceClient {
       .on(RoomEvent.TrackMuted, this.#changed)
       .on(RoomEvent.TrackUnmuted, this.#changed)
       .on(RoomEvent.LocalTrackPublished, this.#changed)
-      .on(RoomEvent.LocalTrackUnpublished, this.#changed)
+      .on(RoomEvent.LocalTrackUnpublished, (pub: { track?: Track }) => {
+        // The server (or LiveKit) took a share down without us: release
+        // the capture too, or the browser goes on sharing to nobody.
+        if (pub.track && this.#screenTracks.includes(pub.track as LocalTrack)) {
+          void this.stopShare();
+        }
+        this.#changed();
+      })
+      .on(RoomEvent.ParticipantPermissionsChanged, (_prev: unknown, p: Participant) => {
+        if (p !== room.localParticipant) return;
+        if (this.#shareBlocked(room)) {
+          if (this.#screenTracks.length) void this.stopShare();
+          this.#notice("Your screen share was stopped: it was above this server's quality limit. Rejoin the call to share again.");
+        }
+        this.#changed();
+      })
       .on(RoomEvent.TrackPublished, this.#changed)
       .on(RoomEvent.TrackUnpublished, this.#changed)
       .on(RoomEvent.AudioPlaybackStatusChanged, () => {
@@ -812,19 +870,48 @@ export class VoiceClient {
     const room = this.#room;
     if (!room || !this.#canPublish) throw new Error("you can't share here");
     if (this.#screenTracks.length) return;
+    if (this.#shareBlocked(room)) throw new Error(SHARE_BLOCKED);
+
+    // Held to the server's limit whatever was asked for, so an honest
+    // client is never the one the server has to stop.
+    const limit = await this.shareLimit();
+    if (limit) {
+      s = { ...s, fps: Math.min(s.fps, limit.fps), kbps: Math.min(s.kbps, limit.kbps) };
+    }
 
     const tracks = await createLocalScreenTracks({
       audio: s.audio,
       resolution: { width: s.width, height: s.height, frameRate: s.fps },
     });
+    if (this.#room !== room) {
+      for (const t of tracks) t.stop(); // left the call meanwhile
+      return;
+    }
     this.#screenTracks = tracks;
+    if (limit) {
+      for (const t of tracks) if (t.kind === Track.Kind.Video) await capToLimit(t, limit);
+    }
     // Browsers tag screen capture "detail", which pins games near 15 fps
     // whatever the bitrate; "motion" flips the tradeoff.
     const hint = s.priority === "motion" ? "motion" : "detail";
     const encoding = { maxBitrate: s.kbps * 1000, maxFramerate: s.fps };
-    for (const track of tracks) {
-      if (track.kind === Track.Kind.Video) track.mediaStreamTrack.contentHint = hint;
-      await room.localParticipant.publishTrack(track, {
+    try {
+      for (const track of tracks) {
+        if (track.kind === Track.Kind.Video) track.mediaStreamTrack.contentHint = hint;
+        await this.#publishShare(room, track, s, encoding);
+        // The browser's own "Stop sharing" bar bypasses our button.
+        track.mediaStreamTrack.addEventListener("ended", () => void this.stopShare());
+      }
+    } catch (err) {
+      await this.stopShare();
+      if (this.#shareBlocked(room)) throw new Error(SHARE_BLOCKED);
+      throw err;
+    }
+    this.#changed();
+  }
+
+  #publishShare(room: Room, track: LocalTrack, s: ShareSettings, encoding: { maxBitrate: number; maxFramerate: number }) {
+    return room.localParticipant.publishTrack(track, {
         // Screen-share tracks read screenShareEncoding, NOT videoEncoding;
         // setting only the latter leaves 1080p15 at 1.5 Mbps in place.
         screenShareEncoding: encoding,
@@ -840,10 +927,18 @@ export class VoiceClient {
         videoCodec: s.codec,
         degradationPreference: s.priority === "motion" ? "maintain-framerate" : "maintain-resolution",
       });
-      // The browser's own "Stop sharing" bar bypasses our button.
-      track.mediaStreamTrack.addEventListener("ended", () => void this.stopShare());
-    }
-    this.#changed();
+  }
+
+  /** The server's screen share limit, asked afresh each time. */
+  async shareLimit(): Promise<ShareLimit | null> {
+    const data = (await this.#opts.call("/api/v1/voice/share-limit")) as { limit: ShareLimit | null };
+    return data.limit ?? null;
+  }
+
+  /** The server took away screen sharing for this call (over the limit). */
+  #shareBlocked(room: Room): boolean {
+    const sources = room.localParticipant.permissions?.canPublishSources ?? [];
+    return sources.length > 0 && !sources.includes(SOURCE_SCREEN_SHARE);
   }
 
   async stopShare(): Promise<void> {

@@ -16,16 +16,7 @@ import { Modal } from "./ChannelDialogs";
 import { localStore } from "./core";
 import { setToggle, useToggle, VOICE_TONES } from "./settings";
 import { ColouredName } from "./names";
-
-// The presets are duplicated from client-core's SHARE_PRESETS so this
-// file needs no runtime import of the (lazy) voice module.
-const PRESETS = [
-  { label: "720p 30fps", width: 1280, height: 720, fps: 30, kbps: 2500 },
-  { label: "1080p 30fps", width: 1920, height: 1080, fps: 30, kbps: 4000 },
-  { label: "1080p 60fps", width: 1920, height: 1080, fps: 60, kbps: 8000 },
-  { label: "1440p 60fps", width: 2560, height: 1440, fps: 60, kbps: 14000 },
-  { label: "4K 30fps", width: 3840, height: 2160, fps: 30, kbps: 20000 },
-];
+import { PRESETS, presetAllowed, type ShareLimit } from "./shareLimit";
 
 export function useVoiceSnapshot(voice: VoiceClient | null): VoiceSnapshot | null {
   const subscribe = useCallback((cb: () => void) => (voice ? voice.on(cb) : () => {}), [voice]);
@@ -323,6 +314,27 @@ export function ShareDialog({ voice, onClose }: { voice: VoiceClient; onClose: (
   const [simulcast, setSimulcast] = useState(saved.simulcast ?? false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // undefined while asking the server; null for no limit.
+  const [limit, setLimit] = useState<ShareLimit | null | undefined>(undefined);
+
+  useEffect(() => {
+    let live = true;
+    voice.shareLimit()
+      .then((l) => {
+        if (!live) return;
+        setLimit(l);
+        // A remembered preset above the limit falls back to the best one allowed.
+        setPreset((cur) => {
+          if (PRESETS[cur] && presetAllowed(PRESETS[cur], l)) return cur;
+          for (let i = PRESETS.length - 1; i >= 0; i--) if (presetAllowed(PRESETS[i], l)) return i;
+          return 0;
+        });
+      })
+      .catch(() => live && setLimit(null)); // the server stays the judge either way
+    return () => { live = false; };
+  }, [voice]);
+  const allowed = PRESETS.map((p) => presetAllowed(p, limit ?? null));
+  const hidden = allowed.some((ok) => !ok);
 
   async function start() {
     const p = PRESETS[preset] ?? PRESETS[1];
@@ -347,8 +359,9 @@ export function ShareDialog({ voice, onClose }: { voice: VoiceClient; onClose: (
         <label>
           Quality
           <select value={preset} onChange={(e) => setPreset(Number(e.target.value))}>
-            {PRESETS.map((p, i) => <option key={p.label} value={i}>{p.label}</option>)}
+            {PRESETS.map((p, i) => allowed[i] && <option key={p.label} value={i}>{p.label}</option>)}
           </select>
+          {hidden && <span className="muted small block">Higher qualities are turned off on this server.</span>}
         </label>
         <label>
           Optimise for
@@ -383,7 +396,7 @@ export function ShareDialog({ voice, onClose }: { voice: VoiceClient; onClose: (
         {error && <p className="error" role="alert">{error}</p>}
         <div className="modal-actions">
           <button className="secondary" onClick={onClose}>Cancel</button>
-          <button className="primary" onClick={() => void start()} disabled={busy}>{busy ? "Starting…" : "Choose what to share"}</button>
+          <button className="primary" onClick={() => void start()} disabled={busy || limit === undefined}>{busy ? "Starting…" : "Choose what to share"}</button>
         </div>
       </div>
     </Modal>

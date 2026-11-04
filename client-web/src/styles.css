@@ -19,6 +19,9 @@
   --on-accent: #ffffff;
   --link: #ef9a70;
   --danger: #ff8f87;
+  /* Save buttons for pending changes; white text on it is 5.1:1. */
+  --save: #2e7d32;
+  --on-save: #ffffff;
   --alert: #e5483d;
   --radius: 6px;
   color-scheme: dark;
@@ -87,6 +90,9 @@ button:disabled { opacity: 0.6; cursor: default; }
    at this size but not for small thin text. */
 button.primary { background: var(--accent); color: var(--on-accent); font-weight: 700; font-size: 16px; }
 button.primary:hover:not(:disabled) { background: var(--accent-hover); }
+/* Accent outline, no fill: an action that is not the main one. */
+button.outline { background: transparent; color: var(--text); border: 1px solid var(--accent); font-size: 14px; padding: 7px 15px; }
+button.outline:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 15%, transparent); }
 button.link { background: none; color: var(--link); padding: 0; font-size: 14px; }
 button.link:hover { text-decoration: underline; }
 
@@ -366,6 +372,11 @@ button.icon:hover:not(:disabled) { color: var(--text); }
 .modal-body p { margin: 0; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .modal-actions button.primary { font-size: 14px; padding: 8px 16px; }
+/* A pending change's Save, bottom left; Done stays on the right. */
+.modal-actions button.save { margin-right: auto; background: var(--save); color: var(--on-save); font-weight: 700; font-size: 14px; padding: 8px 16px; }
+.modal-actions button.save:hover:not(:disabled) { background: color-mix(in srgb, var(--save) 85%, #000); }
+/* Nothing to save yet: grey, not green. */
+.modal-actions button.save:disabled { background: var(--sidebar-active); color: var(--muted); opacity: 1; }
 select {
   font: inherit;
   font-size: 16px;
@@ -689,6 +700,10 @@ button.dot-host { position: relative; }
 .inline-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .inline-form label.inline { display: flex; align-items: center; gap: 6px; text-transform: none; font-weight: normal; margin: 0; }
 .inline-form input.narrow { width: 64px; }
+.upload-test { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 4px; }
+.upload-test > p.muted { margin-bottom: 12px; }
+.upload-test .viewers { margin-top: 12px; }
+.upload-test .suggest-action { margin-top: 12px; }
 
 /* ------------------------------------------------------------ mentions */
 .mention {

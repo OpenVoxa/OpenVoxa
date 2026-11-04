@@ -159,6 +159,50 @@ messages (`reactions.go`, `message_reactions`, migration 0023).
   accent, hover lists who), click to toggle; "React" on hover and a "+"
   after the chips open the emoji picker beside the message.
 
+### Screen share quality limit
+
+Decided with Ryan, 2026-11-04. One limit for the whole server
+(`sharelimit.go`, `server_settings.share_max_*`, migration 0026), set by
+an administrator in Server settings > Voice and Video. **No limit by
+default** (Ryan: hosts with fast uploads shouldn't have to opt out).
+Per-group limits were considered and left for later.
+
+- **Why:** the SFU sends one copy of a share to each viewer, so the
+  host's upload is about bitrate x viewers (a 20 Mbps 4K share to 5
+  viewers is ~100 Mbps). The limit keeps one share from filling it.
+- **The limit:** a preset's "p" (the shorter side of the picture, so
+  portrait and ultrawide count fairly), frame rate and best-layer
+  bitrate. All three set, or all NULL for none.
+- **Client:** the share dialog asks `GET /voice/share-limit` each time
+  it opens and hides presets above it. `VoiceClient.startShare` caps fps
+  and bitrate and scales the capture down to the limit (LiveKit only asks
+  the browser for an "ideal" size, so a bigger screen comes through
+  whole otherwise).
+- **Enforcement:** every 5 s, while a limit is set, the server lists
+  live rooms with publishers and checks each video track's declared
+  size and per-layer bitrate (5% and 8 px slack). A track over the limit
+  costs its owner the screen share permission for the rest of the call
+  (`UpdateParticipant`, publish sources = microphone only): LiveKit
+  unpublishes the share at once and refuses new ones until they rejoin
+  (fresh token). The client notices (`ParticipantPermissionsChanged`,
+  `LocalTrackUnpublished`), releases the capture and says why.
+- **What it can't do:** LiveKit only knows what the browser declared,
+  not what it actually sends, so a modified client that under-declares
+  is not caught. The backstop is traffic shaping on the host
+  (deploy/README.md, "Screen share limit").
+- **Upload speed test** (`uploadtest.go`, migration 0027): an
+  administrator's button that measures the server's own upload, for a
+  suggested limit (the highest preset whose bitrate x expected viewers
+  fits in 70% of the upload). It runs on the server, since a browser on
+  the server's LAN would measure the LAN. 6 parallel HTTP/1.1 uploads to
+  Cloudflare's speed test (`speed.cloudflare.com/__up`) for 10 s, the
+  first 2 s ignored; one test at a time; the last result is stored.
+  Cloudflare was Ryan's pick: free, no account, results not published.
+  M-Lab NDT7 was rejected because it publishes every test with the IP
+  address; LibreSpeed's volunteer servers often can't take a gigabit
+  upload. The endpoint is not a documented API, so failures are shown
+  as such. A per-user test (sharer's upload) is for later.
+
 ## Architecture
 
 Five components, three of them off the shelf:
@@ -691,6 +735,24 @@ production client is written.
 equivalents. Setting the wrong one fails silently and leaves LiveKit's
 default of 1080p at 15fps and ~1.5 Mbps in place, producing a stream that
 appears to ignore every setting.
+
+**LiveKit's track info is declared, not measured** (found 2026-11-04,
+LiveKit v1.13.11). `ListParticipants` gives each track's width, height
+and per-layer width/height/bitrate (in `codecs[].layers`; the top-level
+`layers` is deprecated but still filled), all as the browser announced
+them; there is no measured bitrate in the API. Twirp JSON uses
+snake_case and enum names as strings. `UpdateParticipant` replaces the
+whole permission, so send every field back (`setPublishSources` keeps
+them raw). Narrowing `can_publish_sources` unpublishes the dropped
+sources at once and new publishes fail with "insufficient permissions";
+an empty list means every source. livekit-client did not notice the
+server-side unpublish on its own: the share button stayed lit and the
+browser kept capturing until the client handled it.
+
+**LiveKit asks for screen share sizes as "ideal".**
+`createLocalScreenTracks({resolution})` turns into `ideal` constraints
+(`max` only on Safari), so a capture can be bigger than the preset;
+`applyConstraints` with max values after capture holds it down.
 
 **`contentHint` defaults to detail on display capture.** That tells the
 encoder to hold resolution and sacrifice frame rate, which pins screen
@@ -2012,16 +2074,16 @@ to pick their own colours later, so every colour stays a variable.
 
 - [ ] Confirm whether screen sharing should have its own `min_role_stream`
       rather than reusing the voice publish permission
-- [ ] Server-side bitrate ceiling so one user cannot saturate the
-      operator's uplink. Next item (Ryan, 2026-11-04). The SFU sends one
-      copy per viewer, so upload ~ bitrate x viewers (a 20 Mbps 4K share
-      to 5 viewers ~ 100 Mbps). Sketch: an admin limit (server_settings,
-      maybe per group), the client hiding presets above it, and real
-      enforcement from the server through LiveKit's API (shared plumbing
-      with real force-PTT, below). Design to be agreed with Ryan.
+- [x] Server-side bitrate ceiling so one user cannot saturate the
+      operator's uplink. Done 2026-11-04 (Feature decisions, "Screen
+      share quality limit"), with an upload speed test of the server.
+      Not built: per-group limits, a per-user upload test in the share
+      dialog.
 - [ ] Force-PTT is advisory: the server tells the client and the client
-      complies. Real enforcement means calling LiveKit's
-      `MutePublishedTrack` API.
+      complies. Real enforcement could take the microphone source away
+      with `setPublishSources` (livekitapi.go, as the share limit does)
+      while the key is up, or call `MutePublishedTrack`; verify which
+      LiveKit lets the client undo.
 - [ ] Guest accounts can be assigned but there is no anonymous or invite
       flow to create one
 - [ ] Reproducible builds
