@@ -52,7 +52,7 @@ server/            Go server (module root here; go.mod says go 1.26)
   Dockerfile          multi-stage: client-core -> client-web -> Go -> distroless
   internal/httpapi/   HTTP + WS; debugui/chat.html = old debug client
   internal/db/        Postgres, migrations/00NN_*.sql (embedded, ordered;
-                      latest 0023)
+                      latest 0025)
   internal/{auth,blob,config,gif,hub,password,perm,ratelimit,unfurl}
 client-core/       TypeScript protocol + crypto, no UI
   src/mls/provider.ts  MlsProvider interface (swappable)
@@ -185,7 +185,12 @@ No `tls` profile = no Caddy (own proxy + `OPENVOXA_TRUST_PROXY=true`).
 
 ## Current state (update every session)
 
-_Last updated: 2026-11-04. **Sign out and erase DONE** (E1-E5 verified;
+_Last updated: 2026-11-04. **Username colours by group DONE** (NC1-NC7,
+ND1-ND3 verified; decisions.md Open items): `perm_groups.colour` +
+`server_settings.name_colours` (migration 0025), `httpapi/namecolours.go`,
+client-web `names.tsx` (`useNameColour`, `ColouredName`), Groups tab
+switch + per-group Colour + "Default colours", Appearance toggle.
+Earlier 2026-11-04: **Sign out and erase DONE** (E1-E5 verified;
 decisions.md Encryption, "Sign out and erase"): Settings > Account >
 Devices, "This browser" row; backs up, revokes the device, deletes the
 account's IndexedDB (`storage.destroy` / `eraseIdentity`), signs out.
@@ -275,7 +280,6 @@ period in `server_settings`, migration 0017).
   now also destroys the key).
 - @mentions and Appearance: done and verified (M1-M6, A1).
 - Next (Ryan to choose): a server browser (decisions.md Open items);
-  username colours by group (Open items);
   local archive retention sweep; real force-PTT via LiveKit
   `MutePublishedTrack`; bitrate ceiling; zxcvbn (discuss first);
   Electron shell.
