@@ -6,6 +6,7 @@ import { call, guessDeviceName, type Session } from "./api";
 import { usePasswordCheck } from "./password";
 import { PasswordRules } from "./PasswordRules";
 import { unlockWithPassword, type PasswordUnlock } from "./unlock";
+import { setStaySignedIn, staySignedInChoice } from "./session";
 
 /** A note for the first screen after sign-in, when unlocking changed something. */
 function unlockNote(how: PasswordUnlock): string | undefined {
@@ -33,6 +34,7 @@ export function Login({ onSession, notice }: {
   // An empty server is claimed with a code from the server log.
   const [needsSetup, setNeedsSetup] = useState(false);
   const [setupCode, setSetupCode] = useState("");
+  const [stay, setStay] = useState(staySignedInChoice);
 
   const registering = mode === "register";
   const pw = usePasswordCheck(password, username, registering);
@@ -59,6 +61,9 @@ export function Login({ onSession, notice }: {
       if (password !== confirm) return;
     }
     setBusy(true);
+    // Before signing in: the unlock copy saved during sign-in goes where
+    // the session will (session.ts).
+    setStaySignedIn(stay);
     try {
       const s = await call<Session>(`/api/v1/auth/${mode}`, {
         method: "POST",
@@ -128,6 +133,11 @@ export function Login({ onSession, notice }: {
             </span>
           </label>
         )}
+
+        <label className="check">
+          <input type="checkbox" checked={stay} onChange={(e) => setStay(e.target.checked)} />
+          <span>Stay signed in</span>
+        </label>
 
         {error && <p className="error" role="alert">{error}</p>}
 
