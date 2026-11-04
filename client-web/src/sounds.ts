@@ -301,6 +301,75 @@ function audio(): AudioContext {
   return ctx;
 }
 
+// ---------------------------------------------------- speaker output
+
+/**
+ * Sounds go to the Speaker picked in Settings > Voice ("voice.output",
+ * the same key as VoiceClient.outputDevice; read here so playing a sound
+ * never loads the voice code). Checked before every sound, so a change
+ * in Settings, or in another tab, applies to the next one.
+ *
+ * Chromium (and so the desktop app) has AudioContext.setSinkId. Firefox
+ * only has it on media elements, so there the sounds are piped through
+ * a hidden <audio> element instead. Where neither exists, the browser's
+ * Speaker picker is greyed out anyway and everything plays on the
+ * system default. A speaker that's gone (unplugged) falls back to the
+ * default and is tried again on the next sound.
+ */
+type SinkTarget = { setSinkId?(id: string): Promise<void> };
+
+let applied: { id: string; node: Promise<AudioNode> } | null = null;
+let pipe: { dest: MediaStreamAudioDestinationNode; el: HTMLAudioElement } | null = null;
+
+function speaker(ac: AudioContext): Promise<AudioNode> {
+  const want = localStore.get("voice.output") ?? "default";
+  const id = want === "default" ? "" : want; // "" = the system default
+  if (applied?.id !== id) {
+    const entry = {
+      id,
+      node: route(ac, id).then(({ node, ok }) => {
+        // Not remembered when it failed, so it's tried again next time.
+        if (!ok && applied === entry) applied = null;
+        return node;
+      }),
+    };
+    applied = entry;
+  }
+  return applied!.node;
+}
+
+async function route(ac: AudioContext, id: string): Promise<{ node: AudioNode; ok: boolean }> {
+  const direct = ac as AudioContext & SinkTarget;
+  if (direct.setSinkId) {
+    try {
+      await direct.setSinkId(id);
+      return { node: ac.destination, ok: true };
+    } catch {
+      await direct.setSinkId("").catch(() => {});
+      return { node: ac.destination, ok: false };
+    }
+  }
+  const viaElement = typeof HTMLMediaElement !== "undefined" && "setSinkId" in HTMLMediaElement.prototype;
+  if (!id || !viaElement) {
+    pipe?.el.pause();
+    return { node: ac.destination, ok: true };
+  }
+  try {
+    if (!pipe) {
+      const dest = ac.createMediaStreamDestination();
+      const el = new Audio();
+      el.srcObject = dest.stream;
+      pipe = { dest, el };
+    }
+    await (pipe.el as HTMLAudioElement & SinkTarget).setSinkId!(id);
+    await pipe.el.play();
+    return { node: pipe.dest, ok: true };
+  } catch {
+    pipe?.el.pause();
+    return { node: ac.destination, ok: false };
+  }
+}
+
 /** Decoded sounds by source ("kenney/glass_004", "custom:join"). */
 const decoded = new Map<string, Promise<AudioBuffer>>();
 
@@ -343,25 +412,27 @@ export async function playSound(id: SoundEvent, preview?: { choice: string }): P
       try {
         const buf = await load(id, choice);
         const ac = audio();
+        const out = await speaker(ac);
         const src = ac.createBufferSource();
         const g = ac.createGain();
         src.buffer = buf;
         g.gain.value = gain;
-        src.connect(g).connect(ac.destination);
+        src.connect(g).connect(out);
         src.start();
         return;
       } catch {
         /* try the next one */
       }
     }
-    classic(id, gain);
+    const ac = audio();
+    classic(ac, await speaker(ac), id, gain);
   } catch {
     /* no WebAudio: stay quiet */
   }
 }
 
 /** The original synthesised tones: two or three short sine notes. */
-function classic(id: SoundEvent, gain: number): void {
+function classic(ac: AudioContext, out: AudioNode, id: SoundEvent, gain: number): void {
   const C5 = 523.25, E5 = 659.25, G5 = 783.99;
   const notes = {
     join: [C5, G5],
@@ -371,7 +442,6 @@ function classic(id: SoundEvent, gain: number): void {
     streamStart: [C5, E5, G5],
     streamEnd: [G5, E5, C5],
   }[id];
-  const ac = audio();
   const peak = 0.2 * gain; // 0.12 at the default volume, as before
   const start = ac.currentTime + 0.01;
   notes.forEach((freq, i) => {
@@ -384,7 +454,7 @@ function classic(id: SoundEvent, gain: number): void {
     g.gain.setValueAtTime(0, t);
     g.gain.linearRampToValueAtTime(peak, t + 0.015);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
-    osc.connect(g).connect(ac.destination);
+    osc.connect(g).connect(out);
     osc.start(t);
     osc.stop(t + 0.18);
   });
