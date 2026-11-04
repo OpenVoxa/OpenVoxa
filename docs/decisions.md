@@ -309,6 +309,15 @@ the pane is desktop-only (browser users keep one server per tab).
   picker; we draw our own) and E2EE tested inside it. Tray,
   notifications, auto-update and installers later.
 
+### Speaking indicator
+
+Ryan, 2026-11-04 (ED7): the green ring lagged about a second both ways.
+LiveKit's speaker updates (`ActiveSpeakersChanged`) default to every
+400 ms, smoothed over 2 updates; `deploy/livekit.yaml` now sets
+`audio.update_interval: 200` and `smooth_intervals: 1`. If that is not
+enough, the fallback is measuring levels in each client (WebAudio on
+every incoming track): near-instant, but CPU per participant.
+
 ### Custom sounds
 
 Discussed with Ryan, 2026-11-04. Stage 1 built and verified the same day
