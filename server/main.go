@@ -104,6 +104,9 @@ func run() error {
 	// Stops screen shares above the server's quality limit, if one is set.
 	api.StartShareLimitWatch(ctx)
 
+	// Lifts timed server mutes and gives the microphone back mid-call.
+	api.StartVoiceMuteSweep(ctx)
+
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           api,

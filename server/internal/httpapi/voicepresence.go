@@ -181,6 +181,9 @@ func (a *API) voiceChanged(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.notifyVoiceChanged(channelID)
+	// Sent right after joining: catches a mute or unmute that landed
+	// between minting this caller's token and their arrival in the call.
+	a.applyVoiceMute(session.UserID, channelID)
 	w.WriteHeader(http.StatusNoContent)
 }
 

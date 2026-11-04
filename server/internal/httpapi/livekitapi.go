@@ -9,14 +9,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/livekit/protocol/auth"
 )
 
 // Calls to LiveKit's admin API (RoomService), shared by voice kicks,
-// voice presence and the screen share limit, and meant for real
-// force-PTT later.
+// voice presence, the screen share limit and server mute.
 //
 // The API is Twirp: a POST of JSON to /twirp/livekit.RoomService/<Method>,
 // authorised by a short-lived token signed with the same secret as join
@@ -137,12 +137,64 @@ func (a *API) liveKitRooms(ctx context.Context) ([]lkRoom, error) {
 	return out.Rooms, nil
 }
 
+// Track sources, as LiveKit names them. An empty can_publish_sources
+// list means all of these.
+var allSources = []string{"CAMERA", "MICROPHONE", "SCREEN_SHARE", "SCREEN_SHARE_AUDIO"}
+
+// publishSources reads what a participant may publish now: can is false
+// for a listen-only participant (no post permission), and sources is
+// never empty (LiveKit's empty list is expanded to allSources).
+// can_publish is omitted from LiveKit's JSON when false.
+func publishSources(p lkParticipant) (sources []string, can bool) {
+	if raw, ok := p.Permission["can_publish"]; ok {
+		_ = json.Unmarshal(raw, &can)
+	}
+	if raw, ok := p.Permission["can_publish_sources"]; ok {
+		_ = json.Unmarshal(raw, &sources)
+	}
+	if len(sources) == 0 {
+		sources = allSources
+	}
+	return sources, can
+}
+
+// editSources returns cur without remove and with add, in allSources
+// order. Never empty: with nothing left it returns {"CAMERA"}, a source
+// the app never publishes, because an empty list would mean "any".
+// Reports whether anything changed.
+func editSources(cur, remove, add []string) ([]string, bool) {
+	out := make([]string, 0, len(allSources))
+	for _, s := range allSources {
+		on := slices.Contains(cur, s)
+		if slices.Contains(remove, s) {
+			on = false
+		}
+		if slices.Contains(add, s) {
+			on = true
+		}
+		if on {
+			out = append(out, s)
+		}
+	}
+	if len(out) == 0 {
+		out = []string{"CAMERA"}
+	}
+	changed := len(out) != len(cur)
+	for _, s := range out {
+		if !slices.Contains(cur, s) {
+			changed = true
+		}
+	}
+	return out, changed
+}
+
 // setPublishSources limits what a participant may publish, for the rest
-// of this connection (rejoining mints a fresh token with the full
-// grant). LiveKit unpublishes any track whose source is no longer
+// of this connection (rejoining mints a fresh token from the database's
+// state). LiveKit unpublishes any track whose source is no longer
 // allowed, at once, and refuses new ones ("insufficient permissions").
 // Every other permission field is sent back as it was. An empty list
-// would mean "any source", so callers must pass at least one.
+// would mean "any source", so callers must pass at least one (see
+// editSources).
 func (a *API) setPublishSources(ctx context.Context, room string, p lkParticipant, sources []string) (bool, error) {
 	perm := make(map[string]json.RawMessage, len(p.Permission)+1)
 	for k, v := range p.Permission {

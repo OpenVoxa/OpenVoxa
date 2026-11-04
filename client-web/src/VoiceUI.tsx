@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type Re
 import type {
   AudioDevices, ScreenShare, ShareSettings, VoiceClient, VoiceParticipant, VoiceSnapshot,
 } from "@core/voice";
+import type { ApiCall } from "@core/identity";
 import { Modal } from "./ChannelDialogs";
 import { localStore } from "./core";
 import { setToggle, useToggle, VOICE_TONES } from "./settings";
@@ -95,7 +96,16 @@ export function usePushToTalk(voice: VoiceClient | null, snap: VoiceSnapshot | n
 
 // --------------------------------------------------------------- icons
 
-export function MicIcon({ off }: { off?: boolean }) {
+/** locked: a big X instead of the slash, for a server mute (not the user's choice). */
+export function MicIcon({ off, locked }: { off?: boolean; locked?: boolean }) {
+  if (locked) {
+    return (
+      <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden>
+        <path fill="currentColor" opacity="0.45" d="M8 1a2.5 2.5 0 0 0-2.5 2.5v4a2.5 2.5 0 0 0 5 0v-4A2.5 2.5 0 0 0 8 1zM3.5 7a.75.75 0 0 1 .75.75 3.75 3.75 0 0 0 7.5 0 .75.75 0 0 1 1.5 0 5.25 5.25 0 0 1-4.5 5.2V14.5h2a.75.75 0 0 1 0 1.5h-5.5a.75.75 0 0 1 0-1.5h2v-1.55a5.25 5.25 0 0 1-4.5-5.2A.75.75 0 0 1 3.5 7z" />
+        <path stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" d="M2.5 2.5l11 11M13.5 2.5l-11 11" />
+      </svg>
+    );
+  }
   return (
     <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden>
       <path fill="currentColor" d="M8 1a2.5 2.5 0 0 0-2.5 2.5v4a2.5 2.5 0 0 0 5 0v-4A2.5 2.5 0 0 0 8 1zM3.5 7a.75.75 0 0 1 .75.75 3.75 3.75 0 0 0 7.5 0 .75.75 0 0 1 1.5 0 5.25 5.25 0 0 1-4.5 5.2V14.5h2a.75.75 0 0 1 0 1.5h-5.5a.75.75 0 0 1 0-1.5h2v-1.55a5.25 5.25 0 0 1-4.5-5.2A.75.75 0 0 1 3.5 7z" />
@@ -170,7 +180,9 @@ export function VoiceRoster({ live, others, onWatch, onPerson }: {
             </button>
             {!p.encrypted && <span className="warn small" title="Not encrypted yet">!</span>}
             {p.sharing && <button className="live" onClick={() => onWatch(p.id)} title="Watch">LIVE</button>}
-            {p.micOff && <span className="state" title={p.isLocal ? "Your mic is off" : "Mic off"}><MicIcon off /></span>}
+            {p.serverMuted
+              ? <span className="state server-muted" title="Muted by a moderator"><MicIcon locked /></span>
+              : p.micOff && <span className="state" title={p.isLocal ? "Your mic is off" : "Mic off"}><MicIcon off /></span>}
             {!p.isLocal && p.localMuted && <span className="state" title="Muted for you"><HeadphonesIcon off /></span>}
           </li>
         ))}
@@ -190,15 +202,46 @@ export function VoiceRoster({ live, others, onWatch, onPerson }: {
   );
 }
 
-/** Volume and "mute for me" for one person, at the click position. */
-export function PersonMenu({ voice, person, at, onClose }: {
+/** Server mute lengths, as Postgres intervals; "" lasts until unmuted. */
+export const MUTE_DURATIONS: [string, string][] = [
+  ["", "Until unmuted"],
+  ["10 minutes", "10 minutes"],
+  ["1 hour", "1 hour"],
+  ["1 day", "1 day"],
+];
+
+/**
+ * Volume and "mute for me" for one person, at the click position; for
+ * holders of server_mute, the server mute too.
+ */
+export function PersonMenu({ voice, person, at, call, canServerMute, onClose }: {
   voice: VoiceClient;
   person: VoiceParticipant;
   at: { x: number; y: number };
+  call: ApiCall;
+  canServerMute: boolean;
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [vol, setVol] = useState(Math.round(person.volume * 100));
+  const [duration, setDuration] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [muteError, setMuteError] = useState<string | null>(null);
+
+  // The menu updates itself when LiveKit reports the new permission.
+  async function serverMute(on: boolean) {
+    setBusy(true);
+    setMuteError(null);
+    try {
+      await call(`/api/v1/users/${person.id}/voice-mute`, on
+        ? { method: "PUT", body: JSON.stringify({ duration }) }
+        : { method: "DELETE" });
+    } catch (err) {
+      setMuteError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
   useEffect(() => {
     const off = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && onClose();
     const esc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -210,7 +253,7 @@ export function PersonMenu({ voice, person, at, onClose }: {
     };
   }, [onClose]);
   const left = Math.min(at.x, window.innerWidth - 240);
-  const top = Math.min(at.y, window.innerHeight - 140);
+  const top = Math.min(at.y, window.innerHeight - (canServerMute ? 330 : 140));
   return (
     <div ref={ref} className="menu" style={{ left, top }} role="dialog" aria-label={`${person.name} volume`}>
       <strong>{person.name}</strong>
@@ -229,6 +272,33 @@ export function PersonMenu({ voice, person, at, onClose }: {
         <span>Mute for me</span>
       </label>
       <p className="muted small">Only on this device. Nobody else is told.</p>
+      {canServerMute && (
+        <div className="menu-section">
+          <strong className="small">Server Mute</strong>
+          {person.serverMuted ? (
+            <>
+              <p className="muted small">Muted by a moderator in every voice channel.</p>
+              <button className="outline" disabled={busy} onClick={() => void serverMute(false)}>
+                {busy ? "Unmuting…" : "Unmute"}
+              </button>
+            </>
+          ) : (
+            <>
+              <label>
+                For
+                <select value={duration} onChange={(e) => setDuration(e.target.value)} disabled={busy}>
+                  {MUTE_DURATIONS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+                </select>
+              </label>
+              <button className="outline" disabled={busy} onClick={() => void serverMute(true)}>
+                {busy ? "Muting…" : "Server Mute"}
+              </button>
+              <p className="muted small">Takes their microphone away in every voice channel, for everyone.</p>
+            </>
+          )}
+          {muteError && <p className="error small" role="alert">{muteError}</p>}
+        </div>
+      )}
     </div>
   );
 }
@@ -251,6 +321,7 @@ export function VoiceBar({ voice, snap, channelName, onShare, onSettings }: {
   }
   const connecting = snap.state === "connecting";
   const status = connecting ? "Connecting…"
+    : snap.serverMuted ? "Muted by a moderator"
     : snap.pttMode ? (snap.pttHeld ? "Talking" : `Push-to-talk: hold ${keyLabel(pttKey())}`)
     : snap.micOpen ? "Voice connected" : "Voice connected (muted)";
   return (
@@ -269,12 +340,12 @@ export function VoiceBar({ voice, snap, channelName, onShare, onSettings }: {
         <button className="primary small-btn" onClick={() => void voice.startAudio()}>Click to hear the call</button>
       )}
       <div className="voice-buttons">
-        <button className={`vbtn${!snap.pttMode && (snap.muted || snap.deafened) ? " on" : ""}`}
-          disabled={connecting || !snap.canPublish || snap.pttMode}
+        <button className={`vbtn${snap.serverMuted ? " locked" : !snap.pttMode && (snap.muted || snap.deafened) ? " on" : ""}`}
+          disabled={connecting || !snap.canPublish || snap.serverMuted || snap.pttMode}
           onClick={() => void voice.setMuted(!snap.muted)}
-          title={!snap.canPublish ? "You can't speak here" : snap.pttMode ? "Push-to-talk is on" : snap.muted ? "Unmute" : "Mute"}
+          title={!snap.canPublish ? "You can't speak here" : snap.serverMuted ? "A moderator has muted you. You can't unmute until they unmute you." : snap.pttMode ? "Push-to-talk is on" : snap.muted ? "Unmute" : "Mute"}
           aria-pressed={snap.muted}>
-          <MicIcon off={!snap.micOpen} />
+          <MicIcon off={!snap.micOpen} locked={snap.serverMuted} />
         </button>
         <button className={`vbtn${snap.deafened ? " on" : ""}`} disabled={connecting}
           onClick={() => void voice.setDeafened(!snap.deafened)}
@@ -310,6 +381,7 @@ export function ShareDialog({ voice, onClose }: { voice: VoiceClient; onClose: (
   const [preset, setPreset] = useState(saved.preset ?? 1);
   const [priority, setPriority] = useState<ShareSettings["priority"]>(saved.priority ?? "detail");
   const [audio, setAudio] = useState(saved.audio ?? true);
+  const serverMuted = voice.snapshot().serverMuted;
   const [codec, setCodec] = useState<ShareSettings["codec"]>(saved.codec ?? "h264");
   const [simulcast, setSimulcast] = useState(saved.simulcast ?? false);
   const [error, setError] = useState<string | null>(null);
@@ -370,9 +442,14 @@ export function ShareDialog({ voice, onClose }: { voice: VoiceClient; onClose: (
             <option value="motion">Motion: games and video stay smooth</option>
           </select>
         </label>
-        <label className="check">
-          <input type="checkbox" checked={audio} onChange={(e) => setAudio(e.target.checked)} />
-          <span>Share audio too <span className="muted small block">When the browser offers it (tab audio in most browsers).</span></span>
+        <label className={`check${serverMuted ? " locked" : ""}`}>
+          <input type="checkbox" checked={audio && !serverMuted} disabled={serverMuted}
+            onChange={(e) => setAudio(e.target.checked)} />
+          <span><span className="label-text">Share audio too</span>
+            {serverMuted
+              ? <span className="lock-reason small block">Off: a moderator has muted you, so your share can't have sound.</span>
+              : <span className="muted small block">When the browser offers it (tab audio in most browsers).</span>}
+          </span>
         </label>
         <details>
           <summary className="small">Advanced</summary>

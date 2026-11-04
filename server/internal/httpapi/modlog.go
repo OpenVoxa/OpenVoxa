@@ -35,7 +35,8 @@ const modLogPage = 100
 // Manage groups, Manage channels or Force PTT is not enough; those
 // actions are not in it.
 func canReadModLog(s perm.Set) bool {
-	return s.Has(perm.Ban) || s.Has(perm.ViewReports) || s.Has(perm.DeleteMessages)
+	return s.Has(perm.Ban) || s.Has(perm.ViewReports) || s.Has(perm.DeleteMessages) ||
+		s.Has(perm.ServerMute)
 }
 
 // listModerationLog returns the log newest first, a page at a time:

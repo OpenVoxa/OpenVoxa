@@ -455,7 +455,8 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
       {person && voiceClient && (
         <PersonMenu voice={voiceClient}
           person={vsnap?.participants.find((p) => p.id === person.p.id) ?? person.p}
-          at={person.at} onClose={() => setPerson(null)} />
+          at={person.at} call={call} canServerMute={can("server_mute")}
+          onClose={() => setPerson(null)} />
       )}
       {dialogChannel && (
         <ChannelSettingsDialog

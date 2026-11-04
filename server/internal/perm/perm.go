@@ -39,13 +39,16 @@ const (
 	Ban Perm = "ban"
 	// ForcePTT: force push-to-talk in a voice channel.
 	ForcePTT Perm = "force_ptt"
+	// ServerMute: take away the microphone of people below your rank, in
+	// every voice channel, for a while or until unmuted.
+	ServerMute Perm = "server_mute"
 	// ManageStickers: add, rename and remove the server's stickers.
 	ManageStickers Perm = "manage_stickers"
 )
 
 // All lists every switch, in display order.
 var All = []Perm{Administrator, ManageGroups, ManageChannels,
-	DeleteMessages, ViewReports, Ban, ForcePTT, ManageStickers}
+	DeleteMessages, ViewReports, Ban, ForcePTT, ServerMute, ManageStickers}
 
 // Valid reports whether s names a known switch.
 func Valid(s string) bool {
