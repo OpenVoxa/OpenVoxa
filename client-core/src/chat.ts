@@ -230,9 +230,9 @@ export type ChatEvent =
   /** Someone just mentioned you (for a sound or a notification).
    * `open`: in the channel open right now. */
   | { type: "mentioned"; channelId: string; messageId: string; authorId: string; username: string; open: boolean }
-  /** A channel you aren't viewing just went from read to unread (for the
-   * message sound: once per unread stretch, not per message). */
-  | { type: "message"; channelId: string; messageId: string }
+  /** Someone else posted (for the message sound; the client decides how
+   * often to play it). `open`: in the channel open right now. */
+  | { type: "message"; channelId: string; messageId: string; open: boolean }
   /** The open report queue changed; sent only to people who can read it. */
   | { type: "reports_changed" }
   /** The server's sticker set or its limits changed: refetch the list. */
@@ -377,6 +377,11 @@ export class Chat {
   #closed = false;
   #view: ChannelView | null = null;
   #unread = new Set<string>();
+  // Whether the user can see the open channel (the app's tab is visible
+  // and focused; set by the UI). While not, its new messages are unread.
+  #looking = true;
+  // The newest message the open channel got while nobody was looking.
+  #heldRead: { channelId: string; at: string } | null = null;
   #mentioned = new Set<string>();
   #offAuto: (() => void) | null = null;
   #offMembership: (() => void) | null = null;
@@ -586,6 +591,33 @@ export class Chat {
 
   // ------------------------------------------------------------ unread
 
+  /**
+   * Tell the chat whether the user can see the open channel (tab visible
+   * and window focused). While they can't, its new messages leave it
+   * unread, as for any other channel; coming back marks it read.
+   */
+  setLooking(on: boolean): void {
+    if (this.#looking === on) return;
+    this.#looking = on;
+    const held = this.#heldRead;
+    this.#heldRead = null;
+    if (on && held && held.channelId === this.#view?.channel.id) this.markRead(held.channelId, held.at);
+  }
+
+  /** @internal A message arrived in the open channel. */
+  seenInOpen(channelId: string, at: string): void {
+    if (channelId !== this.#view?.channel.id) return;
+    if (this.#looking) {
+      this.markRead(channelId, at);
+      return;
+    }
+    if (!this.#heldRead || Date.parse(at) > Date.parse(this.#heldRead.at)) this.#heldRead = { channelId, at };
+    if (!this.#unread.has(channelId)) {
+      this.#unread = new Set(this.#unread).add(channelId);
+      this.#emit({ type: "unread", unread: this.#unread });
+    }
+  }
+
   #readKey(channelId: string): string {
     return `read.${this.userId}.${channelId}`;
   }
@@ -620,7 +652,7 @@ export class Chat {
           ? normalizeTime(c.last_message_at) : new Date().toISOString());
         continue;
       }
-      if (c.id === this.#view?.channel.id) continue;
+      if (c.id === this.#view?.channel.id && this.#looking) continue;
       if (c.last_message_at && Date.parse(c.last_message_at) > Date.parse(read)) next.add(c.id);
       if (c.last_mention_at && Date.parse(c.last_mention_at) > Date.parse(read)) mentioned.add(c.id);
     }
@@ -633,7 +665,7 @@ export class Chat {
   #onMention(f: GlobalFrame): void {
     const channelId = f.channel_id!;
     const open = channelId === this.#view?.channel.id;
-    if (!open && !this.#mentioned.has(channelId)) {
+    if ((!open || !this.#looking) && !this.#mentioned.has(channelId)) {
       this.#mentioned = new Set(this.#mentioned).add(channelId);
       this.#emit({ type: "mentions", mentions: this.#mentioned });
     }
@@ -645,15 +677,17 @@ export class Chat {
 
   #onActivity(channelId: string, authorId: string, createdAt: string, messageId: string): void {
     // Your own messages, and the channel you are looking at, are read.
-    if (authorId === this.userId || channelId === this.#view?.channel.id) {
+    if (authorId === this.userId) {
       this.markRead(channelId, createdAt);
       return;
     }
-    if (!this.#unread.has(channelId)) {
+    const open = channelId === this.#view?.channel.id;
+    if (open) this.seenInOpen(channelId, createdAt);
+    else if (!this.#unread.has(channelId)) {
       this.#unread = new Set(this.#unread).add(channelId);
       this.#emit({ type: "unread", unread: this.#unread });
-      this.#emit({ type: "message", channelId, messageId });
     }
+    this.#emit({ type: "message", channelId, messageId, open });
   }
 
   // ------------------------------------------------------ server events
@@ -1093,7 +1127,7 @@ export class ChannelView {
       }
       case "message":
         void this.#receive([frame as unknown as ServerMessage], true);
-        this.#chat.markRead(this.#channel.id, (frame as unknown as ServerMessage).created_at);
+        this.#chat.seenInOpen(this.#channel.id, (frame as unknown as ServerMessage).created_at);
         break;
       case "message_edited":
         this.#enqueue(() => this.#applyEdit(frame.message_id!, frame.body!, frame.edited_at!, frame.mentions));

@@ -56,7 +56,7 @@ If this project ever has a monetization strategy, something has gone wrong. Plea
 - Voice: click a channel to join, see who's in every call, speaking indicators, mute, deafen, push-to-talk with a key of your choice, per-person volume, microphone and speaker pickers
 - Screen sharing with quality presets (up to 4K or 1440p60), a choice between sharp text and smooth motion, optional audio, and a stage view with fullscreen and live stats
 - Channel management for admins: create text and voice channels, choose who can view and post, retention, history sharing, forced push-to-talk, delete
-- Notification sounds for joins, leaves, screen shares and mentions: pick from a built-in library, use your own files, set the volume or turn each one off (saved per browser)
+- Notification sounds for joins, leaves, screen shares, mentions and new messages: pick from a built-in library, use your own files, set the volume or turn each one off, set a cooldown for message sounds, and mute sounds per channel (saved per browser)
 
 **The server**
 
