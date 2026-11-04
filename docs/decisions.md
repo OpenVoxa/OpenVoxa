@@ -245,9 +245,11 @@ Decided with Ryan, 2026-11-04, instead of enforcing force-PTT.
   refusal, and that leaving or the browser's Stop sharing still release
   the capture).
 
-### Server browser and desktop shell (proposed, not decided)
+### Server browser and desktop shell
 
-Discussed with Ryan, 2026-11-04; he is mulling it over. Nothing is built.
+Discussed with Ryan, 2026-11-04. Decided 2026-11-04: one isolated view
+per server loaded from that server; background servers stay connected;
+the pane is desktop-only (browser users keep one server per tab).
 
 - **Ryan's idea:** a pane of server icons down the left of the window,
   like Discord. Each icon is a bookmark to one OpenVoxa server
@@ -299,9 +301,9 @@ Discussed with Ryan, 2026-11-04; he is mulling it over. Nothing is built.
   a plain browser); adding a server by pasting an HTTPS address, later
   an `openvoxa://` invite link; bookmarks stored only on the device,
   with export / import.
-- **Open questions for Ryan:** the approach above; background servers
-  stay connected or pause; the pane desktop-only (browser users keep
-  one server per tab) or something for browser users too.
+- **Decided (Ryan, 2026-11-04):** the approach above; background
+  servers stay connected (idle unload later, if memory demands it); the
+  pane is desktop-only, browser users keep one server per tab.
 - **First Electron step once agreed:** the shell with the server pane
   and the security setup, then voice, screen share (Electron shows no
   picker; we draw our own) and E2EE tested inside it. Tray,
@@ -2295,8 +2297,22 @@ to pick their own colours later, so every colour stays a variable.
       client-core (storage, keys, settings) is keyed by server, not
       global. 2026-11-04: proposed design (one isolated view per server,
       loaded from that server, which makes per-server state automatic) in
-      Feature decisions, "Server browser and desktop shell"; Ryan is
-      thinking it over.
+      Feature decisions, "Server browser and desktop shell"; agreed by
+      Ryan the same day.
+- [x] Desktop app, step 1: `client-desktop/` Electron shell with the
+      server pane and the security setup. Done 2026-11-04 (ED1-ED7,
+      ED9-ED11; ED7b after the permission-check fix). Unsigned Windows
+      zip built on Docker (`npm run package:win`, pure-JS packager, no
+      Wine). Electron gives the permission check handler
+      `requestingOrigin` with a trailing slash: compare normalised
+      origins or device names stay hidden.
+- [ ] Desktop app, step 2: our own screen share picker
+      (`setDisplayMediaRequestHandler` + `desktopCapturer`; today
+      `display-capture` is refused and the share dialog just closes,
+      ED8), then E2EE screen share tested inside the app.
+- [ ] Desktop app, later: badges via a preload, voice handoff between
+      servers, global push-to-talk, server name and icon from Server
+      settings, tray, notifications, auto-update, installers, signing.
 
 - [x] Custom sounds, stage 1. Done 2026-11-04 (Feature decisions,
       "Custom sounds"; CS1-CS10).
