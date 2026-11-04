@@ -63,7 +63,7 @@ export function SettingsDialog({ tab: initialTab, session, call, deviceId, backu
 
   const tabs: [SettingsTab, string][] = [["account", "Account"], ["voice", "Voice"], ["chat", "Chat"], ["appearance", "Appearance"]];
   return (
-    <Modal title="Settings" onClose={onClose}>
+    <Modal title="Settings" onClose={onClose} wide fixed>
       <div className="settings-tabs" role="tablist">
         {tabs.map(([id, label]) => (
           <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? "on" : undefined}
@@ -80,9 +80,9 @@ export function SettingsDialog({ tab: initialTab, session, call, deviceId, backu
           : voiceError ? <p className="error" role="alert">{voiceError}</p> : <p className="muted">Loading…</p>)}
         {tab === "chat" && <ChatSettings />}
         {tab === "appearance" && <AppearanceSettings />}
-        <div className="modal-actions">
-          <button className="primary" onClick={onClose}>Done</button>
-        </div>
+      </div>
+      <div className="modal-actions modal-foot">
+        <button className="primary" onClick={onClose}>Done</button>
       </div>
     </Modal>
   );

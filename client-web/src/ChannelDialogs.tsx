@@ -41,12 +41,17 @@ function errText(err: unknown): string {
 
 // -------------------------------------------------------------- modal
 
-export function Modal({ title, onClose, children, wide }: {
+export function Modal({ title, onClose, children, wide, fixed }: {
   title: string;
   onClose: () => void;
   children: ReactNode;
-  /** Room for lists (Server settings). */
+  /** Room for lists (Settings, Server settings). */
   wide?: boolean;
+  /**
+   * One height whatever the content, so tabs don't jump about: the
+   * .modal-body child scrolls and a .modal-foot child stays at the bottom.
+   */
+  fixed?: boolean;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -55,7 +60,7 @@ export function Modal({ title, onClose, children, wide }: {
   }, [onClose]);
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={wide ? "modal wide" : "modal"} role="dialog" aria-modal="true" aria-label={title}>
+      <div className={`modal${wide ? " wide" : ""}${fixed ? " fixed" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
         <header className="modal-head">
           <h2>{title}</h2>
           <button className="icon" onClick={onClose} aria-label="Close">×</button>
