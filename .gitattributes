@@ -8,3 +8,6 @@
 *.pdf binary
 *.woff2 binary
 *.wasm binary
+*.ogg binary
+*.wav binary
+*.mp3 binary
