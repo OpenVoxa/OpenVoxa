@@ -51,7 +51,7 @@ If this project ever has a monetization strategy, something has gone wrong. Plea
 
 **The web client** (served at `/`)
 
-- Sign-up and login with sensible password rules (length, variety, a common-password list), recovery key setup and restore
+- Sign-up and login with sensible password rules (length, a common-password list, zxcvbn strength meter), recovery key setup and restore
 - Discord-style layout: channel list with unread markers, message history that loads as you scroll, edit and delete your own messages
 - Voice: click a channel to join, see who's in every call, speaking indicators, mute, deafen, push-to-talk with a key of your choice, per-person volume, microphone and speaker pickers
 - Screen sharing with quality presets (up to 4K or 1440p60), a choice between sharp text and smooth motion, optional audio, and a stage view with fullscreen and live stats

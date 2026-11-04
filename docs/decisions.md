@@ -1709,6 +1709,38 @@ IT: without them users pick `password1234` and, after a breach, reset to
 checklist live, and "Passwords don't match." under the confirm field once
 the password itself passes.
 
+**zxcvbn, 2026-11-04** (Ryan). Added zxcvbn and, with it, **dropped the
+3-of-4 kinds rule and the pattern rule**: zxcvbn already catches what they
+were for (keyboard rows, sequences, repeats, names, dates, dictionary
+words with a capital and a digit added), and without the kinds rule a long
+lower-case passphrase like `orange piano kettle sunrise` is allowed. The
+`password1234` -> `password2345` worry is still covered by the NCSC list.
+Rules now, in order: 12-256 characters; not the username; not on the NCSC
+list (dressed up or not); zxcvbn score >= 3 (an estimated 10^8 guesses or
+more; 4 refused too many reasonable passwords, 2 added little).
+- Server only (Ryan chose this over also running it in the browser: one
+  implementation, no ~1 MB of word lists for the browser, no "page said
+  Strong, server refused"). Go port `github.com/trustelem/zxcvbn` v1.0.1
+  (MIT, faithful port of zxcvbn 4.4.2, unmaintained since 2019 but the
+  algorithm is fixed). It has no hint text, so `strength.go` ports
+  zxcvbn's feedback.coffee (British spelling). Only the first 100
+  characters are scored: 256 characters of `aB3$` took ~180 ms, 100 take
+  ~14 ms.
+- `POST /api/v1/auth/password-check` `{password, username}` ->
+  `{problem, score, min_score, common, warning, suggestions}`. No session
+  (sign-up has none), own per-IP limit (30, then 2/s), nothing stored or
+  logged. A common-list hit caps the score at 1 so the meter agrees.
+- Client (`password.ts` `usePasswordCheck`): length and username checked
+  at once; the server asked 300 ms after typing stops; the last answer
+  stays on screen meanwhile. Off on the sign-in form, so a password being
+  signed in with is never sent to be checked. Only a known refusal of the
+  exact password blocks submit; while waiting or if the check failed, the
+  server decides on submit.
+- UI (`PasswordRules.tsx`): checklist "12+ characters / not your username /
+  hard to guess", a 4-segment bar (danger colour for Very weak/Weak,
+  accent for Fair, save green for Good/Strong) with the label, and below
+  it the warning and suggestions while it is not yet hard to guess.
+
 ### Palette
 
 client-web default (Ryan, 2026-11-01): background #333333, buttons
@@ -2275,8 +2307,9 @@ to pick their own colours later, so every colour stays a variable.
       Devices" when the browser hides device names. Done 2026-11-04
       (Feature decisions, "Custom sounds"; SO0a-SO0c, SO1-SO7).
 
-- [ ] Password strength estimation with zxcvbn (server and client), on top
-      of the rules. Ryan asked to discuss later (2026-11-01).
+- [x] Password strength estimation with zxcvbn. Done 2026-11-04, server
+      only, replacing the kinds and pattern rules (Feature decisions,
+      "Password rules"; ZX1-ZX7).
 
 - [ ] Confirm whether screen sharing should have its own `min_role_stream`
       rather than reusing the voice publish permission

@@ -3,7 +3,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { call, guessDeviceName, type Session } from "./api";
-import { checkPassword } from "./password";
+import { usePasswordCheck } from "./password";
 import { PasswordRules } from "./PasswordRules";
 import { unlockWithPassword, type PasswordUnlock } from "./unlock";
 
@@ -35,7 +35,7 @@ export function Login({ onSession, notice }: {
   const [setupCode, setSetupCode] = useState("");
 
   const registering = mode === "register";
-  const pw = checkPassword(password, username);
+  const pw = usePasswordCheck(password, username, registering);
   // Only once the password itself is acceptable is the confirmation worth
   // comparing; before that the checklist is what needs attention.
   const mismatch = registering && pw.ok && confirm !== "" && confirm !== password;
@@ -107,7 +107,7 @@ export function Login({ onSession, notice }: {
           <input type="password" value={password} onChange={(e) => { setPassword(e.target.value); setError(null); }}
             autoComplete={registering ? "new-password" : "current-password"} required />
         </label>
-        {registering && <PasswordRules pw={pw} />}
+        {registering && <PasswordRules pw={pw} empty={password === ""} />}
         {registering && (
           <label>
             Confirm password

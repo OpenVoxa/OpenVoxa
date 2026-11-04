@@ -108,6 +108,16 @@ button.link:hover { text-decoration: underline; }
   color: var(--muted);
 }
 .rules .ok { color: var(--text); }
+/* Strength meter under the checklist (PasswordRules.tsx). */
+.password-rules { display: flex; flex-direction: column; gap: 6px; margin-top: -6px; }
+.password-rules .rules { margin: 0; }
+.strength { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
+.strength-bar { display: flex; gap: 4px; flex: 0 0 160px; }
+.strength-bar span { flex: 1; height: 6px; border-radius: 3px; background: var(--input); }
+.strength-bar.weak span.on { background: var(--danger); }
+.strength-bar.fair span.on { background: var(--accent); }
+.strength-bar.good span.on { background: var(--save); }
+.strength-hint { margin: 0; font-size: 13px; color: var(--muted); }
 label .error { font-size: 13px; font-weight: 400; text-transform: none; }
 
 /* Recovery key screens. */

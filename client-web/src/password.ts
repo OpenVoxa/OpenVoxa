@@ -2,24 +2,47 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /**
- * Password rules, mirrored from server/internal/password for live
- * feedback. Everything except the common-password list (100,000 entries,
- * kept on the server only) is checked here as you type; the server is the
- * one that decides.
+ * Password rules (server/internal/password, decisions.md "Password
+ * rules"). Length and "not your username" are checked here as you type;
+ * how hard it is to guess (the common-password list and zxcvbn) is asked
+ * of the server, POST /api/v1/auth/password-check, once typing pauses.
+ * The server is the one that decides, on submit.
  */
+import { useEffect, useState } from "react";
+import { call } from "./api";
+
 export const MIN_PASSWORD = 12;
 export const MAX_PASSWORD = 256;
 
-/** How many of the four character kinds a password needs. */
-export const REQUIRED_KINDS = 3;
+/** Wait this long after the last keystroke before asking the server. */
+const CHECK_DELAY_MS = 300;
+
+/** What the server says about a password (passwordCheckResponse). */
+export interface Strength {
+  /** The refusal registering with it would get, or "". */
+  readonly problem: string;
+  /** zxcvbn's 0 (too guessable) to 4 (very unguessable). */
+  readonly score: number;
+  readonly min_score: number;
+  readonly common: boolean;
+  readonly warning: string;
+  readonly suggestions: readonly string[];
+}
 
 export interface PasswordCheck {
   readonly lengthOk: boolean;
-  /** The four kinds, each with whether the password has it. */
-  readonly kinds: ReadonlyArray<{ readonly label: string; readonly ok: boolean }>;
-  readonly kindsOk: boolean;
-  /** Not the username and not mostly a pattern like qwerty or 12345. */
-  readonly predictableOk: boolean;
+  readonly usernameOk: boolean;
+  /**
+   * The server's latest answer. While a newer check is waiting it is for
+   * a slightly older version of the password, so the meter doesn't
+   * flicker on every keystroke.
+   */
+  readonly strength: Strength | null;
+  /** Asking the server failed (offline, rate limited): submit decides. */
+  readonly strengthUnknown: boolean;
+  /** Hard to guess, as far as the server has said (false while waiting). */
+  readonly guessOk: boolean;
+  /** Nothing known is wrong with it. Submit is still checked by the server. */
   readonly ok: boolean;
 }
 
@@ -39,63 +62,41 @@ export function containsUsername(p: string, username: string): boolean {
   return lower.includes(u) || deleet(lower, "i").includes(u) || deleet(lower, "l").includes(u);
 }
 
-const KEYBOARD_ROWS = ["1234567890", "qwertyuiop", "asdfghjkl", "zxcvbnm"];
-const SAME = 1, UP = 2, DOWN = 4, KEY_RIGHT = 8, KEY_LEFT = 16;
+/**
+ * Checks a new password as it is typed: locally at once, the server after
+ * a pause. Off (`enabled` false) on the sign-in form, which shares the
+ * field: a password being signed in with is never sent to be checked.
+ */
+export function usePasswordCheck(p: string, username: string, enabled = true): PasswordCheck {
+  const [answer, setAnswer] = useState<{ pw: string; user: string; s: Strength | null } | null>(null);
 
-function steps(a: string, b: string): number {
-  let k = 0;
-  if (a === b) k |= SAME;
-  const letters = /\p{L}/u.test(a) && /\p{L}/u.test(b);
-  const digits = /\p{Nd}/u.test(a) && /\p{Nd}/u.test(b);
-  if (letters || digits) {
-    const d = b.codePointAt(0)! - a.codePointAt(0)!;
-    if (d === 1) k |= UP;
-    if (d === -1) k |= DOWN;
-  }
-  for (const row of KEYBOARD_ROWS) {
-    const i = row.indexOf(a), j = row.indexOf(b);
-    if (i >= 0 && j >= 0) {
-      if (j - i === 1) k |= KEY_RIGHT;
-      if (j - i === -1) k |= KEY_LEFT;
-    }
-  }
-  return k;
-}
+  useEffect(() => {
+    if (!enabled || p === "") return;
+    let stale = false;
+    const t = window.setTimeout(() => {
+      call<Strength>("/api/v1/auth/password-check", {
+        method: "POST",
+        body: { password: p, username },
+      })
+        .then((s) => { if (!stale) setAnswer({ pw: p, user: username, s }); })
+        .catch(() => { if (!stale) setAnswer({ pw: p, user: username, s: null }); });
+    }, CHECK_DELAY_MS);
+    return () => { stale = true; window.clearTimeout(t); };
+  }, [p, username, enabled]);
 
-/** Runs of 3+ characters with the same predictable step cover more than half. */
-export function mostlyPattern(p: string): boolean {
-  const rs = [...p.toLowerCase()];
-  let covered = 0, run = 1, kind = 0;
-  for (let i = 1; i <= rs.length; i++) {
-    if (i < rs.length) {
-      const k = steps(rs[i - 1]!, rs[i]!);
-      if (run === 1 && k !== 0) { kind = k; run = 2; continue; }
-      if (run > 1 && (kind & k) !== 0) { kind &= k; run++; continue; }
-    }
-    if (run >= 3) covered += run;
-    run = 1; kind = 0;
-    if (i < rs.length) {
-      const k = steps(rs[i - 1]!, rs[i]!);
-      if (k !== 0) { kind = k; run = 2; }
-    }
-  }
-  return covered * 2 > rs.length;
-}
-
-export function checkPassword(p: string, username = ""): PasswordCheck {
   const length = [...p].length; // runes, like the server
-  let symbol = false;
-  for (const ch of p) {
-    if (!/\p{L}|\p{Nd}|\s/u.test(ch)) symbol = true;
-  }
-  const kinds = [
-    { label: "upper-case", ok: /\p{Lu}/u.test(p) },
-    { label: "lower-case", ok: /\p{Ll}/u.test(p) },
-    { label: "number", ok: /\p{Nd}/u.test(p) },
-    { label: "symbol", ok: symbol },
-  ];
   const lengthOk = length >= MIN_PASSWORD && length <= MAX_PASSWORD;
-  const kindsOk = kinds.filter((k) => k.ok).length >= REQUIRED_KINDS;
-  const predictableOk = p !== "" && !containsUsername(p, username) && !mostlyPattern(p);
-  return { lengthOk, kinds, kindsOk, predictableOk, ok: lengthOk && kindsOk && predictableOk };
+  const usernameOk = p !== "" && !containsUsername(p, username);
+  const shown = enabled && p !== "" && answer !== null;
+  const strength = shown ? answer.s : null;
+  const strengthUnknown = shown && answer.s === null;
+  const guessOk = strength !== null && !strength.common && strength.score >= strength.min_score;
+  // Only a known refusal of exactly this password blocks; while waiting
+  // (or if the check failed) the server has the final say on submit.
+  const current = answer !== null && answer.pw === p && answer.user === username;
+  const refused = current && answer.s !== null && answer.s.problem !== "";
+  return {
+    lengthOk, usernameOk, strength, strengthUnknown, guessOk,
+    ok: lengthOk && usernameOk && !refused,
+  };
 }
