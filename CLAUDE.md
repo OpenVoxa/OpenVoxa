@@ -175,6 +175,8 @@ Implementation notes.
 - Known gaps: K1 recovery flows 2-5 deferred; no @everyone/@group; no
   per-group share limits. The debug page (`/debug/`, chat.html) was
   deleted 2026-11-04; the web client is the only client.
-- **Next: Ryan to choose.** Candidates: a server browser (decisions.md
-  Open items; design talk first); a per-user upload test in the share
-  dialog; zxcvbn (discuss first); Electron shell.
+- **Next: Ryan to choose.** He is mulling over the server browser +
+  Electron shell design (decisions.md Feature decisions, "Server browser
+  and desktop shell": one isolated view per server; three open
+  questions). Other candidates: a per-user upload test in the share
+  dialog; zxcvbn (discuss first).
