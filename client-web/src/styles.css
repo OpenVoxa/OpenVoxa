@@ -652,6 +652,10 @@ details summary { cursor: pointer; color: var(--muted); }
 
 /* ------------------------------------------------------ M5 session B */
 .modal.wide { max-width: 600px; }
+/* Fixed height (Settings, Server settings): the body scrolls, the footer stays put. */
+.modal.fixed { height: min(680px, calc(100vh - 32px)); display: flex; flex-direction: column; overflow: hidden; }
+.modal.fixed > .modal-body { flex: 1; min-height: 0; overflow-y: auto; }
+.modal-foot { padding: 12px 20px 16px; border-top: 1px solid var(--line); }
 .sidebar-head { display: flex; align-items: center; justify-content: space-between; }
 .device-list li.member { flex-direction: column; align-items: stretch; gap: 8px; }
 .member-row { display: flex; align-items: center; gap: 10px; }

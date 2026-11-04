@@ -149,7 +149,7 @@ export function ServerSettingsDialog({ call, me, reload, openReports, onClose }:
   // Every staff member can see the set; managing it needs the switch.
   tabs.push(["stickers", "Stickers"]);
   return (
-    <Modal title="Server settings" onClose={onClose} wide>
+    <Modal title="Server settings" onClose={onClose} wide fixed>
       <div className="settings-tabs" role="tablist">
         {tabs.map(([id, label]) => (
           <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? "on" : undefined}
@@ -165,9 +165,9 @@ export function ServerSettingsDialog({ call, me, reload, openReports, onClose }:
         {tab === "stickers" && (
           <StickersTab call={call} canManage={has("manage_stickers")} isAdmin={has("administrator")} />
         )}
-        <div className="modal-actions">
-          <button className="primary" onClick={onClose}>Done</button>
-        </div>
+      </div>
+      <div className="modal-actions modal-foot">
+        <button className="primary" onClick={onClose}>Done</button>
       </div>
     </Modal>
   );
