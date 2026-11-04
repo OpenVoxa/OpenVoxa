@@ -1,298 +1,180 @@
 # CLAUDE.md — OpenVoxa working notes
 
-Read this first. It is the short version; the long versions are linked.
-Keep it under ~150 lines and update the **Current state** section at the
-end of every session that changes it.
+Read this first; the long versions are linked. Keep it under ~180 lines.
+At the end of a session, rewrite **Current state** (don't append to it):
+what's true now and what's next. History belongs in decisions.md and git.
 
 ## What this is
 
 Self-hosted, non-monetised Discord/TeamSpeak alternative: text channels,
 voice, screen share, forum-style features. Pre-alpha.
 Repo: github.com/OpenVoxa/OpenVoxa. Owner: Ryan (new to much of this,
-leans on AI for code — explain non-obvious choices, don't assume expertise).
+leans on AI for code: explain non-obvious choices, don't assume expertise).
 
-Fixed decisions (decisions.md "Blocking decisions", ~L50; don't reopen):
+Fixed decisions (decisions.md "Blocking decisions"; don't reopen):
 
 - **Go server** + PostgreSQL. Rust only for pieces that need it.
 - **Electron desktop client** (bundled Chromium = same WebRTC/E2EE/screen
-  capture on every OS) plus the web client. Electron not started yet
+  capture on every OS) plus the web client. Not started
   (`client-desktop/` doesn't exist); it will load the same bundles.
 - **AGPLv3** (`AGPL-3.0-or-later` SPDX header on every file), DCO sign-off.
-- **Our own protocol, not Matrix.** Built from scratch by choice; MLS
-  (RFC 9420) for group crypto.
-- **No federation in v1.** Each instance is an island; server identity
-  stays in the protocol so federation is possible later.
-- **Per-channel E2EE, admin-controlled.** Text channels: encrypted or
-  not, chosen at creation by whoever holds `manage_channels`, fixed
-  after (`channels.encrypted`). Voice/screen share always E2EE, no toggle;
-  DMs will be too.
-- **Account deletion = crypto-shredding** (destroy the user's key
-  material so their ciphertext is unreadable even in backups). **Not
-  built yet:** `purgeUser`/`PurgeUserTx` (`account.go`) blanks message
-  bodies, sets `deleted` (tombstone) and deletes the user row (cascades
-  to sessions/devices). Plaintext channels will always need that path.
+- **Our own protocol, not Matrix**; MLS (RFC 9420) for group crypto.
+- **No federation in v1.** Server identity stays in the protocol.
+- **Per-channel E2EE, admin-controlled.** Text channels: encrypted or not,
+  chosen at creation (`manage_channels`), fixed after. Voice/screen share
+  always E2EE; DMs will be too.
+- **Account deletion = crypto-shredding** (built). Encrypted channels
+  need nothing (MLS forward secrecy); plaintext bodies are sealed under a
+  per-account key file (`internal/keystore`), destroyed after `purgeUser`.
 
-Deep references (read only the section you need, not the whole file):
+## Where things are written down
 
-- `docs/decisions.md` — every architectural decision and tradeoff.
-  Sections: Goals, Threat model, Blocking decisions (~L50), Feature
-  decisions, Architecture, Known tensions (~L152), **Encryption** (~L212),
-  **Implementation notes** (~L447, hard-won gotchas), Permission groups
-  (~L1087), **Build order** (~L1226), **Open items** (~L1494).
-- `README.md` — public-facing status, threat model, stack.
-- `deploy/README.md` — compose setup, TLS paths, LiveKit, storage,
-  troubleshooting.
+`docs/decisions.md` is the record of every decision; search it by
+section name, not line number. Sections: Goals and scope, Threat model,
+Blocking decisions, **Feature decisions** (one subsection per feature:
+mentions, reactions, screen share limit ...), Architecture, Known
+tensions, **Encryption**, **Implementation notes** (hard-won gotchas:
+read before touching ts-mls or LiveKit), Permission groups, **Build
+order** (what was built when, with test IDs), **Open items** (backlog,
+`[x]` = done). `README.md` is public status; `deploy/README.md` covers
+compose, TLS, LiveKit, storage, key backups, share limit, troubleshooting.
+Older full handoff: project doc claude/handoff-step-13.md.
 
 ## Layout
 
 ```
-server/            Go server (module root here; go.mod says go 1.26)
-  main.go, cli.go     cli.go = host commands (grant-admin, list-admins,
-                      list-users, delete-user)
-  Dockerfile          multi-stage: client-core -> client-web -> Go -> distroless
-  internal/httpapi/   HTTP + WS; debugui/chat.html = old debug client
-  internal/db/        Postgres, migrations/00NN_*.sql (embedded, ordered;
-                      latest 0027)
-  internal/{auth,blob,config,gif,hub,password,perm,ratelimit,unfurl}
-client-core/       TypeScript protocol + crypto, no UI
-  src/mls/provider.ts  MlsProvider interface (swappable)
-  src/mls/tsmls.ts     ts-mls implementation (pinned 1.6.2)
-  src/identity.ts      device keys, registration, key packages
-  src/groups.ts        MLS group lifecycle (create/join/commit/persist)
-  src/chat.ts          text chat: Chat (account) + ChannelView (channel)
-  src/attachments.ts   per-file AES-256-GCM keys + message envelope
-  src/recovery.ts      recovery key / encrypted backup
-  src/voice.ts         voice + screen share (VoiceClient); not in index
-  src/storage.ts       IndexedDB persistence
-  src/index.ts         exports -> global `OpenVoxaCore`
-  scripts/patch-ts-mls.mjs  build-time fix of a ts-mls validation bug
-  build.mjs            esbuild IIFE -> dist/core.js (+ LiveKit bundles)
-client-web/        Vite + React + TS, plain CSS; imports client-core source
-deploy/            docker-compose.yml, caddy/, livekit.yaml, .env.example,
-                   scripts/update-node-ip.sh
+server/            Go (module root; go.mod says go 1.26)
+  main.go, cli.go     host commands: grant-admin, list-admins, list-users, delete-user
+  Dockerfile          client-core -> client-web -> Go -> distroless
+  internal/httpapi/   HTTP + WS, one file per feature; livekitapi.go = LiveKit
+                      admin calls; debugui/chat.html = old debug client
+  internal/db/        Postgres; migrations/00NN_*.sql embedded, ordered (latest 0027)
+  internal/{auth,blob,config,gif,hub,keystore,password,perm,ratelimit,sealedfile,unfurl}
+client-core/       TypeScript protocol + crypto, no UI. src/: mls/ (ts-mls,
+                   pinned 1.6.2), identity, groups (MLS lifecycle), chat
+                   (Chat + ChannelView), voice (VoiceClient, lazy), attachments,
+                   recovery, storage, stickers. build.mjs -> dist/core.js +
+                   LiveKit bundles; scripts/patch-ts-mls.mjs fixes a ts-mls bug
+client-web/        Vite + React + TS, plain CSS; imports client-core source.
+                   Embedded into the server (webui.go), served at /.
+deploy/            docker-compose.yml, caddy/, livekit.yaml, .env.example, scripts/
 ```
 
-client-web is embedded into the server (`webui.go`) and served at `/`.
+Stack: LiveKit SFU (the server mints tokens and calls its admin API,
+never in the media path) · Caddy optional for TLS · MLS ciphersuite 1.
 
-## Stack
+## Build and check
 
-Go + PostgreSQL server · LiveKit SFU (server only mints tokens, never in
-the media path) · Caddy optional for TLS · client-core in TS, bundled by
-esbuild and **embedded into the Go binary** (`debugui/core.js`) · MLS via
-ts-mls, ciphersuite 1 · React web client now, Electron shell later.
+- `cd client-core && npm run build` (and `npx tsc --noEmit`: the build
+  doesn't type-check)
+- `cd client-web && npm run build` (runs tsc)
+- Go is not installed on Docker. Quick compile, vet and tests from
+  `server/`:
+  `docker run --rm -v "$PWD":/src -v ovx-gomod:/go/pkg/mod -w /src golang:1.26 sh -c 'go vet ./internal/httpapi/ && go test ./internal/<pkg>/ && go build ./...'`
+  (`ovx-gomod` caches modules). The image build is the final check.
+- Cloud container: go1.24, no proxy; needs a temporary go.mod (handoff
+  doc, "Working notes"). Never commit it.
+- core.js, LiveKit bundles and client-web dist are copied in before
+  `go build` (embed). Don't let `go mod tidy` raise the `go` directive
+  above golang:1.26.
 
-## Build and run
-
-Compile checks (before any commit):
-
-- `cd client-core && npm install && npm run build`
-- `cd client-web && npm install && npm run build`
-- `cd server && go build ./...` — **Go is not installed on Docker or
-  in the device shell**; the Docker image build (golang:1.26) is the Go
-  compile check. The cloud container has go1.24, no module proxy, and
-  Postgres 16; a type-check there needs a temporary go.mod (recipe in
-  the handoff doc, "Working notes"). Never commit that go.mod.
-- Node 22 (NodeSource, `/usr/bin/node`) is installed on Docker,
-  matching the Dockerfile's node:22-alpine.
-
-Docker (run on Docker, from `~/OpenVoxa/deploy`; build context is the repo
-root, the compose file handles that):
+Docker stack (from `~/OpenVoxa/deploy`):
 
 ```bash
-# first time
-cp .env.example .env                                  # then edit it
-docker run --rm livekit/livekit-server generate-keys  # keys into .env
-docker compose --profile tls up -d --build            # tls = with Caddy
-docker compose logs server | grep setup_code          # first admin signup
-# routine
-docker compose --profile tls up -d --build            # rebuild + restart
+docker compose --profile tls up -d --build            # rebuild + restart (tls = Caddy)
 docker compose --profile tls up -d --force-recreate   # after .env edits
 docker compose ps
-docker compose logs server --tail 30                  # or caddy / livekit
+docker compose logs server --tail 30                  # or caddy / livekit; --since 10m
 docker compose exec server /openvoxa-server list-users   # host commands
-docker compose --profile tls down
+docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 ```
 
-No `tls` profile = no Caddy (own proxy + `OPENVOXA_TRUST_PROXY=true`).
+First-time setup: deploy/README.md. The server image is distroless (no shell).
 
 ## Workflow (important)
 
-- **Check `hostname` first.** If it says `docker`, this session runs on
-  the Docker host itself (Debian 12 VM on Ryan's Proxmox homelab), repo
-  at `~/OpenVoxa`, live stack in `~/OpenVoxa/deploy`. Claude edits,
-  builds, commits, pushes AND rebuilds the stack from here. Ryan's only
-  terminal is this chat (he can't paste into the VM), so Claude runs
-  host commands (compose, logs, psql) itself. Elsewhere (Git-terminal,
-  Windows, `~/Documents/openvoxa`; cloud container) Claude can't reach
-  Docker, so give Ryan the Docker block below after every push.
-- Commits: DCO sign-off required (`git commit -s`), author
-  `rynd-automation <rynd_automation@outlook.com>`. Short imperative
-  subject lines, one logical change per commit.
-- Pushing works: a fine-grained token (OpenVoxa/OpenVoxa only,
-  Contents read/write) is stored via `credential.helper store
-  --file=.git/push-credentials` (never commit or print it). If a push
-  asks for a username, the token expired: Ryan makes a new one.
-- Commit/push only when asked. Never commit `.env`, keys, or
+- **Check `hostname` first.** `docker` = this session runs on the Docker
+  host (Debian 12 VM on Ryan's Proxmox homelab; repo `~/OpenVoxa`, live
+  stack `~/OpenVoxa/deploy`). Claude edits, builds, rebuilds, commits and
+  pushes from here and runs host commands itself: Ryan's only terminal is
+  this chat. Elsewhere (Git-terminal, `~/Documents/openvoxa`; cloud
+  container) Claude can't reach Docker: after every push give Ryan this
+  block, with the expected hash, unasked:
+  ```bash
+  # DOCKER
+  cd ~/OpenVoxa && git pull && git log --oneline -1
+  cd ~/OpenVoxa/deploy && docker compose --profile tls up -d --build
+  ```
+- **On Docker, rebuild without asking as soon as builds pass** (Ryan is
+  the only user). Order: build, rebuild, check `ps` + `logs server --tail
+  15`, Ryan hard-refreshes (Ctrl+Shift+R) and tests, then commit + push.
+- Give Ryan numbered test steps with IDs (e.g. SL1-SL5); he reports them
+  back as passed or failed.
+- Discuss designs with Ryan before building anything with a real choice
+  in it. Verify LiveKit/ts-mls behaviour by experiment, not docs.
+- Commits: only when asked. `git commit -s`, author `rynd-automation
+  <rynd_automation@outlook.com>`, short imperative subject, one logical
+  change per commit. Never commit `.env`, keys or
   `docker-compose.override.yml`.
-- **On Docker, rebuild without asking as soon as builds pass**
-  (`docker compose --profile tls up -d --build` from `deploy/`); Ryan
-  is the only user, so dropped connections don't matter. Order: build,
-  rebuild, Ryan tests, then commit + push on success. Afterwards check `docker compose ps` and
-  `logs server --tail 15`, then tell Ryan to hard-refresh (Ctrl+Shift+R).
-  Env changes need `--force-recreate`. Not on Docker: give the block,
-  with the expected hash, without being asked (he multitasks):
-     ```bash
-     # DOCKER
-     cd ~/OpenVoxa && git pull && git log --oneline -1
-     cd ~/OpenVoxa/deploy && docker compose --profile tls up -d --build
-     ```
-- Debug from the host: `docker compose logs server --since 10m` shows
-  every request (e.g. backup `PUT /me/backup/chunks/...`); psql via
-  `docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER"
-  -d "$POSTGRES_DB"'`. The server image is distroless (no shell).
-- Naming: call the hosts "Docker" and "Git-terminal", not "the VM" /
-  "your desktop".
+- Push token: fine-grained, stored via `credential.helper store
+  --file=.git/push-credentials` (never print or commit it). A username
+  prompt means it expired: Ryan makes a new one.
+- Call the hosts "Docker" and "Git-terminal", not "the VM" / "your desktop".
 
-## Rules of thumb (from decisions.md — don't relearn these)
+## Rules of thumb (don't relearn these)
 
-- Server is a delivery service for MLS: stores/routes opaque blobs,
-  never parses them. Commit ordering is compare-and-swap on a
-  client-supplied epoch hint.
+- The server is a delivery service for MLS: it stores and routes opaque
+  blobs, never parses them. Commit ordering is compare-and-swap on a
+  client-supplied epoch hint. `messages.body` is opaque `BYTEA`.
 - A **device** is the crypto identity, not an account. Schema is
   multi-device; only single-device is implemented.
 - Key packages are single-use (`FOR UPDATE SKIP LOCKED`) plus one
-  reusable last resort; surface when last resort was used.
+  reusable last resort.
 - Encrypted channels show no history from before you joined. By design.
-- `messages.body` is opaque `BYTEA`; encryption needs no migration.
-- Ratchet trees travel as tagged JSON (our own codec): watch
-  `Uint8Array`, `BigInt`, and `undefined`-vs-`null` blank nodes.
-- ts-mls docs describe intent, not return shapes — **verify API shapes
-  by experiment/types, never from the README.** See the eleven listed
-  gotchas in decisions.md Implementation notes.
-- `chat.html` is one script: a throw while wiring handlers silently
-  kills every handler after it. Attach new controls via the warn-not-
-  throw helper.
-- core.js, the LiveKit bundles and client-web dist must be copied before
-  `go build` (embed). Don't let `go mod tidy` raise the `go` directive
-  above the Dockerfile's base image (golang:1.26).
-- Permission revocation must explicitly reach live WebSockets.
-- LiveKit is self-hosted from `debugui/` and pinned exactly in
-  client-core/package.json: the E2EE worker must be same-origin and the
-  same build as the main library. Never point it back at a CDN tag.
-- Palette: variables in `client-web/src/styles.css` only. User colour
-  overrides go through `appearance.ts` (Settings > Appearance), which
-  sets those same variables on the root element.
+- Ratchet trees travel as tagged JSON (our codec): watch `Uint8Array`,
+  `BigInt`, and `undefined`-vs-`null` blank nodes.
+- ts-mls docs describe intent, not return shapes: verify by experiment.
+- LiveKit track info (size, layer bitrates) is what the browser
+  declared, never measured. LiveKit is self-hosted from `debugui/` and
+  pinned exactly: the E2EE worker must be same-origin, same build.
+- Permission changes must explicitly reach live WebSockets and live
+  voice calls (`kickFromLostVoice`).
+- `chat.html` is one script: a throw while wiring handlers kills every
+  handler after it; use the warn-not-throw helper.
+- Defaults: visual pop-ups off, in-page sounds on; least friction for
+  end users.
+- **UI:** colours only as variables in `client-web/src/styles.css`
+  (users override them via `appearance.ts`). Ryan wants things to match
+  exactly: sizes, spacing, Title Case tab names. Buttons must look like
+  buttons; reuse `primary` (filled accent), `outline` (accent outline),
+  `save` (green, grey when disabled, bottom left) and `Modal wide fixed`
+  (Settings and Server settings, both 600 x 680, footer `.modal-foot`).
+  Grey out unavailable controls instead of hiding them. Check before
+  showing him.
 
-## Current state (update every session)
+## Current state (rewrite every session)
 
-_Last updated: 2026-11-04. **Screen share limit DONE** (SL1-SL5,
-UT1-UT4, W1-W3 verified; decisions.md Feature decisions "Screen share
-quality limit"): one server-wide limit, no limit by default, Server
-settings > Voice and Video (admin only, `shareLimit.tsx`); server
-watcher every 5 s takes screen sharing away from over-limit shares
-(`sharelimit.go`); upload speed test of the server via Cloudflare
-(`uploadtest.go`, migrations 0026-0027). LiveKit admin calls are in
-`httpapi/livekitapi.go` (reuse for force-PTT). Both settings dialogs are
-now one fixed size (`Modal fixed`; `.modal-body` scrolls, `.modal-foot`
-holds Done). Button styles: `save` (green, grey when disabled),
-`outline` (accent outline). Ryan is particular about matching sizes,
-spacing and capitalisation in the UI: check those before showing him.
-Earlier 2026-11-04: **Username colours by group DONE** (NC1-NC7,
-ND1-ND3 verified; decisions.md Open items): `perm_groups.colour` +
-`server_settings.name_colours` (migration 0025), `httpapi/namecolours.go`,
-client-web `names.tsx` (`useNameColour`, `ColouredName`), Groups tab
-switch + per-group Colour + "Default colours", Appearance toggle.
-Earlier 2026-11-04: **Sign out and erase DONE** (E1-E5 verified;
-decisions.md Encryption, "Sign out and erase"): Settings > Account >
-Devices, "This browser" row; backs up, revokes the device, deletes the
-account's IndexedDB (`storage.destroy` / `eraseIdentity`), signs out.
-Earlier 2026-11-04: **Custom stickers DONE** (verified by Ryan,
-ST1-ST7, Member check with test0user; decisions.md Open items "Custom stickers"): limits 1 MB,
-512 x 512 px, 100 per server (admin-editable, Server settings >
-Stickers), `manage_stickers` switch (Moderator by default), migration
-0024, `httpapi/stickers.go`, client-core `stickers.ts` (message token
-`[sticker:<uuid>]`), client-web `stickers.tsx` (Stickers tab inside the composer's emoji
-picker, not for reactions; Server settings tab). `:name:` sticker
-suggestions DONE too (SC1-SC5 verified): matching stickers top the
-emoji shortcode list in the composer (not edits); picking one sends it
-at once, a typed-out `:name:` never does. Also:
-the client now refetches `/me` on start, so a switch added by a server
-update shows without signing out. Go test cache volume `ovx-gomod` on
-Docker (`-v ovx-gomod:/go/pkg/mod` in the docker run test command).
-Earlier 2026-11-04: **Reactions DONE** (Ryan chose option A:
-the server sees the emoji, like mentions; decisions.md Feature decisions
-"Reactions are metadata the server sees"): `httpapi/reactions.go`,
-migration 0023, `ChannelView.react`, chips + "React" in `ChannelPane.tsx`.
-Verified by Ryan on Docker (R1-R6: add, toggle, live with 2 accounts,
-encrypted channel, delete, reload). Ban-and-purge now also clears
-mentions and reactions of the purged messages.
-Earlier 2026-11-04: emoji picker + `:name:` shortcodes DONE and verified
-(`client-web/src/emoji.tsx`, system font, emojibase-data lazy chunk).
-Previous session 2026-11-03: **Crypto-shredding is DONE**
-(build order 14, S1-S6, all verified by Ryan; decisions.md Encryption,
-"Account deletion is crypto-shredding"). Plaintext channels: per-account
-key file in `OPENVOXA_KEY_DIR` (volume `deploy_key-data`, outside
-Postgres): `internal/keystore` (Seal/Open/Destroy), `httpapi/sealing.go`,
-`internal/sealedfile` + `httpapi/attachseal.go`, migrations 0020-0022.
-Deletion destroys the key after the purge commits (`purgeUser`,
-`delete-user`). Clients prune their local archive via
-`POST /messages/archive-check` (`Chat.pruneArchive`, at start and after
-`user_purged`). Optional at-rest encryption of the account
-keys under a KEK (`OPENVOXA_KEK`/`_FILE`; `keystore` wraps keys, off by
-default, `WrapExisting` upgrades in place): server-only, added this
-session. Operator guidance: `deploy/README.md` "Account keys and
-backups". Go unit tests:
-`docker run --rm -v "$PWD":/src -w /src golang:1.26 go test ./internal/keystore/ ./internal/sealedfile/`
-from `server/`. Key-folder backup cron is set up on Docker
-(`deploy/scripts/backup-keys.sh`, daily 03:30 -> `~/openvoxa-key-backups`,
-7-day prune) and the KEK is enabled (Ryan holds the only copies).
-**Next: Ryan to choose** (see the end).
-Also this session: Reports tab (Delete now confirmed; Delete or Ban from
-a report marks it Actioned; Dismiss is "No action needed", tab "No
-action", status value still `dismissed`) and a "Jump to latest" button
-in the message list (sticky, "N new"). The 300 test messages from staff
-in #general were deleted (2026-11-03).
-Earlier: local storage encryption (L1-L3) done; sign-out keeps the device.
-Older full handoff: project doc claude/handoff-step-13.md._
-
-Done and verified on Docker (details: decisions.md Build order 9-12):
-MLS text E2EE, encrypted attachments in core + chat.html (Giphy GIFs stay
-plain, Ryan's call), voice/screen-share E2EE, automatic membership from
-channel access, permission groups (chat.html console helpers
-`showGroups()`, `mkChannel()`, `setAccess()` ...), device expiry, history
-sharing, two-admin floor, password rules. Blobs on Docker: bind mount
-`/mnt/openvoxa-blobs`.
-
-Step 13 (real client) M1-M5 all DONE and verified on Docker by
-2026-11-03 (details per milestone: decisions.md Build order, step 13):
-M1 login + recovery (K1 flows 2-5 deferred), M2 text, M3 voice, channel
-management, M4 markdown/previews/GIFs/notices/attachments/image viewer,
-M5 A account settings (`SettingsDialog.tsx`), B groups + members and
-C moderation (both in `ServerSettings.tsx`, gear beside "OpenVoxa",
-staff only; C added Report on messages, Reports/Bans/Log tabs, a red
-dot for view_reports holders via `reports_changed`, and the Log archive
-period in `server_settings`, migration 0017).
+_2026-11-04._ Step 13 (the real web client, M1-M5) is done, and so is
+everything since: mentions, appearance, crypto-shredding, emoji and
+reactions, custom stickers, sign out and erase, username colours, and
+the **screen share limit** (last session: server-wide limit, none by
+default, Server settings > Voice and Video, enforced every 5 s via
+LiveKit; server upload speed test via Cloudflare). Details and test IDs:
+decisions.md Build order, Feature decisions, Open items.
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
-  Everyone 0. Test accounts: tuckilufigus, staff, openvoxaadmin.
-- Deploy: LiveKit on host networking (v1.13.11, `host.docker.internal:7880`),
-  `update-node-ip.sh` on cron. Closed off: Ryan is the only user (port
-  8443; friend-access teardown notes in handoff).
-- External join is DONE (2026-10-31, `groups.open`): a new device joins
-  encrypted channels and voice with nobody online. Check git log and
-  decisions.md Build order before calling something "not built".
-- @mentions (2026-11-03, decisions.md Feature decisions "Mentions are
-  metadata the server sees"): server filters client-sent user IDs by the
-  viewer rule, `message_mentions` (0018), `mention` event, `last_mention_at`.
-  Desktop notifications are opt-in and off by default (Ryan: least
-  invasive defaults). Not built: @everyone/@group, counts, push.
-- Appearance tab: accent, unread dot, mention badge colours, per browser.
-  More customisation goes in `COLOURS` in `appearance.ts`.
-- Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI;
-  now also destroys the key).
-- @mentions and Appearance: done and verified (M1-M6, A1).
-- **Next item: Ryan to choose** at the start of the next session: a
-  server browser (decisions.md Open items); local archive retention
-  sweep; real force-PTT (plumbing ready in `livekitapi.go`); a per-user
-  upload test in the share dialog; zxcvbn (discuss first); Electron
-  shell.
+  Everyone 0. Test accounts: tuckilufigus (Ryan), staff, openvoxaadmin,
+  test0user.
+- Docker deploy: LiveKit v1.13.11 on host networking (server reaches it
+  at `host.docker.internal:7880`), `update-node-ip.sh` on cron. Blobs on
+  bind mount `/mnt/openvoxa-blobs`. Account keys in volume
+  `deploy_key-data`, wrapped under a KEK (Ryan holds the only copies),
+  backed up daily 03:30 to `~/openvoxa-key-backups` (7 days). Closed off:
+  Ryan is the only user (port 8443).
+- Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI).
+- Known gaps: K1 recovery flows 2-5 deferred; no @everyone/@group;
+  force-PTT is advisory only; no per-group share limits.
+- **Next: Ryan to choose.** Candidates: a server browser (decisions.md
+  Open items); local archive retention sweep; real force-PTT
+  (`setPublishSources` in livekitapi.go is ready); a per-user upload
+  test in the share dialog; zxcvbn (discuss first); Electron shell.
