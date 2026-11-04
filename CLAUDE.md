@@ -185,7 +185,11 @@ No `tls` profile = no Caddy (own proxy + `OPENVOXA_TRUST_PROXY=true`).
 
 ## Current state (update every session)
 
-_Last updated: 2026-11-03 (end of session). **Crypto-shredding is DONE**
+_Last updated: 2026-11-04. **Emoji picker + `:name:` shortcodes DONE**
+and verified by Ryan (`client-web/src/emoji.tsx`, system font,
+emojibase-data lazy chunk; decisions.md Open items "Emoji"). Reactions
+deferred to their own design pass.
+Previous session 2026-11-03: **Crypto-shredding is DONE**
 (build order 14, S1-S6, all verified by Ryan; decisions.md Encryption,
 "Account deletion is crypto-shredding"). Plaintext channels: per-account
 key file in `OPENVOXA_KEY_DIR` (volume `deploy_key-data`, outside
@@ -248,7 +252,7 @@ period in `server_settings`, migration 0017).
 - Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI;
   now also destroys the key).
 - @mentions and Appearance: done and verified (M1-M6, A1).
-- Next (Ryan to choose): emoji picker, custom
+- Next (Ryan to choose): reactions (design first), custom
   stickers (mods/admins, server-wide, survive account deletion; limits
   still to agree) and later a server browser (decisions.md Open items); "shared computer: erase everything" on sign-out;
   local archive retention sweep; real force-PTT via LiveKit

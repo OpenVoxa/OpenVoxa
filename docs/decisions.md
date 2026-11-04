@@ -1858,11 +1858,21 @@ to pick their own colours later, so every colour stays a variable.
 
 ## Open items
 
-- [ ] Emoji (Ryan, 2026-11-03). A picker in the composer, plus `:name:`
-      shortcodes. Unicode emoji are just text, so they work in encrypted
-      channels unchanged. To settle before building: bundle the emoji
-      data and images ourselves (no CDN, same reason as LiveKit) or use
-      the system font; whether reactions on messages come with it.
+- [x] Emoji (Ryan, 2026-11-03; done 2026-11-04, `client-web/src/emoji.tsx`).
+      A picker in the composer (categories, search, recently used, skin
+      tone, all per browser) plus `:name:` shortcodes (GitHub's set):
+      ":smi" opens a list, a complete ":fire:" converts on the closing
+      colon, in the composer and the edit box. Unicode emoji are just
+      text, so they work in encrypted channels unchanged. Decided with
+      Ryan: drawn with the **system font**, no image set shipped (looks
+      native per OS; a bare Linux box may lack a colour emoji font).
+      Names/keywords from `emojibase-data` (MIT, pinned exactly),
+      bundled and lazy-loaded as its own chunk (~100 KB gzipped), no
+      CDN. Emoji newer than the device's font are hidden by a canvas
+      test, one sample per Emoji version (no colour font at all = no
+      filtering). **Reactions deferred** to their own design pass
+      (server table; what the server sees in encrypted channels).
+      Not built: arrow keys inside the grid, bigger emoji-only messages.
 - [ ] Custom stickers (Ryan, 2026-11-03): images uploaded to the server
       and sent like a GIF. Decided with Ryan:
       - Server-wide: one set for the whole server, not per channel.
