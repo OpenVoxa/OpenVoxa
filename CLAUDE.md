@@ -153,11 +153,11 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 ## Current state (rewrite every session)
 
 _2026-11-04._ Step 13 (web client M1-M5) and everything since are done;
-latest: **custom sounds** (`sounds.ts`, `SoundSettings.tsx`; CS, MS, MC
-tests) and now **sounds follow the Voice Speaker** (`setSinkId`; hidden
-`<audio>` on Firefox) plus **Show My Devices** in Settings > Voice
-(browsers hide device names until the mic is allowed). Verified
-SO0a-SO0c, SO1-SO7. Details: decisions.md Feature decisions "Custom sounds".
+latest: **zxcvbn password strength** (server only, score >= 3, replaces
+the 3-of-4 kinds and pattern rules; `POST /api/v1/auth/password-check`
+drives a meter on sign-up and password change; ZX1-ZX7 passed). Before
+that: custom sounds, sounds on the Voice Speaker, Show My Devices.
+Details: decisions.md Feature decisions "Password rules".
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts: tuckilufigus (Ryan), staff, openvoxaadmin,
@@ -171,7 +171,6 @@ SO0a-SO0c, SO1-SO7. Details: decisions.md Feature decisions "Custom sounds".
 - Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI).
 - Known gaps (decisions.md Open items): K1 recovery flows 2-5 deferred;
   no @everyone/@group; no per-group share limits.
-- **Next:** zxcvbn password strength (decisions.md Open items; discuss
-  with Ryan first: server and client, how strict, how it's shown). Later: server
-  browser + Electron shell ("Server browser and desktop shell", three
-  open questions), per-user upload test in the share dialog.
+- **Next:** server browser + Electron shell (decisions.md "Server browser
+  and desktop shell", three open questions: discuss with Ryan first).
+  Later: per-user upload test in the share dialog.
