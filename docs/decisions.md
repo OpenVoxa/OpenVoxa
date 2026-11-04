@@ -1170,8 +1170,9 @@ Worker script from another origin, and the E2EE worker speaks a message
 protocol to the main library that changes between releases, so a floating
 CDN tag would eventually break encryption silently. Self-hosting also
 removes a third party able to serve code that sees every decrypted frame.
-`client-core/build.mjs` copies both files from `node_modules`; the
-Dockerfile puts them in `debugui/`. The worker is not terminated by
+(Originally copied into the debug page's `debugui/`; since step 13 the
+web client's Vite build bundles the worker from client-core's own copy,
+`voiceWorker.ts`, and the debug page is gone.) The worker is not terminated by
 LiveKit; the client terminates it on leave.
 
 **Losing access removes you from the call, and old media keys expire.**
@@ -2140,6 +2141,14 @@ to pick their own colours later, so every colour stays a variable.
       the enforceable tool instead: server mute.
 - [ ] Guest accounts can be assigned but there is no anonymous or invite
       flow to create one
+- [x] Delete the debug page. Done 2026-11-04 (Ryan: "having it early was
+      a blessing but it's now a security hole"). chat.html was unmaintained
+      code rendering other people's messages on the same origin as the web
+      client, so a rendering bug there could read the real client's session
+      and keys; it granted no extra API powers. Removed `debugui/`, the
+      `/debug/` route, `OPENVOXA_DEBUG_UI`, and the core.js / LiveKit
+      bundle steps (client-core's build now only patches ts-mls; esbuild
+      dropped). `/debug/...` now gets the web app like any unknown path.
 - [ ] Reproducible builds
 - [x] Role demotion does not reach a live websocket. Fixed 2026-10-31:
       sockets to channels the account can no longer view are closed.

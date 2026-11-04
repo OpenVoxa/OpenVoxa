@@ -357,7 +357,7 @@ cd deploy
 docker compose --profile tls up -d --build
 ```
 
-Hard-refresh the browser (Ctrl+Shift+R) after changes to anything under `debugui/`.
+Hard-refresh the browser (Ctrl+Shift+R) after an update, so it loads the new web client.
 
 ## Troubleshooting
 

@@ -17,10 +17,6 @@ type Config struct {
 	ListenAddr  string
 	DatabaseURL string
 
-	// DebugUI serves a bare-bones test client at /debug/. Off by default
-	// and should stay off anywhere real.
-	DebugUI bool
-
 	// TrustProxy makes the server read the client address from the
 	// X-Forwarded-For header instead of the TCP connection.
 	//
@@ -85,7 +81,6 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		ListenAddr:  env("OPENVOXA_LISTEN_ADDR", ":8080"),
 		DatabaseURL: os.Getenv("OPENVOXA_DATABASE_URL"),
-		DebugUI:     envBool("OPENVOXA_DEBUG_UI", false),
 		BlobDir:     env("OPENVOXA_BLOB_DIR", "/var/lib/openvoxa/blobs"),
 		KeyDir:      env("OPENVOXA_KEY_DIR", "/var/lib/openvoxa/keys"),
 
