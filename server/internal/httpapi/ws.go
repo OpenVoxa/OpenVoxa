@@ -169,6 +169,8 @@ type messageFrame struct {
 	Attachments []attachmentInfo `json:"attachments,omitempty"`
 	// Who the message mentions, as the server accepted it.
 	Mentions []mentionInfo `json:"mentions,omitempty"`
+	// Emoji reactions, history only; live changes come as "reaction".
+	Reactions []reactionInfo `json:"reactions,omitempty"`
 }
 
 type historyFrame struct {

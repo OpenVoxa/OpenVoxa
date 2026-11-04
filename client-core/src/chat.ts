@@ -72,6 +72,28 @@ export interface Mention {
   readonly username: string;
 }
 
+/** One emoji on a message, as the server sends it. */
+interface ServerReaction {
+  emoji: string;
+  /** Who chose it, oldest first. */
+  users: Mention[];
+}
+
+/**
+ * One emoji on a message and who chose it, oldest first. The server sees
+ * these in every channel, encrypted ones too (decisions.md, "Reactions
+ * are metadata the server sees").
+ */
+export interface Reaction {
+  readonly emoji: string;
+  readonly users: readonly Mention[];
+  /** This account is among them. */
+  readonly mine: boolean;
+}
+
+/** At most this many different emoji on one message (server rule). */
+export const MAX_REACTION_KINDS = 20;
+
 /** A message as the server sends it (websocket or history page). */
 interface ServerMessage {
   id: string;
@@ -85,6 +107,7 @@ interface ServerMessage {
   ref?: string;
   attachments?: AttachmentInfo[];
   mentions?: Mention[];
+  reactions?: ServerReaction[];
 }
 
 /**
@@ -121,6 +144,8 @@ export interface ChatMessage {
   readonly mentions: readonly Mention[];
   /** It mentions this account. */
   readonly mentionsMe: boolean;
+  /** Emoji reactions, in the order each emoji was first used. */
+  readonly reactions: readonly Reaction[];
   /** Readable because someone shared it (history sharing). */
   readonly sharedBy?: SharedBy;
   /**
@@ -186,6 +211,8 @@ export interface ChatOptions {
   /** Turns "/api/v1/ws?..." into a ws:// or wss:// URL. */
   wsUrl: (pathAndQuery: string) => string;
   userId: string;
+  /** This account's name, for its own reactions until the server echoes them. */
+  username?: string;
   /** Where unread marks live; in memory when omitted. */
   store?: KeyValueStore;
   /** Fired after any plaintext is archived (schedule a backup upload). */
@@ -331,6 +358,7 @@ const PRUNE_DELAY_MS = 2000;
 export class Chat {
   readonly session: Session;
   readonly userId: string;
+  readonly username: string;
   readonly #opts: ChatOptions;
   readonly #store: KeyValueStore;
   #channels: ChannelInfo[] = [];
@@ -353,6 +381,7 @@ export class Chat {
   constructor(session: Session, opts: ChatOptions) {
     this.session = session;
     this.userId = opts.userId;
+    this.username = opts.username ?? "";
     this.#opts = opts;
     this.#store = opts.store ?? new MemoryStore();
   }
@@ -1023,6 +1052,10 @@ export class ChannelView {
       case "message_deleted":
         this.#enqueue(() => this.#tombstone(frame.message_id!));
         break;
+      case "reaction":
+        this.#enqueue(async () => this.#applyReaction(
+          frame.message_id!, frame.emoji!, { user_id: frame.user_id!, username: frame.username ?? "" }, !!frame.added));
+        break;
       case "channel_purged":
         this.#enqueue(() => this.#purgeBefore(frame.before!));
         break;
@@ -1072,6 +1105,7 @@ export class ChannelView {
       attachments: m.attachments ?? [],
       mentions: m.mentions ?? [],
       mentionsMe: (m.mentions ?? []).some((p) => p.user_id === this.#chat.userId),
+      reactions: this.#reactions(m.reactions),
     };
   }
 
@@ -1208,13 +1242,41 @@ export class ChannelView {
     }
   }
 
+  #reactions(list: readonly ServerReaction[] | undefined): Reaction[] {
+    return (list ?? []).filter((r) => r.users.length > 0).map((r) => ({
+      emoji: r.emoji,
+      users: r.users,
+      mine: r.users.some((u) => u.user_id === this.#chat.userId),
+    }));
+  }
+
+  /** Add or remove one person's reaction. Idempotent: the event and the
+   * request's own reply both land here. */
+  #applyReaction(id: string, emoji: string, who: Mention, added: boolean): void {
+    const raw = this.#raw.get(id);
+    const list = (raw?.reactions ?? this.#messages.get(id)?.reactions ?? []).map((r) => ({ emoji: r.emoji, users: [...r.users] }));
+    let entry = list.find((r) => r.emoji === emoji);
+    const has = !!entry?.users.some((u) => u.user_id === who.user_id);
+    if (added === has) return;
+    if (added) {
+      if (!entry) list.push((entry = { emoji, users: [] }));
+      entry.users.push(who);
+    } else if (entry) {
+      entry.users = entry.users.filter((u) => u.user_id !== who.user_id);
+    }
+    const next = list.filter((r) => r.users.length > 0);
+    if (raw) this.#raw.set(id, { ...raw, reactions: next });
+    const current = this.#messages.get(id);
+    if (current) this.#put({ ...current, reactions: this.#reactions(next) });
+  }
+
   async #tombstone(id: string): Promise<void> {
     if (this.#encrypted) await storage.deletePlaintext(id);
     const raw = this.#raw.get(id);
-    if (raw) this.#raw.set(id, { ...raw, body: "", deleted: true, attachments: [] });
+    if (raw) this.#raw.set(id, { ...raw, body: "", deleted: true, attachments: [], reactions: [] });
     const current = this.#messages.get(id);
     if (current) {
-      this.#put({ ...current, deleted: true, text: "", files: [], attachments: [], unreadable: undefined, staleEdit: undefined });
+      this.#put({ ...current, deleted: true, text: "", files: [], attachments: [], reactions: [], unreadable: undefined, staleEdit: undefined });
     }
   }
 
@@ -1241,6 +1303,11 @@ export class ChannelView {
    */
   userPurged(userId: string): void {
     for (const m of [...this.#messages.values()]) {
+      // Their reactions went with the account.
+      for (const r of m.reactions) {
+        const who = r.users.find((u) => u.user_id === userId);
+        if (who) void this.#enqueue(async () => this.#applyReaction(m.id, r.emoji, who, false));
+      }
       if (m.authorId !== userId) continue;
       void this.#enqueue(async () => {
         await this.#tombstone(m.id);
@@ -1467,6 +1534,7 @@ export class ChannelView {
       attachments: infos,
       mentions,
       mentionsMe: false,
+      reactions: [],
       pending: true,
     });
     const ids = infos.map((a) => a.id);
@@ -1521,6 +1589,22 @@ export class ChannelView {
     }
   }
 
+  /**
+   * Add (on) or take back (off) this account's reaction to a message.
+   * Needs permission to post in the channel; the server allows at most
+   * MAX_REACTION_KINDS different emoji per message.
+   */
+  async react(id: string, emoji: string, on: boolean): Promise<void> {
+    const current = this.#messages.get(id);
+    if (!current || current.deleted || current.pending) throw new Error("can't react to this message");
+    await this.#opts.call(`/api/v1/messages/${id}/reactions/${encodeURIComponent(emoji)}`, {
+      method: on ? "PUT" : "DELETE",
+    });
+    // The event usually arrives first; this covers it arriving late.
+    await this.#enqueue(async () => this.#applyReaction(
+      id, emoji, { user_id: this.#chat.userId, username: this.#chat.username }, on));
+  }
+
   /** Delete one of your messages (or anyone's, with the permission). */
   async remove(id: string): Promise<void> {
     if (id.startsWith("pending:")) return this.dismiss(id);
@@ -1542,6 +1626,10 @@ interface ChannelFrame {
   error?: string;
   ref?: string;
   mentions?: Mention[];
+  emoji?: string;
+  user_id?: string;
+  username?: string;
+  added?: boolean;
 }
 
 function toServer(m: ChatMessage): ServerMessage {
@@ -1556,5 +1644,6 @@ function toServer(m: ChatMessage): ServerMessage {
     edited_at: m.editedAt,
     attachments: [...m.attachments],
     mentions: [...m.mentions],
+    reactions: m.reactions.map((r) => ({ emoji: r.emoji, users: [...r.users] })),
   };
 }

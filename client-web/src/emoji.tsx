@@ -20,7 +20,7 @@
  */
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { KeyboardEvent } from "react";
+import type { CSSProperties, KeyboardEvent } from "react";
 import { localStore } from "./core";
 
 export interface Emoji {
@@ -235,10 +235,13 @@ export function noteRecent(e: Emoji): void {
  * insert and close; Shift+click inserts and keeps it open. Typing searches;
  * Enter takes the first result.
  */
-export function EmojiPicker({ onPick, onClose }: {
+export function EmojiPicker({ onPick, onClose, style, label = "Emoji" }: {
   /** The emoji text to insert, with the chosen skin tone applied. */
   onPick: (text: string) => void;
   onClose: () => void;
+  /** Placement, when not above the composer (reactions place it by the message). */
+  style?: CSSProperties;
+  label?: string;
 }) {
   const data = useEmojiData(true);
   const [error, setError] = useState(false);
@@ -315,7 +318,7 @@ export function EmojiPicker({ onPick, onClose }: {
   const shown = hover ?? sections[0]?.items[0] ?? null;
 
   return (
-    <div className="emoji-picker" ref={box} role="dialog" aria-label="Emoji">
+    <div className="emoji-picker" ref={box} role="dialog" aria-label={label} style={style}>
       <div className="emoji-top">
         <input ref={input} value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={onSearchKey}
           placeholder="Search emoji" aria-label="Search emoji" />
