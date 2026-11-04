@@ -323,6 +323,21 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 	// authorisation, because browsers cannot send headers on <img src>.
 	mux.HandleFunc("GET /api/v1/attachments/{id}", withUUIDPath(api.downloadAttachment))
 
+	// Custom stickers (stickers.go, migration 0024): anyone signed in
+	// lists and fetches them; manage_stickers adds, renames and removes;
+	// the limits are an administrator's.
+	mux.HandleFunc("GET /api/v1/stickers", api.requireAuth(api.listStickers))
+	mux.HandleFunc("POST /api/v1/stickers",
+		api.requirePerm(perm.ManageStickers, api.uploadSticker))
+	mux.HandleFunc("PUT /api/v1/stickers/limits",
+		api.requirePerm(perm.Administrator, api.putStickerLimits))
+	mux.HandleFunc("GET /api/v1/stickers/{id}/image",
+		withUUIDPath(api.requireAuth(api.stickerImageFile)))
+	mux.HandleFunc("PATCH /api/v1/stickers/{id}",
+		withUUIDPath(api.requirePerm(perm.ManageStickers, api.editSticker)))
+	mux.HandleFunc("DELETE /api/v1/stickers/{id}",
+		withUUIDPath(api.requirePerm(perm.ManageStickers, api.deleteSticker)))
+
 	mux.HandleFunc("GET /api/v1/gifs/config", api.requireAuth(api.gifConfig))
 	mux.HandleFunc("GET /api/v1/gifs/search", api.requireAuth(api.searchGifs))
 	mux.HandleFunc("POST /api/v1/channels/{id}/gifs",

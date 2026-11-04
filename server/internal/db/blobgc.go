@@ -25,7 +25,8 @@ type BlobRemover interface {
 	Remove(hash []byte) error
 }
 
-// StartBlobGC removes abandoned uploads and unreferenced blobs.
+// StartBlobGC removes abandoned uploads and unreferenced blobs (neither
+// an attachment nor a sticker uses them).
 //
 // Attachments inherit their channel's retention through the message that
 // carries them: when retention deletes a message, the attachment rows
@@ -76,6 +77,9 @@ func collectBlobs(ctx context.Context, pool *pgxpool.Pool, store BlobRemover) {
 		`DELETE FROM blobs
 		  WHERE NOT EXISTS (
 		        SELECT 1 FROM attachments WHERE attachments.blob_hash = blobs.hash
+		  )
+		    AND NOT EXISTS (
+		        SELECT 1 FROM stickers WHERE stickers.blob_hash = blobs.hash
 		  )
 		  RETURNING hash`)
 	if err != nil {

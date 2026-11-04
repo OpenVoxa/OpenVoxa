@@ -742,6 +742,30 @@ button.dot-host { position: relative; }
 /* emoji picker and :code: autocomplete (emoji.tsx) */
 .emoji-btn { font-size: 18px; padding: 6px 10px; line-height: 1.2; }
 .emoji-btn.on { background: var(--sidebar-active); }
+
+/* Stickers (stickers.tsx). Images keep their own proportions inside a
+   square box; small ones are not blown up. */
+.sticker-btn { font-size: 18px; padding: 6px 10px; line-height: 1.2; }
+.sticker-btn.on { background: var(--sidebar-active); }
+.sticker { margin-top: 2px; }
+.sticker-img { display: block; width: auto; height: auto; object-fit: contain; }
+.sticker-blank { display: inline-block; border-radius: 6px; background: var(--input); }
+.sticker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 4px;
+  max-height: 320px; overflow-y: auto; min-height: 60px; }
+.sticker-grid.busy { opacity: .5; }
+.sticker-choice { padding: 4px; height: 84px; display: flex; align-items: center; justify-content: center;
+  background: var(--input); border: 2px solid transparent; border-radius: 6px; }
+.sticker-choice:hover, .sticker-choice:focus-visible { border-color: var(--accent); }
+.sticker-list { list-style: none; padding: 0; margin: 12px 0; display: flex; flex-direction: column; gap: 8px; }
+.sticker-list li { display: flex; align-items: center; gap: 12px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
+.sticker-list li > .sticker-img, .sticker-list li > .sticker-blank { flex: 0 0 auto; }
+.sticker-meta { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.sticker-meta > * { overflow-wrap: anywhere; }
+.edit-sticker { gap: 6px; }
+.add-sticker, .sticker-limits { margin: 12px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; }
+.add-sticker h3, .sticker-limits h3 { margin: 0 0 4px; font-size: 15px; }
+.add-sticker-row { display: flex; gap: 12px; align-items: flex-start; margin: 8px 0; }
+.add-sticker-fields { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
 .emoji-picker { position: absolute; right: 16px; bottom: calc(100% + 4px); width: min(360px, calc(100% - 32px));
   background: var(--sidebar); border: 1px solid var(--line); border-radius: var(--radius);
   box-shadow: 0 6px 24px #0008; padding: 8px; display: flex; flex-direction: column; gap: 6px; z-index: 5; }

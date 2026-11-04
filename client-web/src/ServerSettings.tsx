@@ -28,6 +28,8 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import type { ApiCall } from "@core/identity";
 import { Modal } from "./ChannelDialogs";
+import { StickerMessage, StickersTab } from "./stickers";
+import { stickerIdOf } from "@core/stickers";
 
 /** What the dialog needs to know about the signed-in account. */
 export interface Me {
@@ -67,6 +69,7 @@ const SWITCHES: { id: string; label: string; help: string }[] = [
   { id: "view_reports", label: "View reports", help: "Read and resolve reported messages." },
   { id: "ban", label: "Ban", help: "Ban and unban people below their rank." },
   { id: "force_ptt", label: "Force push-to-talk", help: "Require push-to-talk in a voice channel." },
+  { id: "manage_stickers", label: "Manage stickers", help: "Add, rename and remove the server's stickers." },
 ];
 const switchLabel = (id: string) => SWITCHES.find((s) => s.id === id)?.label ?? id;
 
@@ -120,7 +123,7 @@ function useUserList(call: ApiCall, reload: number) {
 
 const when = (at: string) => new Date(at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
-export type ServerTab = "groups" | "members" | "reports" | "bans" | "log";
+export type ServerTab = "groups" | "members" | "reports" | "bans" | "log" | "stickers";
 
 /**
  * reload changes whenever the server says permissions moved, so the lists
@@ -140,6 +143,8 @@ export function ServerSettingsDialog({ call, me, reload, openReports, onClose }:
   if (has("view_reports")) tabs.push(["reports", openReports ? `Reports (${openReports})` : "Reports"]);
   if (has("ban")) tabs.push(["bans", "Bans"]);
   if (has("ban") || has("view_reports") || has("delete_messages")) tabs.push(["log", "Log"]);
+  // Every staff member can see the set; managing it needs the switch.
+  tabs.push(["stickers", "Stickers"]);
   return (
     <Modal title="Server settings" onClose={onClose} wide>
       <div className="settings-tabs" role="tablist">
@@ -154,6 +159,9 @@ export function ServerSettingsDialog({ call, me, reload, openReports, onClose }:
         {tab === "reports" && <ReportsTab call={call} me={me} reload={reload} />}
         {tab === "bans" && <BansTab call={call} reload={reload} />}
         {tab === "log" && <LogTab call={call} me={me} reload={reload} />}
+        {tab === "stickers" && (
+          <StickersTab call={call} canManage={has("manage_stickers")} isAdmin={has("administrator")} />
+        )}
         <div className="modal-actions">
           <button className="primary" onClick={onClose}>Done</button>
         </div>
@@ -869,6 +877,7 @@ function ReportsTab({ call, me, reload }: { call: ApiCall; me: Me; reload: numbe
                 </div>
                 <blockquote className="quoted small">{r.content_deleted
                   ? <em className="muted">(content deleted with the account)</em>
+                  : stickerIdOf(r.claimed_body) ? <StickerMessage id={stickerIdOf(r.claimed_body)!} />
                   : r.claimed_body || <em className="muted">(no text)</em>}</blockquote>
                 {r.reason
                   ? <p className="small report-reason"><span className="muted">Reason:</span> {r.reason}</p>
@@ -1061,6 +1070,10 @@ function describe(e: LogEntry): { text: string; note?: string } {
       };
     case "delete_user":
       return { text: `deleted the account ${e.detail || "(unknown)"}` };
+    case "add_sticker":
+      return { text: `added the sticker :${e.detail}:` };
+    case "delete_sticker":
+      return { text: `removed the sticker :${e.detail}:` };
     default:
       return { text: e.action.replace(/_/g, " "), note: e.detail || undefined };
   }

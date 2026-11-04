@@ -21,6 +21,8 @@ import { GifPicker, useGifsEnabled } from "./gifs";
 import { EmojiPicker, useEmojiShortcodes } from "./emoji";
 import { PREVIEWS_ENCRYPTED, useToggle } from "./settings";
 import { PlainAttachment, SealedAttachment, UploadTray, useUploads } from "./attachments";
+import { StickerMessage, StickerPicker, useStickers } from "./stickers";
+import { stickerIdOf, stickerToken } from "@core/stickers";
 
 function useSnapshot(view: ChannelView): ChannelSnapshot {
   const subscribe = useCallback((cb: () => void) => view.on(cb), [view]);
@@ -31,12 +33,14 @@ function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export function ChannelPane({ view, call, userId, username, canDeleteAny }: {
+export function ChannelPane({ view, call, userId, username, canDeleteAny, canManageStickers }: {
   view: ChannelView;
   call: ApiCall;
   userId: string;
   username: string;
   canDeleteAny: boolean;
+  /** Holds manage_stickers: the empty sticker picker says where to add some. */
+  canManageStickers: boolean;
 }) {
   const snap = useSnapshot(view);
   const previewsEncrypted = useToggle(PREVIEWS_ENCRYPTED);
@@ -45,7 +49,8 @@ export function ChannelPane({ view, call, userId, username, canDeleteAny }: {
   const c = snap.channel;
   const previews = !c.encrypted || previewsEncrypted;
 
-  const lastOwn = [...snap.messages].reverse().find((m) => m.own && !m.deleted && !m.pending && !m.unreadable);
+  const lastOwn = [...snap.messages].reverse().find((m) =>
+    m.own && !m.deleted && !m.pending && !m.unreadable && !stickerIdOf(m.text));
   const uploads = useUploads(view, setError);
   const canAttach = composeBlocker(snap) === null;
 
@@ -124,6 +129,7 @@ export function ChannelPane({ view, call, userId, username, canDeleteAny }: {
         snap={snap}
         call={call}
         uploads={uploads}
+        canManageStickers={canManageStickers}
         onSend={async (text, attachments) => {
           setError(null);
           try {
@@ -293,7 +299,7 @@ function MessageList({ view, snap, call, previews, userId, username, canDeleteAn
         username={username}
         members={snap.members}
         canDelete={!m.pending && !m.deleted && (m.own || canDeleteAny)}
-        canEdit={snap.canPost && m.own && !m.pending && !m.deleted && !m.unreadable}
+        canEdit={snap.canPost && m.own && !m.pending && !m.deleted && !m.unreadable && !stickerIdOf(m.text)}
         canReport={!m.own && !!m.authorId && !m.pending && !m.deleted && !m.unreadable}
         canReact={snap.canPost && !m.pending && !m.deleted && !m.unreadable}
         onReact={(emoji, on) => void react(m, emoji, on)}
@@ -564,12 +570,14 @@ function Message({ m, call, encrypted, previews, compact, userId, username, memb
     m.deleted || m.unreadable ? "faint" : "",
     m.mentionsMe && !m.deleted && !m.unreadable ? "mentions-me" : ""].filter(Boolean).join(" ");
 
+  const sticker = !m.deleted && !m.unreadable ? stickerIdOf(m.text) : null;
   let body: ReactNode;
   if (m.deleted) body = <em>Message deleted.</em>;
   else if (m.unreadable) body = <em>{UNREADABLE[m.unreadable]}</em>;
   else if (editing) body = <EditBox initial={m.text} members={members} onSave={onSaveEdit} onCancel={onCancelEdit} />;
+  else if (sticker) body = <StickerMessage id={sticker} />;
   else body = m.text ? <Markdown text={m.text} mentions={m.mentions} me={userId} /> : null;
-  const link = !m.deleted && !m.unreadable && !m.pending && !editing ? firstLink(m.text) : null;
+  const link = !m.deleted && !m.unreadable && !m.pending && !editing && !sticker ? firstLink(m.text) : null;
 
   return (
     <article className={classes} data-id={m.id} aria-label={`${name} at ${formatTime(m.createdAt)}`}>
@@ -708,10 +716,11 @@ function composeBlocker(snap: ChannelSnapshot): string | null {
     : null;
 }
 
-function Composer({ snap, call, uploads, onSend, onEditLast }: {
+function Composer({ snap, call, uploads, canManageStickers, onSend, onEditLast }: {
   snap: ChannelSnapshot;
   call: ApiCall;
   uploads: ReturnType<typeof useUploads>;
+  canManageStickers: boolean;
   onSend: (text: string, attachments?: (AttachmentInfo | Upload)[]) => Promise<boolean>;
   onEditLast: () => void;
 }) {
@@ -721,6 +730,11 @@ function Composer({ snap, call, uploads, onSend, onEditLast }: {
   const closeEmoji = useCallback(() => setEmoji(false), []);
   const gifsEnabled = useGifsEnabled(call);
   const closeGifs = useCallback(() => setGifs(false), []);
+  const [stickers, setStickers] = useState(false);
+  const closeStickers = useCallback(() => setStickers(false), []);
+  // No button when there is nothing to pick and no way to add any.
+  const stickerList = useStickers();
+  const showStickers = canManageStickers || !stickerList || stickerList.stickers.length > 0;
   const ref = useRef<HTMLTextAreaElement>(null);
   const picker = useRef<HTMLInputElement>(null);
   const reason = composeBlocker(snap);
@@ -785,6 +799,14 @@ function Composer({ snap, call, uploads, onSend, onEditLast }: {
             ref.current?.focus();
           }} />
       )}
+      {stickers && !reason && (
+        <StickerPicker canManage={canManageStickers} onClose={closeStickers}
+          onPick={async (s) => {
+            // On its own straight away, like a GIF; typed text stays.
+            if (!(await onSend(stickerToken(s.id)))) throw new Error("Couldn't send the sticker.");
+            ref.current?.focus();
+          }} />
+      )}
       <input ref={picker} type="file" multiple hidden onChange={(e) => {
         if (e.target.files) uploads.add(e.target.files);
         e.target.value = ""; // so picking the same file again still fires
@@ -816,13 +838,24 @@ function Composer({ snap, call, uploads, onSend, onEditLast }: {
           onMouseDown={(e) => e.stopPropagation()}
           onClick={() => {
             setEmoji(false);
+            setStickers(false);
             setGifs((g) => !g);
           }} title="Send a GIF" aria-expanded={gifs}>GIF</button>
+      )}
+      {showStickers && (
+        <button className={`secondary sticker-btn${stickers ? " on" : ""}`} disabled={!!reason}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={() => {
+            setEmoji(false);
+            setGifs(false);
+            setStickers((v) => !v);
+          }} title="Send a sticker" aria-label="Stickers" aria-expanded={stickers}>🏷️</button>
       )}
       <button className={`secondary emoji-btn${emoji ? " on" : ""}`} disabled={!!reason}
         onMouseDown={(e) => e.stopPropagation()}
         onClick={() => {
           setGifs(false);
+          setStickers(false);
           setEmoji((v) => !v);
         }} title="Emoji" aria-label="Emoji" aria-expanded={emoji}>😊</button>
       <button className="primary" onClick={() => void send()} disabled={!canSend}

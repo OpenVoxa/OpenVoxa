@@ -232,6 +232,8 @@ export type ChatEvent =
   | { type: "mentioned"; channelId: string; messageId: string; authorId: string; username: string; open: boolean }
   /** The open report queue changed; sent only to people who can read it. */
   | { type: "reports_changed" }
+  /** The server's sticker set or its limits changed: refetch the list. */
+  | { type: "stickers_changed" }
   /** Who is in each voice call (channels you can see, non-empty only). */
   | { type: "voice"; presence: VoicePresence }
   | { type: "error"; message: string };
@@ -286,7 +288,7 @@ function compareMessages(a: ChatMessage, b: ChatMessage): number {
 const GLOBAL_EVENTS = new Set([
   "user_purged", "access_changed", "channel_changed", "channel_deleted",
   "perms_changed", "channel_activity", "voice_changed", "reports_changed",
-  "mention",
+  "mention", "stickers_changed",
 ]);
 
 const EVENT_RETRY_MS = 5000;
@@ -695,6 +697,9 @@ export class Chat {
         break;
       case "reports_changed":
         this.#emit({ type: "reports_changed" });
+        break;
+      case "stickers_changed":
+        this.#emit({ type: "stickers_changed" });
         break;
       case "channel_changed":
       case "channel_deleted":
