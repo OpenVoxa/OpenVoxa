@@ -1907,8 +1907,8 @@ to pick their own colours later, so every colour stays a variable.
       metadata the server sees".
       Not built: arrow keys inside the grid, bigger emoji-only messages.
 - [x] Custom stickers (Ryan, 2026-11-03): images uploaded to the server
-      and sent like a GIF. DONE 2026-11-04, verified by Ryan (ST1-ST5,
-      ST7; ST6 only as an administrator). Built as: `httpapi/stickers.go`
+      and sent like a GIF. DONE 2026-11-04, verified by Ryan (ST1-ST7;
+      ST6 as a plain Member, test0user). Built as: `httpapi/stickers.go`
       + `stickerimage.go` (type and size read from the file's header
       bytes, no image library), migration 0024 (table, limits in
       server_settings, manage_stickers added to Moderator), blob GC also
