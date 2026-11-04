@@ -296,5 +296,10 @@ func (a *API) setChannelRetention(w http.ResponseWriter, r *http.Request) {
 	// reach them promptly or the displayed promise goes stale.
 	a.NotifyChannelChanged(r.PathValue("id"))
 
+	// Apply a shorter policy now, not at the sweep's next scheduled pass.
+	if a.retentionWake != nil {
+		a.retentionWake()
+	}
+
 	w.WriteHeader(http.StatusNoContent)
 }

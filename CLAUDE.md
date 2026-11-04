@@ -154,13 +154,11 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 
 ## Current state (rewrite every session)
 
-_2026-11-04._ Step 13 (the real web client, M1-M5) is done, and so is
-everything since: mentions, appearance, crypto-shredding, emoji and
-reactions, custom stickers, sign out and erase, username colours, and
-the **screen share limit** (last session: server-wide limit, none by
-default, Server settings > Voice and Video, enforced every 5 s via
-LiveKit; server upload speed test via Cloudflare). Details and test IDs:
-decisions.md Build order, Feature decisions, Open items.
+_2026-11-04._ Step 13 (web client M1-M5) and everything since are done;
+latest: the **local archive retention sweep** (an open app drops copies
+of messages deleted or expired in encrypted channels it isn't viewing;
+a retention change wakes the server's sweep at once). Details and test
+IDs (AR1-AR6): decisions.md Open items and Implementation notes.
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts: tuckilufigus (Ryan), staff, openvoxaadmin,
@@ -174,7 +172,9 @@ decisions.md Build order, Feature decisions, Open items.
 - Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI).
 - Known gaps: K1 recovery flows 2-5 deferred; no @everyone/@group;
   force-PTT is advisory only; no per-group share limits.
+- Pre-existing `gofmt` drift in httpapi.go, devices.go, modlog.go,
+  gif.go (import order, alignment); harmless, fix in its own commit.
 - **Next: Ryan to choose.** Candidates: a server browser (decisions.md
-  Open items); local archive retention sweep; real force-PTT
-  (`setPublishSources` in livekitapi.go is ready); a per-user upload
-  test in the share dialog; zxcvbn (discuss first); Electron shell.
+  Open items); real force-PTT (`setPublishSources` in livekitapi.go is
+  ready); a per-user upload test in the share dialog; zxcvbn (discuss
+  first); Electron shell.

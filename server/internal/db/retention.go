@@ -33,6 +33,10 @@ const (
 	retentionBatch = 5000
 )
 
+// PurgeNotifier is called once per channel per sweep that actually removed
+// something, with the cutoff that was applied.
+type PurgeNotifier func(channelID string, before time.Time)
+
 // StartRetentionSweep enforces each channel's retention policy until ctx is
 // cancelled.
 //
@@ -41,11 +45,14 @@ const (
 // this does. Expired messages are removed outright rather than tombstoned:
 // in a channel that keeps thirty days, nobody needs to know a message
 // existed on day thirty-one.
-// PurgeNotifier is called once per channel per sweep that actually removed
-// something, with the cutoff that was applied.
-type PurgeNotifier func(channelID string, before time.Time)
-
-func StartRetentionSweep(ctx context.Context, pool *pgxpool.Pool, notify PurgeNotifier) {
+//
+// The returned wake function runs a pass straight away. Call it when a
+// channel's retention changes: the wait before the next pass was chosen
+// from the old policies, so a channel moved from forever to two minutes
+// would otherwise keep its old messages for up to fifteen more minutes.
+// It never blocks, and calls made while a pass is due collapse into one.
+func StartRetentionSweep(ctx context.Context, pool *pgxpool.Pool, notify PurgeNotifier) (wake func()) {
+	woken := make(chan struct{}, 1)
 	go func() {
 		// A timer rather than a ticker, because the interval is
 		// recalculated after every pass: an administrator setting a short
@@ -59,9 +66,16 @@ func StartRetentionSweep(ctx context.Context, pool *pgxpool.Pool, notify PurgeNo
 			case <-ctx.Done():
 				return
 			case <-time.After(interval):
+			case <-woken:
 			}
 		}
 	}()
+	return func() {
+		select {
+		case woken <- struct{}{}:
+		default:
+		}
+	}
 }
 
 // nextInterval derives the sweep cadence from the shortest retention
