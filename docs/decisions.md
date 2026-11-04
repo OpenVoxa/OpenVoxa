@@ -1901,29 +1901,39 @@ to pick their own colours later, so every colour stays a variable.
 
 ## Open items
 
-- [ ] Username colours by group (Ryan, 2026-11-04). A name is drawn in
-      the colour of the account's highest group (highest `position`)
-      that has one. Defaults: Administrator orange (the #D96932 accent,
-      kept for now; change it if names look like buttons), Moderator
-      magenta, Member cyan, Everyone (guests, accounts in no other
-      group) none, i.e. the normal text colour (white in the default
-      palette). Each group's colour is editable by whoever can manage
-      groups (Server settings > Groups), so custom groups get colours
-      too; a server-wide on/off switch. Server data, so everyone on the
-      server sees the same colours (unlike Appearance, which is per
-      browser). Likely a nullable `colour` column on `perm_groups` sent
-      with the group list. Decided with Ryan, 2026-11-04:
+- [x] Username colours by group (Ryan, 2026-11-04). DONE 2026-11-04,
+      verified by Ryan (NC1-NC7, ND1-ND3). A name is drawn in the
+      colour of the account's highest group (highest `position`) that
+      has one. Defaults (migration 0025, matched by name): Administrator
+      #d96932 (the accent, kept for now; change it if names look like
+      buttons), Moderator #ff00ff, Member #00ffff, Everyone none (plain
+      text colour, white). Server data, the same for everyone.
+      Built as: `perm_groups.colour` (nullable, lowercase #rrggbb) and
+      `server_settings.name_colours` (on by default), migration 0025;
+      `httpapi/namecolours.go`: `GET /name-colours` (every live account
+      -> colour or null, all null when switched off), `PUT /name-colours`
+      (the switch) and `POST /name-colours/defaults` (Administrator,
+      Moderator, Member and Everyone back to the defaults; other groups
+      untouched; the switch untouched), both manage_groups. A group's
+      colour is `PATCH /groups/{id}` with `colour` ("" clears); a
+      colour-only edit is allowed on a group at your own rank too (so an
+      administrator can recolour Administrator) and sends only
+      `names_changed`, not an access change. Clients refetch on
+      `names_changed` and `perms_changed` (membership), and when a name
+      appears that the map lacks (a new account; at most every 30 s).
+      Decided with Ryan:
       - Coloured everywhere a name appears: message authors, member
-        list, @mention chips, voice participants.
-      - Minimum contrast check against the background when a colour is
-        set. Measured on #333333: orange 3.6:1, magenta (#FF00FF)
-        4.0:1, cyan 10.1:1, white 12.6:1. Proposed bar: 3:1 (the WCAG
-        level for large or bold text), with names drawn bold. The
-        stricter 4.5:1 would reject the default orange and magenta.
-        Confirm with Ryan when building.
-      - On by default; each user can turn them off for themselves in
-        Settings > Appearance (per browser), which shows plain text
-        colour instead.
+        list (Server settings > Members), @mention chips and the @
+        suggestion list, voice rosters. Coloured names are bold.
+      - Minimum contrast 3:1 against the background (#333333), the WCAG
+        level for bold text; checked in the picker and by the server.
+        Measured: orange 3.6:1, magenta 4.0:1, cyan 10.1:1, white
+        12.6:1 (4.5:1 would refuse the default orange and magenta).
+      - On by default; each user can hide them in Settings > Appearance
+        ("Show name colours", per browser).
+      - Server settings > Groups: the server-wide switch, a "Default
+        colours" button, and a Colour button per group (picker, hex
+        box, live preview, contrast readout, "No colour").
 - [x] Emoji (Ryan, 2026-11-03; done 2026-11-04, `client-web/src/emoji.tsx`).
       A picker in the composer (categories, search, recently used, skin
       tone, all per browser) plus `:name:` shortcodes (GitHub's set):
