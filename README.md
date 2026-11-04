@@ -56,6 +56,7 @@ If this project ever has a monetization strategy, something has gone wrong. Plea
 - Voice: click a channel to join, see who's in every call, speaking indicators, mute, deafen, push-to-talk with a key of your choice, per-person volume, microphone and speaker pickers
 - Screen sharing with quality presets (up to 4K or 1440p60), a choice between sharp text and smooth motion, optional audio, and a stage view with fullscreen and live stats
 - Channel management for admins: create text and voice channels, choose who can view and post, retention, history sharing, forced push-to-talk, delete
+- Notification sounds for joins, leaves, screen shares and mentions: pick from a built-in library, use your own files, set the volume or turn each one off (saved per browser)
 
 **The server**
 
@@ -63,7 +64,7 @@ If this project ever has a monetization strategy, something has gone wrong. Plea
 - **Permission groups**: admin-defined groups with permission switches and a rank order; each channel lists which groups may view and which may post. Starts as Administrator, Moderator, Member and Everyone. There are always at least two administrators, and host commands to recover if not
 - **Voice** via a self-hosted LiveKit SFU, tested on desktop and iOS Safari. The server never touches media; it only hands out tokens
 - **Rate limiting** on authentication, per IP and per account
-- **Rich text** (in the debug page for now): markdown, link previews with SSRF-hardened unfurling, file attachments with inline image, audio and video playback, and GIF search that never puts your users in front of a third party
+- **Rich text**: markdown, link previews with SSRF-hardened unfurling, file attachments with inline image, audio and video playback, and GIF search that never puts your users in front of a third party
 - **Moderation**: message removal, reports verified against the server's own copy (for unencrypted channels), and bans that cut off live connections and calls immediately, and server mutes (for a while or until lifted) that take someone's microphone away in every voice channel
 - **Retention and deletion** that actually work: channels display their policy and a sweep enforces it, account deletion destroys content (including in the server's backups, by destroying the account's key), and both propagate live to connected clients
 - **TLS** with three documented deployment paths
@@ -204,6 +205,8 @@ If you are a cryptographer or a security researcher and you want to tear this ap
 [GNU Affero General Public License v3.0 or later](LICENSE).
 
 AGPL specifically, not MIT. If you run a modified version of OpenVoxa as a network service, you have to publish your changes. That's the whole point. A project built to resist enshittification shouldn't ship a license that makes enshittification trivially easy.
+
+The built-in sounds are [Interface Sounds](https://kenney.nl/assets/interface-sounds) by Kenney, released as CC0 (public domain), not AGPL; see `client-web/public/sounds/`.
 
 ---
 
