@@ -234,7 +234,7 @@ backups". Go unit tests:
 from `server/`. Key-folder backup cron is set up on Docker
 (`deploy/scripts/backup-keys.sh`, daily 03:30 -> `~/openvoxa-key-backups`,
 7-day prune) and the KEK is enabled (Ryan holds the only copies).
-**Next: Ryan to choose** (list at the end of this section).
+**Next: bitrate ceiling** (see the "Next item" bullet at the end).
 Also this session: Reports tab (Delete now confirmed; Delete or Ban from
 a report marks it Actioned; Dismiss is "No action needed", tab "No
 action", status value still `dismissed`) and a "Jump to latest" button
@@ -279,7 +279,17 @@ period in `server_settings`, migration 0017).
 - Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI;
   now also destroys the key).
 - @mentions and Appearance: done and verified (M1-M6, A1).
-- Next (Ryan to choose): a server browser (decisions.md Open items);
-  local archive retention sweep; real force-PTT via LiveKit
-  `MutePublishedTrack`; bitrate ceiling; zxcvbn (discuss first);
-  Electron shell.
+- **Next item: bitrate ceiling** (Ryan chose it, 2026-11-04; decisions.md
+  Open items). Problem: share presets go up to 4K/20 Mbps
+  (`SHARE_PRESETS`, `voice.ts`), picked client-side, and the SFU sends
+  one copy per viewer, so one share can fill the home uplink. Sketch
+  discussed with Ryan: (1) admin limit in server_settings, maybe per
+  group; (2) client hides presets above it; (3) real enforcement from
+  Go via LiveKit's server API (watch published tracks, mute/stop ones
+  over the limit); E2EE doesn't block this (dimensions and bitrate are
+  visible). Verify by experiment what LiveKit exposes before designing
+  step 3. It shares the LiveKit-API plumbing with real force-PTT, so
+  build that plumbing reusably. Discuss the design with Ryan first.
+- After that (Ryan to choose): a server browser (decisions.md Open
+  items); local archive retention sweep; real force-PTT via LiveKit
+  `MutePublishedTrack`; zxcvbn (discuss first); Electron shell.
