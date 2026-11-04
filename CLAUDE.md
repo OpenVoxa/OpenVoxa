@@ -186,7 +186,7 @@ No `tls` profile = no Caddy (own proxy + `OPENVOXA_TRUST_PROXY=true`).
 ## Current state (update every session)
 
 _Last updated: 2026-11-04. **Custom stickers DONE** (verified by Ryan,
-ST1-ST5 + ST7; decisions.md Open items "Custom stickers"): limits 1 MB,
+ST1-ST7, Member check with testuser; decisions.md Open items "Custom stickers"): limits 1 MB,
 512 x 512 px, 100 per server (admin-editable, Server settings >
 Stickers), `manage_stickers` switch (Moderator by default), migration
 0024, `httpapi/stickers.go`, client-core `stickers.ts` (message token
@@ -265,9 +265,7 @@ period in `server_settings`, migration 0017).
 - Appearance tab: accent, unread dot, mention badge colours, per browser.
   More customisation goes in `COLOURS` in `appearance.ts`.
 - Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI;
-  now also destroys the key), ST6 (stickers: a plain Member
-  can send stickers and has no way to manage them; only tried as an
-  administrator so far).
+  now also destroys the key).
 - @mentions and Appearance: done and verified (M1-M6, A1).
 - Next (Ryan to choose): `:name:` sticker shortcodes (small), later
   a server browser (decisions.md Open items); "shared computer: erase everything" on sign-out;
