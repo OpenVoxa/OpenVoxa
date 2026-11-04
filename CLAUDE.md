@@ -52,7 +52,7 @@ server/            Go server (module root here; go.mod says go 1.26)
   Dockerfile          multi-stage: client-core -> client-web -> Go -> distroless
   internal/httpapi/   HTTP + WS; debugui/chat.html = old debug client
   internal/db/        Postgres, migrations/00NN_*.sql (embedded, ordered;
-                      latest 0025)
+                      latest 0027)
   internal/{auth,blob,config,gif,hub,password,perm,ratelimit,unfurl}
 client-core/       TypeScript protocol + crypto, no UI
   src/mls/provider.ts  MlsProvider interface (swappable)
@@ -185,7 +185,19 @@ No `tls` profile = no Caddy (own proxy + `OPENVOXA_TRUST_PROXY=true`).
 
 ## Current state (update every session)
 
-_Last updated: 2026-11-04. **Username colours by group DONE** (NC1-NC7,
+_Last updated: 2026-11-04. **Screen share limit DONE** (SL1-SL5,
+UT1-UT4, W1-W3 verified; decisions.md Feature decisions "Screen share
+quality limit"): one server-wide limit, no limit by default, Server
+settings > Voice and Video (admin only, `shareLimit.tsx`); server
+watcher every 5 s takes screen sharing away from over-limit shares
+(`sharelimit.go`); upload speed test of the server via Cloudflare
+(`uploadtest.go`, migrations 0026-0027). LiveKit admin calls are in
+`httpapi/livekitapi.go` (reuse for force-PTT). Both settings dialogs are
+now one fixed size (`Modal fixed`; `.modal-body` scrolls, `.modal-foot`
+holds Done). Button styles: `save` (green, grey when disabled),
+`outline` (accent outline). Ryan is particular about matching sizes,
+spacing and capitalisation in the UI: check those before showing him.
+Earlier 2026-11-04: **Username colours by group DONE** (NC1-NC7,
 ND1-ND3 verified; decisions.md Open items): `perm_groups.colour` +
 `server_settings.name_colours` (migration 0025), `httpapi/namecolours.go`,
 client-web `names.tsx` (`useNameColour`, `ColouredName`), Groups tab
@@ -234,7 +246,7 @@ backups". Go unit tests:
 from `server/`. Key-folder backup cron is set up on Docker
 (`deploy/scripts/backup-keys.sh`, daily 03:30 -> `~/openvoxa-key-backups`,
 7-day prune) and the KEK is enabled (Ryan holds the only copies).
-**Next: bitrate ceiling** (see the "Next item" bullet at the end).
+**Next: Ryan to choose** (see the end).
 Also this session: Reports tab (Delete now confirmed; Delete or Ban from
 a report marks it Actioned; Dismiss is "No action needed", tab "No
 action", status value still `dismissed`) and a "Jump to latest" button
@@ -279,17 +291,8 @@ period in `server_settings`, migration 0017).
 - Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI;
   now also destroys the key).
 - @mentions and Appearance: done and verified (M1-M6, A1).
-- **Next item: bitrate ceiling** (Ryan chose it, 2026-11-04; decisions.md
-  Open items). Problem: share presets go up to 4K/20 Mbps
-  (`SHARE_PRESETS`, `voice.ts`), picked client-side, and the SFU sends
-  one copy per viewer, so one share can fill the home uplink. Sketch
-  discussed with Ryan: (1) admin limit in server_settings, maybe per
-  group; (2) client hides presets above it; (3) real enforcement from
-  Go via LiveKit's server API (watch published tracks, mute/stop ones
-  over the limit); E2EE doesn't block this (dimensions and bitrate are
-  visible). Verify by experiment what LiveKit exposes before designing
-  step 3. It shares the LiveKit-API plumbing with real force-PTT, so
-  build that plumbing reusably. Discuss the design with Ryan first.
-- After that (Ryan to choose): a server browser (decisions.md Open
-  items); local archive retention sweep; real force-PTT via LiveKit
-  `MutePublishedTrack`; zxcvbn (discuss first); Electron shell.
+- **Next item: Ryan to choose** at the start of the next session: a
+  server browser (decisions.md Open items); local archive retention
+  sweep; real force-PTT (plumbing ready in `livekitapi.go`); a per-user
+  upload test in the share dialog; zxcvbn (discuss first); Electron
+  shell.
