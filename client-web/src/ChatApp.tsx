@@ -28,6 +28,7 @@ import { playTone, useVoiceTones } from "./tones";
 import { getToggle, MENTION_NOTIFY } from "./settings";
 import { SettingsDialog, type AccountActions, type SettingsTab } from "./SettingsDialog";
 import { ServerSettingsDialog } from "./ServerSettings";
+import { configureStickers, refreshStickers } from "./stickers";
 
 const LAST_CHANNEL = (userId: string) => `lastChannel.${userId}`;
 
@@ -87,11 +88,24 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [session.token]);
 
+  // Sticker images need the token (stickers.tsx).
+  useEffect(() => configureStickers(call, session.token), [call, session.token]);
+
   // Start the crypto session (this tab takes over the account's device)
   // and the chat on top of it.
   useEffect(() => {
     let live = true;
     let started: Chat | null = null;
+    const refreshMe = () => {
+      (call("/api/v1/me") as Promise<{ permissions: string[]; rank: number }>)
+        .then((me) => {
+          if (!live) return;
+          setPerms(me.permissions ?? []);
+          setRank(me.rank ?? 0);
+          setPermsTick((t) => t + 1);
+        })
+        .catch(() => {});
+    };
     cryptoSession(session.user_id, call)
       .then(async (crypto) => {
         if (!live) return;
@@ -136,17 +150,13 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           }
           else if (e.type === "voice") setPresence(e.presence);
           else if (e.type === "reports_changed") setReportsTick((t) => t + 1);
-          else if (e.type === "me_changed") {
-            (call("/api/v1/me") as Promise<{ permissions: string[]; rank: number }>)
-              .then((me) => {
-                if (!live) return;
-                setPerms(me.permissions ?? []);
-                setRank(me.rank ?? 0);
-                setPermsTick((t) => t + 1);
-              })
-              .catch(() => {});
-          }
+          else if (e.type === "stickers_changed") void refreshStickers();
+          else if (e.type === "me_changed") refreshMe();
         });
+        // The sign-in's list may be stale: a server update can add a
+        // switch (an administrator holds every one), or groups may have
+        // changed while this tab was closed.
+        refreshMe();
         await c.start();
         if (!live) {
           c.close();
@@ -401,7 +411,8 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           <Stage voice={voiceClient} screens={screens} focus={stage.focus}
             setFocus={(focus) => setStage({ focus })} onBack={() => setStage(null)} />
         ) : view ? (
-          <ChannelPane key={view.channel.id} view={view} call={call} userId={session.user_id} username={session.username} canDeleteAny={canDeleteAny} />
+          <ChannelPane key={view.channel.id} view={view} call={call} userId={session.user_id} username={session.username} canDeleteAny={canDeleteAny}
+            canManageStickers={can("manage_stickers")} />
         ) : (
           <div className="pane-empty muted">{text.length ? "Opening…" : "Nothing to show yet."}</div>
         )}
