@@ -194,6 +194,13 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 	mux.HandleFunc("DELETE /api/v1/users/{id}/groups/{group}",
 		withUUIDPath(api.requirePerm(perm.ManageGroups, api.removeUserFromGroup)))
 
+	// Username colours by group (namecolours.go, migration 0025).
+	mux.HandleFunc("GET /api/v1/name-colours", api.requireAuth(api.listNameColours))
+	mux.HandleFunc("PUT /api/v1/name-colours",
+		api.requirePerm(perm.ManageGroups, api.putNameColours))
+	mux.HandleFunc("POST /api/v1/name-colours/defaults",
+		api.requirePerm(perm.ManageGroups, api.resetNameColours))
+
 	mux.HandleFunc("DELETE /api/v1/me", api.requireAuth(api.deleteOwnAccount))
 	mux.HandleFunc("PUT /api/v1/me/password", api.requireAuth(api.changeOwnPassword))
 	// This session's half of unlocking local storage on refresh

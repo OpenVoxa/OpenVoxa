@@ -29,6 +29,7 @@ import { getToggle, MENTION_NOTIFY } from "./settings";
 import { SettingsDialog, type AccountActions, type SettingsTab } from "./SettingsDialog";
 import { ServerSettingsDialog } from "./ServerSettings";
 import { configureStickers, refreshStickers } from "./stickers";
+import { configureNames, refreshNames } from "./names";
 
 const LAST_CHANNEL = (userId: string) => `lastChannel.${userId}`;
 
@@ -91,6 +92,8 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
 
   // Sticker images need the token (stickers.tsx).
   useEffect(() => configureStickers(call, session.token), [call, session.token]);
+  // Username colours by group (names.tsx).
+  useEffect(() => configureNames(call), [call]);
 
   // Start the crypto session (this tab takes over the account's device)
   // and the chat on top of it.
@@ -152,6 +155,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           else if (e.type === "voice") setPresence(e.presence);
           else if (e.type === "reports_changed") setReportsTick((t) => t + 1);
           else if (e.type === "stickers_changed") void refreshStickers();
+          else if (e.type === "names_changed") refreshNames();
           else if (e.type === "me_changed") refreshMe();
         });
         // The sign-in's list may be stale: a server update can add a

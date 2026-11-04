@@ -15,6 +15,7 @@ import type {
 import { Modal } from "./ChannelDialogs";
 import { localStore } from "./core";
 import { setToggle, useToggle, VOICE_TONES } from "./settings";
+import { ColouredName } from "./names";
 
 // The presets are duplicated from client-core's SHARE_PRESETS so this
 // file needs no runtime import of the (lazy) voice module.
@@ -174,7 +175,7 @@ export function VoiceRoster({ live, others, onWatch, onPerson }: {
             <button className="who" disabled={p.isLocal}
               title={p.isLocal ? undefined : "Volume (or right-click)"}
               onClick={(e) => !p.isLocal && onPerson(p, { x: e.clientX, y: e.clientY })}>
-              {p.name}{p.isLocal ? " (you)" : ""}
+              <ColouredName userId={p.id}>{p.name}</ColouredName>{p.isLocal ? " (you)" : ""}
             </button>
             {!p.encrypted && <span className="warn small" title="Not encrypted yet">!</span>}
             {p.sharing && <button className="live" onClick={() => onWatch(p.id)} title="Watch">LIVE</button>}
@@ -191,7 +192,7 @@ export function VoiceRoster({ live, others, onWatch, onPerson }: {
       {others.map((p) => (
         <li key={p.user_id}>
           <span className="avatar" aria-hidden>{p.username.slice(0, 1).toUpperCase()}</span>
-          <span className="who">{p.username}</span>
+          <ColouredName userId={p.user_id} className="who">{p.username}</ColouredName>
         </li>
       ))}
     </ul>
