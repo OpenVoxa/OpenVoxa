@@ -165,15 +165,17 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 
 ## Current state (rewrite every session)
 
-_2026-11-05._ **About tab** (AB1-AB8) and **channel menus with rename**
-(CM1-CM9) done; decisions.md Feature decisions "About tab in Settings"
-and "Channel menus". About: `AboutSettings.tsx`, bandwidth from
-`client-core/src/traffic.ts` + `VoiceClient.trafficBytes()`, staff-only
-`GET /api/v1/version` stamped by the Dockerfile's `version` stage (compose
-passes `.git` as the `gitdir` build context). Menus: `ChannelMenu.tsx`
-(right-click or long-press), `PATCH /api/v1/channels/{id}/name`. Ryan's
-desktop app is 0.1.8. Publish a patch: `cd client-desktop && npm run
-release:win` (commit the package.json bump).
+_2026-11-05._ Done this session: **About tab** (AB1-AB8), **channel
+menus with rename** (CM1-CM9), **voice activation and audio settings**
+(VA1-VA13; Feature decisions "Voice activation and audio settings"):
+modes Voice Activity (default) / Push-to-Talk / Tap to Talk
+(experimental) / Open Mic, via `client-core/src/micWorklet.ts` +
+`micChain.ts` as a LiveKit track processor (read Implementation notes,
+LiveKit, "Mic processor" before touching it). Settings and Server
+settings are now 80% of the window. VA7c (forced PTT stuck on the other
+device) couldn't be reproduced: Open items, Untested. Ryan's desktop app
+is 0.1.8. Publish a patch: `cd client-desktop && npm run release:win`
+(commit the package.json bump).
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts: tuckilufigus (Ryan), staff, openvoxaadmin,
@@ -187,7 +189,8 @@ release:win` (commit the package.json bump).
 - Known gaps and untested steps (K1 flows 2-5, G2-G4, P3, D1): decisions.md
   Open items.
 - **Next:** the backlog, discuss each with Ryan before building: touchscreen
-  push-to-talk button, avatars, server icons, bug reports (then enable the
+  push-to-talk button (now also for Tap to Talk), audio batch 2 (RNNoise,
+  per-channel quality, ducking), avatars, server icons, bug reports (then enable the
   About tab's Report a Bug), channel links (Copy Link), maybe channel
   actions in the moderation log (Ryan undecided). Desktop updates later:
   code signing, "server needs app version X".
