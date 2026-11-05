@@ -172,7 +172,8 @@ modes Voice Activity (default) / Push-to-Talk / Tap to Talk
 (experimental) / Open Mic, via `client-core/src/micWorklet.ts` +
 `micChain.ts` as a LiveKit track processor (read Implementation notes,
 LiveKit, "Mic processor" before touching it). Settings and Server
-settings are now 80% of the window. VA7c (forced PTT stuck on the other
+settings are now 80% of the window. Channel create, rename and delete
+are in the moderation log (ML1-ML4). VA7c (forced PTT stuck on the other
 device) couldn't be reproduced: Open items, Untested. Ryan's desktop app
 is 0.1.8. Publish a patch: `cd client-desktop && npm run release:win`
 (commit the package.json bump).
@@ -191,6 +192,5 @@ is 0.1.8. Publish a patch: `cd client-desktop && npm run release:win`
 - **Next:** the backlog, discuss each with Ryan before building: touchscreen
   push-to-talk button (now also for Tap to Talk), audio batch 2 (RNNoise,
   per-channel quality, ducking), avatars, server icons, bug reports (then enable the
-  About tab's Report a Bug), channel links (Copy Link), maybe channel
-  actions in the moderation log (Ryan undecided). Desktop updates later:
+  About tab's Report a Bug), channel links (Copy Link). Desktop updates later:
   code signing, "server needs app version X".
