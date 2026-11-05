@@ -10,7 +10,8 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type {
-  AudioDevices, ScreenShare, ShareSettings, VoiceClient, VoiceParticipant, VoiceSnapshot,
+  AudioDevices, AudioSettings, MicLevel, MicMode, ScreenShare, ShareSettings, VoiceClient, VoiceParticipant,
+  VoiceSnapshot,
 } from "@core/voice";
 import type { ApiCall } from "@core/identity";
 import { Modal } from "./ChannelDialogs";
@@ -35,7 +36,7 @@ export function pttKey(): string {
 /** "Backquote" -> "`", "KeyV" -> "V", "ControlRight" -> "Right Ctrl". */
 export function keyLabel(code: string): string {
   const named: Record<string, string> = {
-    Backquote: "`", Space: "Space", ControlRight: "Right Ctrl", ControlLeft: "Left Ctrl",
+    Backquote: "` (Backtick)", Space: "Space", ControlRight: "Right Ctrl", ControlLeft: "Left Ctrl",
     ShiftRight: "Right Shift", ShiftLeft: "Left Shift", AltRight: "Right Alt", AltLeft: "Left Alt",
     CapsLock: "Caps Lock", Backslash: "\\", BracketLeft: "[", BracketRight: "]",
   };
@@ -329,14 +330,17 @@ export function VoiceBar({ voice, snap, channelName, onShare, onSettings }: {
   const connecting = snap.state === "connecting";
   const status = connecting ? "Connecting…"
     : snap.serverMuted ? "Muted by a moderator"
-    : snap.pttMode ? (snap.pttHeld ? "Talking" : `Push-to-talk: hold ${keyLabel(pttKey())}`)
-    : snap.micOpen ? "Voice connected" : "Voice connected (muted)";
+    : snap.mutedTalking ? "You're muted"
+    : snap.micMode === "ptt" ? (snap.pttHeld ? "Talking" : `Push-to-talk: hold ${keyLabel(pttKey())}`)
+    : snap.micMode === "tap" ? (snap.pttHeld ? "Talking: stops when you do" : `Tap to Talk: press ${keyLabel(pttKey())}`)
+    : !snap.micOpen ? "Voice connected (muted)"
+    : snap.micMode === "voice" ? "Voice activity" : "Voice connected";
   return (
     <div className="voice-bar" aria-label="Voice controls">
       <div className="voice-status">
-        <span className={`dot-status${connecting ? " pending" : ""}${snap.micOpen ? " talking" : ""}`} aria-hidden />
+        <span className={`dot-status${connecting ? " pending" : ""}${snap.transmitting ? " talking" : ""}`} aria-hidden />
         <div className="voice-text">
-          <strong className="small">{status}</strong>
+          <strong className={`small${snap.mutedTalking ? " warn" : ""}`} role={snap.mutedTalking ? "alert" : undefined}>{status}</strong>
           <span className="muted small" title={snap.epoch !== null ? `End-to-end encrypted (key epoch ${snap.epoch})` : undefined}>
             {channelName}{snap.epoch !== null ? " · encrypted" : ""}
             {snap.forcePTT ? " · push-to-talk required" : ""}
@@ -350,7 +354,7 @@ export function VoiceBar({ voice, snap, channelName, onShare, onSettings }: {
         <button className={`vbtn${snap.serverMuted ? " locked" : !snap.pttMode && (snap.muted || snap.deafened) ? " on" : ""}`}
           disabled={connecting || !snap.canPublish || snap.serverMuted || snap.pttMode}
           onClick={() => void voice.setMuted(!snap.muted)}
-          title={!snap.canPublish ? "You can't speak here" : snap.serverMuted ? "A moderator has muted you. You can't unmute until they unmute you." : snap.pttMode ? "Push-to-talk is on" : snap.muted ? "Unmute" : "Mute"}
+          title={!snap.canPublish ? "You can't speak here" : snap.serverMuted ? "A moderator has muted you. You can't unmute until they unmute you." : snap.pttMode ? (snap.micMode === "tap" ? "Tap to Talk is on" : "Push-to-talk is on") : snap.muted ? "Unmute" : "Mute"}
           aria-pressed={snap.muted}>
           <MicIcon off={!snap.micOpen} locked={snap.serverMuted} />
         </button>
@@ -480,7 +484,6 @@ export function VoiceSettings({ voice, snap }: {
   const [devices, setDevices] = useState<AudioDevices | null>(null);
   const [input, setInput] = useState(voice.inputDevice);
   const [output, setOutput] = useState(voice.outputDevice);
-  const [ptt, setPtt] = useState(snap?.pttMode ?? localStore.get("voice.ptt") === "1");
   const [key, setKey] = useState(pttKey());
   const [binding, setBinding] = useState(false);
   const [pin, setPin] = useState(voice.pinQuality);
@@ -510,6 +513,7 @@ export function VoiceSettings({ voice, snap }: {
 
   return (
     <>
+        <h3 className="settings-head">Devices</h3>
         <label>
           Microphone
           <select value={input} onChange={(e) => {
@@ -541,30 +545,10 @@ export function VoiceSettings({ voice, snap }: {
           </div>
         )}
 
-        <label className="check">
-          <input type="checkbox" checked={ptt || !!snap?.forcePTT} disabled={!!snap?.forcePTT} onChange={(e) => {
-            setPtt(e.target.checked);
-            void voice.setPTTMode(e.target.checked);
-          }} />
-          <span>
-            Push-to-talk
-            <span className="muted small block">
-              {snap?.forcePTT ? "This channel requires it. " : ""}
-              Only works while this tab is focused; the desktop app will add a global key.
-            </span>
-          </span>
-        </label>
-        <div className="key-row">
-          <span className="small">Push-to-talk key</span>
-          <button className={`secondary${binding ? " binding" : ""}`} onClick={() => setBinding(true)}>
-            {binding ? "Press a key… (Esc cancels)" : keyLabel(key)}
-          </button>
-        </div>
-        <p className="muted small">
-          While typing in the message box, keys that type a letter don't trigger it; pick a key like Right Ctrl or F13
-          to talk while typing.
-        </p>
+        <MicSettings voice={voice} snap={snap} keyName={binding ? "…" : keyLabel(key)}
+          bindKey={() => setBinding(true)} binding={binding} />
 
+        <h3 className="settings-head">Screen Share</h3>
         <label className="check">
           <input type="checkbox" checked={pin} onChange={(e) => {
             setPin(e.target.checked);
@@ -578,6 +562,196 @@ export function VoiceSettings({ voice, snap }: {
 
         {error && <p className="error" role="alert">{error}</p>}
     </>
+  );
+}
+
+// ------------------------------------------------------ mic settings
+
+const MODES: { id: MicMode; label: string; help: string }[] = [
+  { id: "voice", label: "Voice Activity", help: "Your mic opens when you talk. Set how loud that has to be below." },
+  { id: "ptt", label: "Push-to-Talk", help: "Hold a key to talk." },
+  { id: "tap", label: "Tap to Talk (Experimental)",
+    help: "Press the key once and talk; the mic closes on its own when you stop. Press again to close it sooner." },
+  { id: "open", label: "Open Mic", help: "Always sending while unmuted. Only the browser's noise filter in between." },
+];
+
+/** Input mode, sensitivity, volumes, the mic test and the browser's processing: the rest of the Voice tab. */
+function MicSettings({ voice, snap, keyName, bindKey, binding }: {
+  voice: VoiceClient;
+  snap: VoiceSnapshot | null;
+  keyName: string;
+  bindKey: () => void;
+  binding: boolean;
+}) {
+  const [a, setA] = useState<AudioSettings>(voice.audioSettings);
+  const [testError, setTestError] = useState<string | null>(null);
+  const forced = !!snap?.forcePTT && snap.state !== "idle";
+  const inCall = !!snap && snap.state !== "idle";
+  const mode: MicMode = forced ? "ptt" : a.mode;
+  const set = (change: Partial<AudioSettings>) => {
+    setA((x) => ({ ...x, ...change }));
+    const { mode: m, ...rest } = change;
+    if (m) void voice.setMicMode(m);
+    if (Object.keys(rest).length) void voice.setAudioSettings(rest);
+  };
+  useEffect(() => () => void voice.stopMicTest(), [voice]);
+
+  return (
+    <>
+      <h3 className="settings-head">Input Mode</h3>
+      {forced && <p className="muted small">This channel requires push-to-talk.</p>}
+      <div className="radio-list" role="radiogroup" aria-label="Input mode">
+        {MODES.map((m) => (
+          <label key={m.id} className="check">
+            <input type="radio" name="mic-mode" checked={mode === m.id} disabled={forced && m.id !== "ptt"}
+              onChange={() => set({ mode: m.id })} />
+            <span>
+              {m.label}
+              <span className="muted small block">{m.help}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+
+      {(mode === "ptt" || mode === "tap") && (
+        <>
+          <div className="key-field-row">
+            <span className="small">{mode === "tap" ? "Tap to Talk key" : "Push-to-talk key"}</span>
+            <button className={`key-field${binding ? " binding" : ""}`} onClick={bindKey}
+              title="Click, then press the key you want" aria-label={`${mode === "tap" ? "Tap to Talk" : "Push-to-talk"} key: ${keyName}. Click to change.`}>
+              {binding ? "Press a key… (Esc cancels)" : keyName}
+            </button>
+          </div>
+          <p className="muted small">
+            Only works while this tab is focused; the desktop app will add a global key. While typing in the message
+            box, keys that type a letter don't trigger it: pick a key like Right Ctrl or F13 to talk while typing.
+          </p>
+        </>
+      )}
+      {mode === "ptt" && (
+        <Slider label="Release delay" value={a.pttReleaseMs} min={0} max={1000} step={50}
+          text={`${a.pttReleaseMs} ms`} onChange={(v) => set({ pttReleaseMs: v })}
+          help="Keeps the mic open this long after you let go, so your last word isn't cut off." />
+      )}
+      {mode === "tap" && (
+        <Slider label="Close after silence" value={a.tapSilenceMs} min={500} max={5000} step={100}
+          text={`${(a.tapSilenceMs / 1000).toFixed(1)} s`} onChange={(v) => set({ tapSilenceMs: v })}
+          help="How long you can pause before the mic closes. If you press the key and don't talk, it closes after 3 s." />
+      )}
+
+      {(mode === "voice" || mode === "tap") && (
+        <>
+          <h3 className="settings-head">Sensitivity</h3>
+          <label className="check">
+            <input type="checkbox" checked={a.vadAuto} onChange={(e) => set({ vadAuto: e.target.checked })} />
+            <span>
+              Set Automatically
+              <span className="muted small block">Follows the noise around you. Untick to set the level yourself.</span>
+            </span>
+          </label>
+          <LevelMeter voice={voice} threshold={a.vadAuto ? null : a.vadThresholdDb}
+            onThreshold={a.vadAuto ? undefined : (v) => set({ vadThresholdDb: v })} />
+          <p className="muted small">
+            {inCall || voice.micTesting
+              ? "The bar shows your mic; it turns green when you'd be heard. Talk normally and set the marker just below that."
+              : "Join a call or use Let's Check below to see your mic level."}
+          </p>
+        </>
+      )}
+
+      <h3 className="settings-head">Volume</h3>
+      <Slider label="Input volume" value={Math.round(a.inputGain * 100)} min={0} max={200} step={5}
+        text={`${Math.round(a.inputGain * 100)}%`} onChange={(v) => set({ inputGain: v / 100 })} />
+      <Slider label="Output volume" value={Math.round(a.outputVolume * 100)} min={0} max={100} step={5}
+        text={`${Math.round(a.outputVolume * 100)}%`} onChange={(v) => set({ outputVolume: v / 100 })}
+        help="Everyone in the call, on top of each person's own volume (right-click them in a call)." />
+
+      <h3 className="settings-head">Mic Test</h3>
+      <div className="key-row">
+        <span className="muted small">
+          {inCall ? "You're in a call: the level above shows your mic there." : "Hear yourself as others would."}
+        </span>
+        <button className="outline" disabled={inCall} onClick={() => {
+          setTestError(null);
+          (voice.micTesting ? voice.stopMicTest() : voice.startMicTest())
+            .then(() => setA({ ...voice.audioSettings }))
+            .catch((err) => setTestError(err?.name === "NotAllowedError"
+              ? "The microphone wasn't allowed. Allow it in your browser's site settings, then try again."
+              : String(err?.message ?? err)));
+        }}>{voice.micTesting ? "Stop Checking" : "Let's Check"}</button>
+      </div>
+      {!inCall && (mode === "voice" || mode === "tap") && voice.micTesting && <LevelMeterHint />}
+      {testError && <p className="error small" role="alert">{testError}</p>}
+
+      <h3 className="settings-head">Processing</h3>
+      <p className="muted small">The browser's own filters. Turn them off for music, or with a good headset.</p>
+      <label className="check">
+        <input type="checkbox" checked={a.noiseSuppression} onChange={(e) => set({ noiseSuppression: e.target.checked })} />
+        <span>Noise suppression</span>
+      </label>
+      <label className="check">
+        <input type="checkbox" checked={a.echoCancellation} onChange={(e) => set({ echoCancellation: e.target.checked })} />
+        <span>
+          Echo cancellation
+          <span className="muted small block">Stops others hearing themselves through your speakers. Keep it on without headphones.</span>
+        </span>
+      </label>
+      <label className="check">
+        <input type="checkbox" checked={a.autoGainControl} onChange={(e) => set({ autoGainControl: e.target.checked })} />
+        <span>
+          Automatic gain
+          <span className="muted small block">Evens out your volume. Off: Input volume alone sets it.</span>
+        </span>
+      </label>
+    </>
+  );
+}
+
+function LevelMeterHint() {
+  return <p className="muted small">Voice activation applies in the test too: you only hear yourself when the bar is green.</p>;
+}
+
+function Slider({ label, value, min, max, step, text, help, onChange }: {
+  label: string; value: number; min: number; max: number; step: number; text: string; help?: string;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <label className="slider-row">
+      <span className="slider-head"><span className="small">{label}</span><span className="muted small">{text}</span></span>
+      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} />
+      {help && <span className="muted small">{help}</span>}
+    </label>
+  );
+}
+
+/** dBFS shown on the meter: -80 at the left, 0 at the right. */
+const METER_MIN_DB = -80;
+const pct = (db: number) => Math.max(0, Math.min(100, ((db - METER_MIN_DB) / -METER_MIN_DB) * 100));
+
+/**
+ * The live mic level with the threshold marker. threshold null: automatic
+ * (the marker follows what the worklet reports). With onThreshold the
+ * marker is a slider.
+ */
+function LevelMeter({ voice, threshold, onThreshold }: {
+  voice: VoiceClient;
+  threshold: number | null;
+  onThreshold?: (db: number) => void;
+}) {
+  const [level, setLevel] = useState<MicLevel | null>(null);
+  useEffect(() => voice.onMicLevel(setLevel), [voice]);
+  const mark = threshold ?? level?.thresholdDb ?? null;
+  return (
+    <div className="level-meter-wrap">
+      <div className={`level-meter${level ? "" : " idle"}`} aria-hidden>
+        <div className={`level-fill${level?.voice ? " voice" : ""}`} style={{ width: `${level ? pct(level.db) : 0}%` }} />
+        {mark !== null && <div className="level-mark" style={{ left: `${pct(mark)}%` }} />}
+      </div>
+      <input type="range" className="level-range" min={METER_MIN_DB} max={0} step={1}
+        value={threshold ?? Math.round(level?.thresholdDb ?? -50)} disabled={!onThreshold}
+        aria-label="Voice activation threshold" title={onThreshold ? `${threshold} dB` : "Set automatically"}
+        onChange={(e) => onThreshold?.(Number(e.target.value))} />
+    </div>
   );
 }
 
@@ -694,6 +868,7 @@ export function CallView({ voice, snap, channelName, onWatch }: {
             const share = snap.screens.find((x) => x.participantId === p.id) ?? null;
             return (
               <PersonTile key={p.id} voice={voice} person={p} share={share}
+                mutedTalking={p.isLocal && snap.mutedTalking}
                 hidden={!!share && hidden.has(share.id)}
                 onHide={(on) => share && setHide(share.id, on)}
                 onWatch={() => share && onWatch(share.id)} />
@@ -705,9 +880,11 @@ export function CallView({ voice, snap, channelName, onWatch }: {
   );
 }
 
-function PersonTile({ voice, person, share, hidden, onHide, onWatch }: {
+function PersonTile({ voice, person, share, mutedTalking, hidden, onHide, onWatch }: {
   voice: VoiceClient;
   person: VoiceParticipant;
+  /** You're talking while muted: say so on your own tile. */
+  mutedTalking: boolean;
   share: ScreenShare | null;
   hidden: boolean;
   onHide: (on: boolean) => void;
@@ -741,6 +918,12 @@ function PersonTile({ voice, person, share, hidden, onHide, onWatch }: {
       {showing
         ? <video ref={video} autoPlay playsInline muted {...clicks} />
         : <span className="avatar" aria-hidden>{person.name.slice(0, 1).toUpperCase()}</span>}
+      {mutedTalking && (
+        <div className="tile-banner" role="alert">
+          <MicIcon off /> You're muted
+          <button className="outline" onClick={() => void voice.setMuted(false)}>Unmute</button>
+        </div>
+      )}
       <figcaption>
         {share && <span className="live">LIVE</span>}
         <span className="who"><ColouredName userId={person.id}>{person.name}</ColouredName>{person.isLocal ? " (you)" : ""}</span>
