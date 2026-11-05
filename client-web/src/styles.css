@@ -682,6 +682,10 @@ details summary { cursor: pointer; color: var(--muted); }
 .settings-section { display: flex; flex-direction: column; gap: 8px; }
 .settings-form { display: flex; flex-direction: column; gap: 10px; }
 .row-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.about-grid { margin: 0; display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+.about-row { display: grid; grid-template-columns: 140px 1fr; gap: 12px; }
+.about-row dt { color: var(--muted); }
+.about-row dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .row-actions button { border: 1px solid var(--line); }
 .row-actions button.primary { font-size: 14px; padding: 6px 14px; border-color: transparent; }
 .device-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }

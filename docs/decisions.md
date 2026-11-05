@@ -1083,23 +1083,35 @@ at the end.
   (like usernames). Open: size and type limits, animated GIFs, whether
   moderators can remove an offensive avatar (likely yes, logged in
   the moderation log).
-- **About tab in Settings** (Ryan, 2026-11-05; Claude's proposal, not
-  agreed yet). A tab after Sounds, in each server's web client, so it
-  works in browsers too. Sections: *OpenVoxa* (description, AGPL-3.0,
-  the GitHub link, later "Report a Bug"); *This server* (address, server
-  version, your account and groups); *This app* (web client version; in
-  the desktop app also the app, Electron and Chromium versions; in a
-  browser, its name); *Connection* (live kbps up and down while in a
-  call, from the call's WebRTC statistics, and how long the chat
-  connection has been up). Needs: the server to know its version (git
-  commit and date stamped by the Docker build, `GET /api/v1/version`);
-  one more read-only call in the desktop app's view preload for the app
-  version. A page can only measure its own traffic, so kbps covers the
-  call only ("Not in a call" otherwise). Open questions for Ryan: who
-  sees the exact server version (recommended: staff only, since it
-  tells an attacker which known bugs apply; the address for everyone);
-  one combined kbps figure or broken down (voice, screen share, per
-  person); extras such as "Copy Debug Info" for bug reports.
+- **About tab in Settings** (agreed with Ryan 2026-11-05; built the
+  same day, AB1-AB8). The last tab of Settings, in each server's web
+  client, so it works in browsers too (`AboutSettings.tsx`). Sections:
+  *OpenVoxa* (description, AGPL-3.0, GitHub link); *This Server*
+  (address, your account and groups, and for staff only the version:
+  commit, commit date, "+ local changes" when built from uncommitted
+  source; an exact version tells an attacker which known bugs apply);
+  *This App* (the web client's bundle build id, public anyway, which
+  shows whether a refresh picked up a new build; in a browser its name,
+  in the desktop app the app, Electron, Chromium and OS versions via a
+  read-only `appInfo` call in the view preload); *Connection*
+  (bandwidth, in a call or not, how long the chat connection has been
+  up). Buttons: Copy Debug Info (the same rows as text, plus the user
+  agent) and a greyed-out Report a Bug until bug reports exist.
+  - **Bandwidth** (Ryan: "how much bandwidth is being used by OpenVoxa
+    at that time, up and down"). One up and one down figure, every
+    second: the call (WebRTC transport totals, all peer connections),
+    both chat websockets (every frame, `client-core/src/traffic.ts`)
+    and HTTP (request bodies up; resource timing `transferSize` down,
+    same origin only, 0 for cached). A page sees only its own traffic,
+    so it is per server; Ryan: only the server you're connected to
+    matters for now. Not counted: LiveKit's signalling websocket
+    (small), request headers going up.
+  - **Server version:** the Docker build's `version` stage reads git
+    from a second build context (`additional_contexts: gitdir: ../.git`
+    in compose; `.git` stays out of the main context) and writes
+    `/openvoxa-version.json`, copied into the final image. Only that
+    stage reruns on a new commit. `GET /api/v1/version` (staff) serves
+    it; a server built without it says "unknown".
 - **Device linking by QR** (planned in step 13, after M1): a logged-in
   device shows a QR of `https://server/link#<one-time secret>` (about 2
   minutes, single use); the phone's camera opens it; the server only
@@ -2634,6 +2646,9 @@ verified; the section named holds the design.
   DU1-DU6 (DU1b after the `app-update.yml` fix, DU3 failed before it);
   DU7 after the package name fix (0.1.6 to 0.1.7 fetched 0.8 MB, not
   121 MB).
+- 2026-11-05 About tab in Settings, AB1-AB8 (Feature decisions, "About
+  tab in Settings"); desktop app 0.1.8 adds `appInfo` (AB8: 0.1.7 to
+  0.1.8 fetched 0.8 MB and installed on quit).
 
 ## Open items
 
@@ -2653,9 +2668,6 @@ verified; the section named holds the design.
 - [ ] Desktop app, later: badges via a preload, voice handoff between
       servers, global push-to-talk, tray, notifications, idle unload of
       background servers.
-- [ ] About tab in Settings (Ryan, 2026-11-05): proposal and open
-      questions in Feature decisions, "Planned". Paused by Ryan; resume
-      with the design talk.
 - [ ] Desktop updates, later: code signing; "this server needs app
       version X".
 - [ ] Minimized windows are probably missing from our share picker, as

@@ -176,6 +176,9 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 	mux.HandleFunc("GET /api/v1/channels/{id}/members",
 		withUUIDPath(api.requireAuth(api.listChannelMembers)))
 
+	// The server's version, for the About tab (version.go).
+	mux.HandleFunc("GET /api/v1/version", api.requireStaff(api.getVersion))
+
 	mux.HandleFunc("GET /api/v1/users",
 		api.requireStaff(api.listUsers))
 	mux.HandleFunc("DELETE /api/v1/users/{id}",

@@ -21,6 +21,9 @@ cd OpenVoxa/deploy
 cp .env.example .env
 ```
 
+Clone with git rather than downloading a zip: the build reads `.git`
+to stamp the server's version (shown to staff in Settings, About).
+
 Generate a LiveKit key pair and put both values in `.env`:
 
 ```bash

@@ -553,6 +553,13 @@ function registerIpc() {
     const origin = viewOrigin(e);
     return origin ? startShareSound(origin, e.sender) : false;
   });
+  // Read-only, for the About tab: nothing here a page could misuse.
+  ipcMain.handle("view:app-info", (e) => viewOrigin(e) ? {
+    app: app.getVersion(),
+    electron: process.versions.electron,
+    chromium: process.versions.chrome,
+    os: `${process.platform} ${process.getSystemVersion()}`,
+  } : null);
   ipcMain.handle("view:share-sound-stop", (e) => {
     const origin = viewOrigin(e);
     if (origin) stopShareSound(origin);

@@ -3,7 +3,7 @@
 
 /**
  * The Settings dialog (build order 13, M5 session A): Account, Voice,
- * Chat, Sounds and Appearance tabs. The user-panel gear opens it on Account, the voice bar's cog
+ * Chat, Sounds, Appearance and About tabs. The user-panel gear opens it on Account, the voice bar's cog
  * on Voice. The Voice tab loads the voice client (and with it LiveKit)
  * only when it is picked, so text-only use never pays for it.
  *
@@ -14,6 +14,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import type { ApiCall } from "@core/identity";
+import type { Chat } from "@core/chat";
 import type { BackupStatus } from "@core/recovery";
 import { storage } from "@core/storage";
 import type { VoiceClient, VoiceSnapshot } from "@core/voice";
@@ -24,9 +25,10 @@ import { PasswordRules } from "./PasswordRules";
 import { IMAGES_IN_TAB, MENTION_NOTIFY, NAME_COLOURS, PREVIEWS_ENCRYPTED, setToggle, useToggle } from "./settings";
 import { VoiceSettings } from "./VoiceUI";
 import { SoundSettings } from "./SoundSettings";
+import { AboutSettings } from "./AboutSettings";
 import { COLOURS, getColour, setColour, useColour, type ColourSetting } from "./appearance";
 
-export type SettingsTab = "account" | "voice" | "chat" | "sounds" | "appearance";
+export type SettingsTab = "account" | "voice" | "chat" | "sounds" | "appearance" | "about";
 
 export interface AccountActions {
   onBackUpNow: () => void;
@@ -40,10 +42,11 @@ export interface AccountActions {
   onEraseAndLogout: () => void;
 }
 
-export function SettingsDialog({ tab: initialTab, session, call, deviceId, backup, busy, actions, voice, snap, loadVoice, onClose }: {
+export function SettingsDialog({ tab: initialTab, session, call, chat, deviceId, backup, busy, actions, voice, snap, loadVoice, onClose }: {
   tab: SettingsTab;
   session: Session;
   call: ApiCall;
+  chat: Chat;
   deviceId: string;
   backup: BackupStatus | null;
   busy: string | null;
@@ -62,7 +65,7 @@ export function SettingsDialog({ tab: initialTab, session, call, deviceId, backu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, voice]);
 
-  const tabs: [SettingsTab, string][] = [["account", "Account"], ["voice", "Voice"], ["chat", "Chat"], ["sounds", "Sounds"], ["appearance", "Appearance"]];
+  const tabs: [SettingsTab, string][] = [["account", "Account"], ["voice", "Voice"], ["chat", "Chat"], ["sounds", "Sounds"], ["appearance", "Appearance"], ["about", "About"]];
   return (
     <Modal title="Settings" onClose={onClose} wide fixed>
       <div className="settings-tabs" role="tablist">
@@ -82,6 +85,7 @@ export function SettingsDialog({ tab: initialTab, session, call, deviceId, backu
         {tab === "chat" && <ChatSettings />}
         {tab === "sounds" && <SoundSettings />}
         {tab === "appearance" && <AppearanceSettings />}
+        {tab === "about" && <AboutSettings call={call} chat={chat} voice={voice} snap={snap} />}
       </div>
       <div className="modal-actions modal-foot">
         <button className="primary" onClick={onClose}>Done</button>

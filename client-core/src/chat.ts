@@ -23,6 +23,7 @@ import type { ApiCall } from "./identity.js";
 import type { AutoEvent, MembershipChange, PersonChange } from "./groups.js";
 import { normalizeTime, storage, type SharedBy } from "./storage.js";
 import type { Session } from "./index.js";
+import { meterSocket } from "./traffic.js";
 
 // ----------------------------------------------------------------- types
 
@@ -374,6 +375,8 @@ export class Chat {
   #listeners = new Set<(e: ChatEvent) => void>();
   #events: WebSocket | null = null;
   #eventsOpen = false;
+  /** When the event socket last opened (Date.now()), null while it is down. */
+  #eventsSince: number | null = null;
   #closed = false;
   #view: ChannelView | null = null;
   #unread = new Set<string>();
@@ -704,8 +707,10 @@ export class Chat {
     if (this.#closed) return;
     const ws = new WebSocket(this.#opts.wsUrl(`/api/v1/ws?ticket=${encodeURIComponent(ticket)}`));
     this.#events = ws;
+    meterSocket(ws);
     ws.onopen = () => {
       this.#eventsOpen = true;
+      this.#eventsSince = Date.now();
       // Anything missed while it was down.
       this.refreshChannels().catch(() => {});
     };
@@ -722,6 +727,7 @@ export class Chat {
       if (this.#events !== ws) return;
       this.#events = null;
       this.#eventsOpen = false;
+      this.#eventsSince = null;
       if (!this.#closed) setTimeout(() => void this.#openEvents(), EVENT_RETRY_MS);
     };
   }
@@ -729,6 +735,11 @@ export class Chat {
   /** Whether server-wide events arrive on the event socket right now. */
   get eventsOpen(): boolean {
     return this.#eventsOpen;
+  }
+
+  /** When the event socket (the chat connection) last opened, as Date.now(); null while it is down. */
+  get connectedSince(): number | null {
+    return this.#eventsSince;
   }
 
   /** @internal Server-wide events, from the event socket (or a channel's
@@ -1059,6 +1070,7 @@ export class ChannelView {
       `/api/v1/ws?ticket=${encodeURIComponent(ticket)}&channel=${encodeURIComponent(this.#channel.id)}`,
     ));
     this.#socket = ws;
+    meterSocket(ws);
     ws.onopen = () => {
       this.#retry = 0;
       this.#connection = "open";

@@ -55,6 +55,25 @@ COPY --from=web /app/client-web/dist/ ./internal/httpapi/webui/
 
 RUN CGO_ENABLED=0 go build -o /out/openvoxa-server .
 
+# --------------------------------------------------------------- version
+# The commit this image was built from, for the About tab (version.go).
+# .git is kept out of the main build context (.dockerignore), so compose
+# passes it in as a second context, "gitdir". Only this small stage reads
+# it, so a new commit never rebuilds the JavaScript or the Go binary.
+# "dirty": the server or client source differs from that commit (built
+# before committing). *.md files are left out of the build context, so
+# they are left out of the comparison too.
+FROM alpine:3 AS version
+RUN apk add --no-cache git
+RUN --mount=type=bind,target=/repo \
+    --mount=type=bind,from=gitdir,target=/gitdir \
+    git config --global --add safe.directory '*' \
+ && g="git --git-dir=/gitdir --work-tree=/repo" \
+ && dirty=false \
+ && { $g diff --quiet HEAD -- server client-core client-web ':(exclude)*.md' || dirty=true; } \
+ && $g log -1 --format="{\"commit\":\"%h\",\"date\":\"%cI\",\"dirty\":$dirty}" > /openvoxa-version.json \
+ && cat /openvoxa-version.json
+
 # --------------------------------------------------------------- blobdir
 # The blob and key directories have to exist in the image, owned by the
 # user the server runs as.
@@ -74,6 +93,7 @@ RUN mkdir -p /var/lib/openvoxa/blobs /var/lib/openvoxa/keys \
 FROM gcr.io/distroless/static-debian12:nonroot
 
 COPY --from=build /out/openvoxa-server /openvoxa-server
+COPY --from=version /openvoxa-version.json /openvoxa-version.json
 COPY --from=blobdir --chown=65532:65532 /var/lib/openvoxa /var/lib/openvoxa
 
 EXPOSE 8080
