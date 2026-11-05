@@ -178,9 +178,7 @@ demand (silent until Listen). Ryan's desktop app runs build `-e`.
   Ryan is the only user.
 - Known gaps (decisions.md Open items): K1 recovery flows 2-5 deferred;
   no @everyone/@group; no per-group share limits.
-- Untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI), CV8
-  (tiles take the half copy: `openvoxaVoice.screenStats(...)` in a
-  desktop viewer, tile vs Watch, non-Safari sharer).
+- Untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI).
 - **Next:** Ryan picks from the backlog: touchscreen push-to-talk button,
   avatar uploads (replace the tiles' letter circles; Open items);
   Ryan's list (decisions.md "Planned: server icons, updates, bug
