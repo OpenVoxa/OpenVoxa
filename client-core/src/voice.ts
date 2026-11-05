@@ -112,8 +112,6 @@ export interface ShareSettings {
   /** "detail" keeps text sharp, "motion" keeps the frame rate. */
   priority: "detail" | "motion";
   audio: boolean;
-  codec: "h264" | "vp8" | "vp9" | "av1";
-  simulcast: boolean;
 }
 
 /**
@@ -336,6 +334,9 @@ export class VoiceClient {
    * the call, and everyone downloaded every share.
    */
   #screenEls = new Map<string, Set<HTMLVideoElement>>();
+  /** Pending unsubscribes, so a tile handing over to the big view (or
+   * back) doesn't stop and restart the download. */
+  #unwatch = new Map<string, ReturnType<typeof setTimeout>>();
   #listening = new Set<string>(); // participant identities
   #stats = new Map<string, { bytes: number; frames: number; at: number }>();
 
@@ -688,6 +689,8 @@ export class VoiceClient {
     for (const el of this.#audioEls.values()) el.remove();
     this.#audioEls.clear();
     this.#screenEls.clear();
+    for (const t of this.#unwatch.values()) clearTimeout(t);
+    this.#unwatch.clear();
     this.#listening.clear();
     this.#stats.clear();
     this.#decryptErrors.clear();
@@ -834,7 +837,10 @@ export class VoiceClient {
         this.#changed();
       })
       .on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack, pub: RemoteTrackPublication) => {
-        track.detach().forEach((el) => el.remove());
+        // Only our own hidden audio elements are removed; video elements
+        // belong to the page (removing one left a black Watch view).
+        const els = track.detach();
+        if (track.kind === Track.Kind.Audio) els.forEach((el) => el.remove());
         const sid = track.sid ?? pub.trackSid;
         this.#audioEls.get(sid)?.remove();
         this.#audioEls.delete(sid);
@@ -1087,20 +1093,28 @@ export class VoiceClient {
   }
 
   #publishShare(room: Room, track: LocalTrack, s: ShareSettings, encoding: { maxBitrate: number; maxFramerate: number }) {
+    // Safari (iPad, CV5) sends only the small VP8 copy of a share: viewers
+    // asking for the full one got 0 kbps, a black Watch view. Safari and
+    // every other WebKit browser send one full H.264 copy instead
+    // (hardware-encoded), so their shares cost viewers' tiles more.
+    const webkit = /AppleWebKit/.test(navigator.userAgent) && !/(Chrome|Chromium|Android)\//.test(navigator.userAgent);
     return room.localParticipant.publishTrack(track, {
         // Screen-share tracks read screenShareEncoding, NOT videoEncoding;
         // setting only the latter leaves 1080p15 at 1.5 Mbps in place.
         screenShareEncoding: encoding,
         videoEncoding: encoding,
-        simulcast: s.simulcast,
-        // Two layers: full quality, and half resolution for anyone who
-        // can't keep up (only used with simulcast on).
+        // Two layers: full quality, and half resolution, which the call
+        // view's tiles show (adaptiveStream picks it from their size) and
+        // anyone who can't keep up falls back to. VP8, because H.264
+        // simulcast is poorly supported (decisions.md, "Voice channel
+        // view"); watching costs a little more CPU where VP8 isn't
+        // hardware-decoded.
+        simulcast: !webkit,
         screenShareSimulcastLayers: [
           new VideoPreset(Math.round(s.width / 2), Math.round(s.height / 2),
             Math.round(s.kbps * 1000 * 0.3), Math.min(s.fps, 30)),
         ],
-        // H.264 is hardware-decoded nearly everywhere, iOS included.
-        videoCodec: s.codec,
+        videoCodec: webkit ? "h264" : "vp8",
         degradationPreference: s.priority === "motion" ? "maintain-framerate" : "maintain-resolution",
       });
   }
@@ -1168,14 +1182,14 @@ export class VoiceClient {
    * only while at least one element shows it.
    */
   attachScreen(id: string, el: HTMLVideoElement): void {
+    clearTimeout(this.#unwatch.get(id));
+    this.#unwatch.delete(id);
     let els = this.#screenEls.get(id);
     if (!els) this.#screenEls.set(id, (els = new Set()));
     els.add(el);
-    const remote = this.#remoteScreenPub(id);
-    if (remote && !remote.isSubscribed) {
-      remote.setSubscribed(true); // attached in TrackSubscribed
-      return;
-    }
+    // Asked for every time (it may have been let go a moment ago); if the
+    // picture isn't here yet, TrackSubscribed attaches it.
+    this.#remoteScreenPub(id)?.setSubscribed(true);
     const t = this.#screenTrack(id);
     if (!t) return;
     el.muted = true;
@@ -1187,10 +1201,14 @@ export class VoiceClient {
     this.#screenTrack(id)?.detach(el);
     const els = this.#screenEls.get(id);
     els?.delete(el);
-    if (els && els.size === 0) {
+    if (!els || els.size > 0) return;
+    clearTimeout(this.#unwatch.get(id));
+    this.#unwatch.set(id, setTimeout(() => {
+      this.#unwatch.delete(id);
+      if (this.#screenEls.get(id)?.size) return;
       this.#screenEls.delete(id);
       this.#remoteScreenPub(id)?.setSubscribed(false);
-    }
+    }, 1500));
   }
 
   /** Plays or silences someone's share sound (Listen). */

@@ -388,8 +388,6 @@ export function ShareDialog({ voice, onClose }: { voice: VoiceClient; onClose: (
   const [preset, setPreset] = useState(saved.preset ?? 1);
   const [priority, setPriority] = useState<ShareSettings["priority"]>(saved.priority ?? "detail");
   const serverMuted = voice.snapshot().serverMuted;
-  const [codec, setCodec] = useState<ShareSettings["codec"]>(saved.codec ?? "h264");
-  const [simulcast, setSimulcast] = useState(saved.simulcast ?? false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // undefined while asking the server; null for no limit.
@@ -419,8 +417,8 @@ export function ShareDialog({ voice, onClose }: { voice: VoiceClient; onClose: (
     // Sound is always asked for: whether a share has it is chosen in the
     // picker (the desktop app's or the browser's), next to what is shared.
     // A server mute still turns it off (VoiceClient.startShare).
-    const s: ShareSettings = { width: p.width, height: p.height, fps: p.fps, kbps: p.kbps, priority, audio: true, codec, simulcast };
-    localStore.set(SHARE_PREFS, JSON.stringify({ preset, priority, codec, simulcast }));
+    const s: ShareSettings = { width: p.width, height: p.height, fps: p.fps, kbps: p.kbps, priority, audio: true };
+    localStore.set(SHARE_PREFS, JSON.stringify({ preset, priority }));
     setBusy(true);
     setError(null);
     try {
@@ -461,24 +459,6 @@ export function ShareDialog({ voice, onClose }: { voice: VoiceClient; onClose: (
           </select>
         </label>
         {serverMuted && <p className="muted small">A moderator has muted you, so your share won't have sound.</p>}
-        <details>
-          <summary className="small">Advanced</summary>
-          <div className="advanced">
-            <label>
-              Codec
-              <select value={codec} onChange={(e) => setCodec(e.target.value as ShareSettings["codec"])}>
-                <option value="h264">H.264 (hardware-decoded almost everywhere)</option>
-                <option value="vp8">VP8</option>
-                <option value="vp9">VP9</option>
-                <option value="av1">AV1</option>
-              </select>
-            </label>
-            <label className="check">
-              <input type="checkbox" checked={simulcast} onChange={(e) => setSimulcast(e.target.checked)} />
-              <span>Simulcast <span className="muted small block">Also send a lower layer so weaker devices don't stutter.</span></span>
-            </label>
-          </div>
-        </details>
         <p className="muted small">Your browser asks what to share next. Encrypted end to end, like voice.</p>
         {error && <p className="error" role="alert">{error}</p>}
         <div className="modal-actions">
@@ -604,20 +584,53 @@ export function VoiceSettings({ voice, snap }: {
 // ----------------------------------------------------------------- stage
 
 /** Screen shares in the main pane: a grid, or one focused. */
-export function Stage({ voice, screens, focus, setFocus, onBack }: {
+/**
+ * One click and a double click on the same element: the single click
+ * waits 250 ms, so a double click (fullscreen) doesn't also run it.
+ */
+function useClickOrDouble(single: () => void, double: () => void) {
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  return {
+    onClick: () => {
+      clearTimeout(timer.current);
+      timer.current = setTimeout(single, 250);
+    },
+    onDoubleClick: () => {
+      clearTimeout(timer.current);
+      double();
+    },
+  };
+}
+
+export function Stage({ voice, screens, focus, setFocus, onBack, backLabel }: {
   voice: VoiceClient;
   screens: readonly ScreenShare[];
   focus: string | null;
   setFocus: (id: string | null) => void;
   onBack: () => void;
+  /** "Back to Call" when the call view is underneath, else "Back to Chat". */
+  backLabel: string;
 }) {
   const [stats, setStats] = useState(false);
   const shown = focus ? screens.filter((s) => s.id === focus) : screens;
   const others = focus ? screens.filter((s) => s.id !== focus) : [];
+  // Esc goes back, like a click on a lone share (fullscreen takes Esc first).
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || document.fullscreenElement) return;
+      // An open dialog or menu takes Esc for itself; so does typing.
+      if (document.querySelector(".modal-backdrop, .menu")) return;
+      if ((e.target as HTMLElement | null)?.closest("input, textarea, select")) return;
+      onBack();
+    };
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [onBack]);
   return (
     <section className="stage" aria-label="Screen shares">
       <header className="pane-head">
-        <button className="secondary" onClick={onBack}>Back to chat</button>
+        <button className="secondary" onClick={onBack}>{backLabel}</button>
         <h1>{screens.length === 1 ? `${screens[0].name}'s screen` : `${screens.length} screens`}</h1>
         {focus && screens.length > 1 && <button className="link small" onClick={() => setFocus(null)}>Show all</button>}
         <label className="check small stats-toggle">
@@ -631,7 +644,7 @@ export function Stage({ voice, screens, focus, setFocus, onBack }: {
         <div className={`tiles${shown.length > 1 ? " grid" : ""}`}>
           {shown.map((s) => (
             <ScreenTile key={s.id} voice={voice} share={s} stats={stats}
-              onClick={() => setFocus(focus === s.id ? null : s.id)} />
+              onClick={shown.length > 1 ? () => setFocus(s.id) : onBack} />
           ))}
         </div>
       )}
@@ -643,6 +656,122 @@ export function Stage({ voice, screens, focus, setFocus, onBack }: {
         </div>
       )}
     </section>
+  );
+}
+
+// ---------------------------------------------------------- call view
+
+/**
+ * The call you are in, as one tile per person (decisions.md, "Voice
+ * channel view"). A sharer's tile shows their share from its half-size
+ * copy (adaptiveStream picks that layer from the tile's size), with
+ * Watch, Listen, Fullscreen and Hide. Letter circles until avatars exist.
+ */
+export function CallView({ voice, snap, channelName, onWatch }: {
+  voice: VoiceClient;
+  snap: VoiceSnapshot;
+  channelName: string;
+  onWatch: (shareId: string) => void;
+}) {
+  // Hidden shares, by track SID: a new share is a new track, so it shows again.
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
+  const setHide = (id: string, on: boolean) => setHidden((cur) => {
+    const next = new Set(cur);
+    if (on) next.add(id);
+    else next.delete(id);
+    return next;
+  });
+  return (
+    <section className="call-view" aria-label="Call">
+      <header className="pane-head">
+        <h1>{channelName}</h1>
+      </header>
+      {snap.state === "connecting" && !snap.participants.length ? (
+        <div className="pane-empty muted">Joining…</div>
+      ) : (
+        <div className="call-tiles">
+          {snap.participants.map((p) => {
+            const share = snap.screens.find((x) => x.participantId === p.id) ?? null;
+            return (
+              <PersonTile key={p.id} voice={voice} person={p} share={share}
+                hidden={!!share && hidden.has(share.id)}
+                onHide={(on) => share && setHide(share.id, on)}
+                onWatch={() => share && onWatch(share.id)} />
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function PersonTile({ voice, person, share, hidden, onHide, onWatch }: {
+  voice: VoiceClient;
+  person: VoiceParticipant;
+  share: ScreenShare | null;
+  hidden: boolean;
+  onHide: (on: boolean) => void;
+  onWatch: () => void;
+}) {
+  const fig = useRef<HTMLElement>(null);
+  const video = useRef<HTMLVideoElement>(null);
+  const showing = share && !hidden ? share : null;
+
+  useEffect(() => {
+    const el = video.current;
+    if (!el || !showing) return;
+    voice.attachScreen(showing.id, el);
+    return () => voice.detachScreen(showing.id, el);
+  }, [voice, showing?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function fullscreen() {
+    const f = fig.current;
+    if (!f) return;
+    if (document.fullscreenElement === f) void document.exitFullscreen();
+    else f.requestFullscreen?.().catch(() => {
+      (video.current as unknown as { webkitEnterFullscreen?: () => void })?.webkitEnterFullscreen?.();
+    });
+  }
+
+  // One click opens the big view, a double click goes fullscreen.
+  const clicks = useClickOrDouble(onWatch, fullscreen);
+  const speaking = person.speaking && !person.micOff;
+  return (
+    <figure ref={fig} className={`person-tile${speaking ? " speaking" : ""}${showing ? " sharing" : ""}`}>
+      {showing
+        ? <video ref={video} autoPlay playsInline muted {...clicks} />
+        : <span className="avatar" aria-hidden>{person.name.slice(0, 1).toUpperCase()}</span>}
+      <figcaption>
+        {share && <span className="live">LIVE</span>}
+        <span className="who"><ColouredName userId={person.id}>{person.name}</ColouredName>{person.isLocal ? " (you)" : ""}</span>
+        {person.serverMuted
+          ? <span className="state server-muted" title="Muted by a moderator"><MicIcon locked /></span>
+          : person.micOff && <span className="state" title={person.isLocal ? "Your mic is off" : "Mic off"}><MicIcon off /></span>}
+        {!person.isLocal && person.localMuted && <span className="state" title="Muted for you"><HeadphonesIcon off /></span>}
+      </figcaption>
+      {showing && (
+        <div className="tile-actions">
+          <button className="secondary" onClick={onWatch}>Watch</button>
+          {showing.hasAudio && (
+            <button className={showing.listening ? "primary" : "secondary"} aria-pressed={showing.listening}
+              onClick={() => voice.setShareListening(showing.participantId, !showing.listening)}>
+              {showing.listening ? "Stop Listening" : "Listen"}
+            </button>
+          )}
+          <button className="secondary" onClick={fullscreen}>Fullscreen</button>
+          {/* Hiding a share means not following it: its sound stops too. */}
+          <button className="secondary" onClick={() => {
+            if (showing.listening) voice.setShareListening(showing.participantId, false);
+            onHide(true);
+          }}>Hide</button>
+        </div>
+      )}
+      {share && hidden && (
+        <div className="tile-actions always">
+          <button className="outline" onClick={() => onHide(false)}>Show Share</button>
+        </div>
+      )}
+    </figure>
   );
 }
 
@@ -683,9 +812,10 @@ function ScreenTile({ voice, share, stats, onClick }: {
     });
   }
 
+  const clicks = useClickOrDouble(onClick, fullscreen);
   return (
     <figure ref={fig} className="tile">
-      <video ref={video} autoPlay playsInline muted onClick={onClick} onDoubleClick={fullscreen} />
+      <video ref={video} autoPlay playsInline muted {...clicks} />
       <figcaption>
         <span>{share.name}{share.isLocal ? " (you)" : ""}</span>
         {stats && <span className="muted small">{line}</span>}

@@ -21,7 +21,7 @@ import { apiCall, cryptoSession, localStore, wsUrl } from "./core";
 import { BellIcon, ChannelPane } from "./ChannelPane";
 import { ChannelSettingsDialog, CreateChannelDialog } from "./ChannelDialogs";
 import {
-  PersonMenu, ShareDialog, Stage, VoiceBar, VoiceRoster,
+  CallView, PersonMenu, ShareDialog, Stage, VoiceBar, VoiceRoster,
   usePushToTalk, useVoiceSnapshot,
 } from "./VoiceUI";
 import { messageCooldown, mutedChannels, playSound, useMutedChannels, useVoiceSounds } from "./sounds";
@@ -106,6 +106,9 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   usePushToTalk(voiceClient, vsnap);
   useVoiceSounds(vsnap);
   const [stage, setStage] = useState<{ focus: string | null } | null>(null);
+  // The main area shows the call (tiles) rather than chat: on joining, or
+  // on clicking the voice channel you're in; a text channel turns it off.
+  const [callView, setCallView] = useState(false);
   const [person, setPerson] = useState<{ p: VoiceParticipant; at: { x: number; y: number } } | null>(null);
   const call = useMemo(() => apiCall(session.token, onExpired),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -191,6 +194,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
                 window.focus();
                 setOpenId(e.channelId);
                 setStage(null);
+                setCallView(false);
                 n.close();
               };
             }
@@ -280,6 +284,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
 
   // The stage closes itself when the last share ends.
   const screens = vsnap?.screens ?? [];
+  const showCall = callView && !!vsnap && vsnap.state !== "idle";
   useEffect(() => {
     if (stage && !screens.length) setStage(null);
     else if (stage?.focus && !screens.some((s) => s.id === stage.focus)) setStage({ focus: null });
@@ -406,6 +411,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
                   onClick={() => {
                     setOpenId(c.id);
                     setStage(null);
+                    setCallView(false);
                   }}
                   aria-current={c.id === openId ? "page" : undefined}
                   title={c.encrypted ? "End-to-end encrypted" : "Not encrypted"}
@@ -433,8 +439,12 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
                     <li key={c.id} className="voice-item">
                       <div className="channel-row">
                         <button className={`channel${here ? " active" : ""}`}
-                          onClick={() => void joinVoice(c.id)}
-                          title={here ? "You're in this call" : "Join the call"}>
+                          onClick={() => {
+                            setStage(null);
+                            setCallView(true);
+                            void joinVoice(c.id);
+                          }}
+                          title={here ? "Show the call" : "Join the call"}>
                           <SpeakerIcon />
                           <span className="name">{c.name}</span>
                           {c.force_ptt && <span className="tag small" title="Push-to-talk required">PTT</span>}
@@ -464,7 +474,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
             onShare={() => setDialog({ k: "share" })}
             onSettings={() => setDialog({ k: "prefs", tab: "voice" })} />
         )}
-        {screens.length > 0 && !stage && (
+        {screens.length > 0 && !stage && !showCall && (
           <button className="watch-banner" onClick={() => setStage({ focus: null })}>
             <span className="live">LIVE</span> {screens.length === 1 ? `${screens[0].name} is sharing` : `${screens.length} screens shared`} · Watch
           </button>
@@ -477,7 +487,12 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
       <main className="pane">
         {stage && voiceClient ? (
           <Stage voice={voiceClient} screens={screens} focus={stage.focus}
-            setFocus={(focus) => setStage({ focus })} onBack={() => setStage(null)} />
+            setFocus={(focus) => setStage({ focus })} onBack={() => setStage(null)}
+            backLabel={showCall ? "Back to Call" : "Back to Chat"} />
+        ) : showCall && voiceClient && vsnap ? (
+          <CallView voice={voiceClient} snap={vsnap}
+            channelName={voiceChannels.find((c) => c.id === vsnap.channelId)?.name ?? ""}
+            onWatch={(id) => setStage({ focus: id })} />
         ) : view ? (
           <ChannelPane key={view.channel.id} view={view} call={call} userId={session.user_id} username={session.username} canDeleteAny={canDeleteAny}
             canManageStickers={can("manage_stickers")} />
@@ -493,7 +508,10 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           onCreated={(c) => {
             setDialog(null);
             void chat.refreshChannels().then(() => {
-              if (c.kind === "text") setOpenId(c.id);
+              if (c.kind === "text") {
+                setOpenId(c.id);
+                setCallView(false);
+              }
             });
           }}
         />
