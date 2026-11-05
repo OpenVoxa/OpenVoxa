@@ -706,9 +706,11 @@ details summary { cursor: pointer; color: var(--muted); }
 .device-name .tag { margin-left: 6px; }
 
 /* ------------------------------------------------------ M5 session B */
-.modal.wide { max-width: 600px; }
-/* Fixed height (Settings, Server settings): the body scrolls, the footer stays put. */
-.modal.fixed { height: min(680px, calc(100vh - 32px)); display: flex; flex-direction: column; overflow: hidden; }
+/* Settings and Server settings: 80% of the window (Ryan, 2026-11-05), at
+   least the old 600 x 680 where the window has room; the body scrolls, the
+   footer stays put. */
+.modal.wide { width: max(80vw, min(600px, calc(100vw - 32px))); max-width: calc(100vw - 32px); }
+.modal.fixed { height: max(80vh, min(680px, calc(100vh - 32px))); max-height: calc(100vh - 32px); display: flex; flex-direction: column; overflow: hidden; }
 .modal.fixed > .modal-body { flex: 1; min-height: 0; overflow-y: auto; }
 .modal-foot { padding: 12px 20px 16px; border-top: 1px solid var(--line); }
 .sidebar-head { display: flex; align-items: center; justify-content: space-between; }
