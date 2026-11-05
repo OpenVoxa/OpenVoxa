@@ -165,13 +165,16 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 
 ## Current state (rewrite every session)
 
-_2026-11-05._ **Voice channel view done** (`fd4fcde`; decisions.md
-"Voice channel view", Implementation notes "Safari screen share
-layers"): a tile per person while in a call, share previews from a
-half-size VP8 copy (WebKit sharers: one H.264 copy), Watch / Listen /
-Fullscreen / Hide. Before it: per-app share sound (desktop step 3,
-Rust helper `client-desktop/audio-helper/`) and shares received on
-demand (silent until Listen). Ryan's desktop app runs build `-e`.
+_2026-11-05._ **Desktop updates done** (`87a434a`, `c20c0e6`; decisions.md
+"Desktop updates", Implementation notes Electron): per-user NSIS
+installer, in-app updates from `deploy/desktop-updates` (Caddy,
+`/desktop-updates/`), green arrow + "Restart to Update" in the pane,
+installs on quit too, differential (~1 MB a patch). DU1-DU7 passed.
+Ryan's app is 0.1.7 (installed in the old `Programs\@openvoxaclient-desktop`
+folder; harmless). Publish a patch: `cd client-desktop && npm run
+release:win` (bumps version; commit the package.json bump). Also this
+session: README, deploy/README.md and decisions.md reorganised
+(`81ee474`).
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts: tuckilufigus (Ryan), staff, openvoxaadmin,
@@ -181,11 +184,12 @@ demand (silent until Listen). Ryan's desktop app runs build `-e`.
   bind mount `/mnt/openvoxa-blobs`. Account keys in volume
   `deploy_key-data`, wrapped under a KEK (Ryan holds the only copies),
   backed up daily 03:30 to `~/openvoxa-key-backups` (7 days). Closed off:
-  Ryan is the only user.
+  Ryan is the only user. Disk is at 86% (17 GB of Docker build cache).
 - Known gaps and untested steps (K1 flows 2-5, G2-G4, P3, D1): decisions.md
   Open items.
-- **Next:** Ryan picks from the backlog: touchscreen push-to-talk button,
-  avatar uploads (replace the tiles' letter circles; Open items);
-  Ryan's list (decisions.md "Planned: server icons, updates, bug
-  reports, channel menus, avatars"): discuss each before building.
-  Minimized windows probably missing from our picker (unchecked).
+- **Next:** the About tab in Settings: proposal and three open questions
+  in decisions.md Feature decisions, "Planned" (Ryan paused it
+  mid-discussion; start by asking him those questions). Then the
+  backlog: touchscreen push-to-talk button, avatars, server icons, bug
+  reports, channel menus (discuss each before building). Desktop
+  updates later: code signing, "server needs app version X".

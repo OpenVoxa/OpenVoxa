@@ -1083,6 +1083,23 @@ at the end.
   (like usernames). Open: size and type limits, animated GIFs, whether
   moderators can remove an offensive avatar (likely yes, logged in
   the moderation log).
+- **About tab in Settings** (Ryan, 2026-11-05; Claude's proposal, not
+  agreed yet). A tab after Sounds, in each server's web client, so it
+  works in browsers too. Sections: *OpenVoxa* (description, AGPL-3.0,
+  the GitHub link, later "Report a Bug"); *This server* (address, server
+  version, your account and groups); *This app* (web client version; in
+  the desktop app also the app, Electron and Chromium versions; in a
+  browser, its name); *Connection* (live kbps up and down while in a
+  call, from the call's WebRTC statistics, and how long the chat
+  connection has been up). Needs: the server to know its version (git
+  commit and date stamped by the Docker build, `GET /api/v1/version`);
+  one more read-only call in the desktop app's view preload for the app
+  version. A page can only measure its own traffic, so kbps covers the
+  call only ("Not in a call" otherwise). Open questions for Ryan: who
+  sees the exact server version (recommended: staff only, since it
+  tells an attacker which known bugs apply; the address for everyone);
+  one combined kbps figure or broken down (voice, screen share, per
+  person); extras such as "Copy Debug Info" for bug reports.
 - **Device linking by QR** (planned in step 13, after M1): a logged-in
   device shows a QR of `https://server/link#<one-time secret>` (about 2
   minutes, single use); the phone's camera opens it; the server only
@@ -2636,9 +2653,9 @@ verified; the section named holds the design.
 - [ ] Desktop app, later: badges via a preload, voice handoff between
       servers, global push-to-talk, tray, notifications, idle unload of
       background servers.
-- [ ] About tab in Settings (Ryan, 2026-11-05): GitHub repository,
-      server address, live kbps up and down, app version, server version,
-      other information about the program and the server. Design first.
+- [ ] About tab in Settings (Ryan, 2026-11-05): proposal and open
+      questions in Feature decisions, "Planned". Paused by Ryan; resume
+      with the design talk.
 - [ ] Desktop updates, later: code signing; "this server needs app
       version X".
 - [ ] Minimized windows are probably missing from our share picker, as
