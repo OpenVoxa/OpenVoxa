@@ -47,16 +47,23 @@ If this project ever has a monetization strategy, something has gone wrong. Plea
 - **Encrypted attachments**: each file gets its own key, sent inside the encrypted message.
 - **Membership follows access.** Who belongs in a channel's encryption group is decided by who may view the channel. Clients add and remove devices automatically, and every join and leave is announced to the people in the channel, so a device the server slips in cannot hide.
 - **Recovery key.** At sign-up you get 12 words (and a QR code). They encrypt a backup of your message history, which the server stores without being able to read. A new device restores your history with the words.
-- **Device lifecycle**: a device is the cryptographic identity, not the account. Unused devices expire after 30 days, and signing out revokes the device and wipes its keys.
+- **Encrypted local storage.** Keys and message history on your device are encrypted under your password, and signing a session out from elsewhere locks a lost laptop's copy.
+- **Device lifecycle**: a device is the cryptographic identity, not the account. Unused devices expire after 30 days, and "Sign out and erase" wipes a shared computer.
 
 **The web client** (served at `/`)
 
-- Sign-up and login with sensible password rules (length, a common-password list, zxcvbn strength meter), recovery key setup and restore
+- Sign-up and login with sensible password rules (length, a common-password list, zxcvbn strength meter), recovery key setup and restore, "Stay signed in"
 - Discord-style layout: channel list with unread markers, message history that loads as you scroll, edit and delete your own messages
-- Voice: click a channel to join, see who's in every call, speaking indicators, mute, deafen, push-to-talk with a key of your choice, per-person volume, microphone and speaker pickers
-- Screen sharing with quality presets (up to 4K or 1440p60), a choice between sharp text and smooth motion, optional audio, and a stage view with fullscreen and live stats
+- Chat extras: @mentions, emoji (picker and `:shortcodes:`), reactions, server-wide custom stickers, username colours by group
+- Voice: click a channel to join, a tile per person in the call, speaking indicators, mute, deafen, push-to-talk with a key of your choice, per-person volume, microphone and speaker pickers
+- Screen sharing with quality presets (up to 4K or 1440p60), a choice between sharp text and smooth motion, optional audio, live previews in the call tiles, and a full view with fullscreen and live stats. Nothing of a share is downloaded until you look at it, and its sound plays only after you click Listen
 - Channel management for admins: create text and voice channels, choose who can view and post, retention, history sharing, forced push-to-talk, delete
-- Notification sounds for joins, leaves, screen shares, mentions and new messages: pick from a built-in library, use your own files, set the volume or turn each one off, set a cooldown for message sounds, and mute sounds per channel (saved per browser)
+- Notification sounds for joins, leaves, screen shares, mentions and new messages: pick from a built-in library or your own files, per-sound volume, a cooldown, per-channel mute
+
+**The desktop app** (Electron, Windows build; pre-release)
+
+- A pane of server icons down the left, like Discord: each bookmark opens that server's own web client in an isolated view, so accounts and keys never mix between servers
+- Its own screen share picker, and on Windows 10 2004 or later, sharing a window carries that program's sound only
 
 **The server**
 
@@ -65,7 +72,8 @@ If this project ever has a monetization strategy, something has gone wrong. Plea
 - **Voice** via a self-hosted LiveKit SFU, tested on desktop and iOS Safari. The server never touches media; it only hands out tokens
 - **Rate limiting** on authentication, per IP and per account
 - **Rich text**: markdown, link previews with SSRF-hardened unfurling, file attachments with inline image, audio and video playback, and GIF search that never puts your users in front of a third party
-- **Moderation**: message removal, reports verified against the server's own copy (for unencrypted channels), and bans that cut off live connections and calls immediately, and server mutes (for a while or until lifted) that take someone's microphone away in every voice channel
+- **Moderation**: message removal, reports verified against the server's own copy (for unencrypted channels), bans that cut off live connections and calls immediately, server mutes (for a while or until lifted) that take someone's microphone away in every voice channel, and a moderation log
+- **Screen share limit**: an optional server-wide cap on share quality, with a built-in upload speed test to suggest one
 - **Retention and deletion** that actually work: channels display their policy and a sweep enforces it, account deletion destroys content (including in the server's backups, by destroying the account's key), and both propagate live to connected clients
 - **TLS** with three documented deployment paths
 
@@ -73,10 +81,10 @@ Permissions are enforced where it counts. A user without post rights in a voice 
 
 ## What it's meant to do, and doesn't yet
 
-- **A desktop client** (Electron) with a global push-to-talk key.
-- **Encrypting the local message archive** on your device with the recovery key.
+- **More of the desktop app**: a global push-to-talk key, unread badges, tray, notifications, an installer with updates.
 - **Linking a new device by QR code**, and **two-factor sign-in** (TOTP).
 - **Several devices per account at once.** The design supports it; only one device per account is built.
+- **User avatars, server icons, channel right-click menus, a touchscreen push-to-talk button.**
 - **An independent security review.** See the banner.
 
 ## What it's explicitly not doing
@@ -101,7 +109,7 @@ Stating the limits plainly is most of the point. A privacy tool that is vague ab
 ### What this does not protect against, ever
 
 - **A compromised device.** Plaintext lives on your computer. If someone has your machine, they have your messages.
-- **Metadata.** The server can see who talks to whom, when, and how often, including who was @mentioned in a message. It cannot see what was said. This is true of essentially every system in this category, Signal included, and pretending otherwise would be dishonest.
+- **Metadata.** The server can see who talks to whom, when, and how often, including who was @mentioned in a message and who reacted with which emoji. It cannot see what was said. This is true of essentially every system in this category, Signal included, and pretending otherwise would be dishonest.
 - **Other people in the channel.** Anyone who can read a message can screenshot it. Cryptography does not fix social problems.
 - **A malicious build.** You run the binary we ship. Reproducible builds are a goal, not a feature yet.
 
@@ -113,36 +121,9 @@ We did not write our own cryptography, which is the single best decision in the 
 
 ## Status
 
-| Milestone | Status |
-| --- | --- |
-| Design decisions documented | ✅ Done |
-| Repo structure, license, contribution model | ✅ Done |
-| Server skeleton, auth, text channels | ✅ Done |
-| Permissions | ✅ Done |
-| Rate limiting and session hygiene | ✅ Done |
-| Voice via LiveKit | ✅ Done |
-| TLS deployment | ✅ Done |
-| Screen sharing | ✅ Done |
-| Retention, deletion, live events | ✅ Done |
-| Rich text: markdown, previews, attachments | ✅ Done |
-| GIF picker | ✅ Done |
-| Moderation: removal, reports, bans | ✅ Done |
-| `client-core` package and MLS toolchain | ✅ Done |
-| Device identity and key packages | ✅ Done |
-| End-to-end encrypted text (MLS) | ✅ Done |
-| End-to-end encrypted voice and screen sharing | ✅ Done |
-| Automatic encryption membership, join/leave notices | ✅ Done |
-| Recovery key and encrypted history backup | ✅ Done |
-| Web client: sign-up, recovery, text chat | ✅ Done |
-| Web client: channel management | ✅ Done |
-| Web client: voice and screen sharing | ✅ Done |
-| Web client: attachments, GIFs, previews, notices | ✅ Done |
-| Web client: settings and admin panes | ✅ Done |
-| Account deletion that reaches backups (crypto-shredding) | ✅ Done |
-| Desktop client | ⬜ Not started |
-| Independent security review | ⬜ Not started |
+Everything in "What works today" is built and tested by us, on one homelab server with a handful of accounts. Not started: the independent security review, reproducible builds, mobile apps. The review is the one that matters now; built and tested by us is not the same thing as safe.
 
-The review row is the one that matters now. Everything above it is built and tested by us, which is not the same thing as safe.
+The full build history, with what was tested when, is in [`docs/decisions.md`](docs/decisions.md) ("Build order").
 
 ## How it's built
 
@@ -151,7 +132,7 @@ The review row is the one that matters now. Everything above it is built and tes
 | Server | Go |
 | Database | PostgreSQL |
 | Client core | TypeScript, shared between desktop and web |
-| Desktop | Electron |
+| Desktop | Electron shell; each server's own web client in its own view |
 | Web | React + Vite, embedded in the server binary and served at `/` |
 | Media | [LiveKit](https://livekit.io), self-hosted |
 | Attachments | Content-addressed blobs on disk; local or network storage |
@@ -173,21 +154,9 @@ cp .env.example .env
 docker compose --profile tls up -d
 ```
 
-**TLS is not optional in practice.** Browsers refuse microphone and screen-capture access outside a secure context, so without it voice does not work anywhere but `localhost`. Three paths are provided, and you pick one with `CADDYFILE` in `.env`:
+**TLS is not optional in practice.** Browsers refuse microphone and screen-capture access outside a secure context, so without it voice does not work anywhere but `localhost`. Three ready-made Caddy setups cover a public domain, a domain with no inbound access (private IPs, CGNAT), and LAN only; or put your own reverse proxy in front.
 
-| Your situation | Use | Needs |
-| --- | --- | --- |
-| Public domain, ports 80/443 open | `Caddyfile.http` | Domain and email |
-| Public domain, no inbound access | `Caddyfile.dns` | DNS provider API token |
-| LAN only, no domain | `Caddyfile.internal` | Caddy's root cert installed on each client |
-
-The second path covers private IPs and CGNAT: Caddy proves domain ownership through a DNS TXT record, so nothing needs to reach you from the internet, and you still get a publicly trusted certificate.
-
-Already running nginx, Traefik, or a tunnel? Skip the `tls` profile entirely, point your own proxy at the server, and set `OPENVOXA_TRUST_PROXY=true`.
-
-Attachments are stored by content hash on whatever you mount at the blob directory, so a NAS works as well as local disk. Size limits are yours to set. GIF search is off until you add a provider key, and even then every image is proxied through your server.
-
-Full details in [`deploy/README.md`](deploy/README.md).
+Everything else, from the first administrator account to TLS, LiveKit networking, storage, key backups and troubleshooting, is in [`deploy/README.md`](deploy/README.md).
 
 ## Contributing
 

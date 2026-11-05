@@ -2,13 +2,15 @@
 
 Everything here brings up four containers: PostgreSQL, a LiveKit SFU, the OpenVoxa server, and optionally Caddy for TLS.
 
-**This is pre-alpha software with no encryption. Do not expose it to the internet.** A LAN or a private network is the right place for it today.
+**This is pre-alpha software whose encryption has never been reviewed. Do not expose it to the internet.** A LAN or a private network is the right place for it today.
+
+Contents: [Quick start](#quick-start) · [First account](#first-account-and-administrator-recovery) · [TLS](#choosing-a-tls-path) · [Own reverse proxy](#using-your-own-reverse-proxy) · [LIVEKIT_NODE_IP](#livekit_node_ip-is-the-setting-that-breaks-things) · [Storage](#attachments-and-storage) · [Account keys](#account-keys-and-backups) · [Screen share limit](#screen-share-limit) · [GIF search](#gif-search) · [Updating](#updating) · [Troubleshooting](#troubleshooting) · [Secrets](#secrets) · [Resetting](#resetting)
 
 ## Requirements
 
 - Docker and Docker Compose v2
 - A machine with room for a few GB of images and build cache. 20 GB of disk is not enough if you build Caddy from source.
-- UDP ports 50000-50100 reachable from your clients
+- UDP ports 50000-50100 reachable from your clients (and TCP 7881 for clients that can't use UDP)
 - Disk for attachments, which can be local or network storage
 
 ## Quick start
@@ -148,6 +150,8 @@ LiveKit advertises this address as the destination for RTP. Media travels over U
 | LAN only | The server's LAN address, e.g. `192.168.1.9` |
 | Internet facing | Your public IP, with UDP 50000-50100 forwarded |
 
+Getting it wrong gives you a connection that establishes successfully and then carries no audio. Signalling works, the participant list populates, and nobody hears anything. It is the most common self-hosted LiveKit failure by a wide margin.
+
 LiveKit runs on the host's network and also offers the host's own addresses (`advertise_internal_ip` in `livekit.yaml`). So with the public IP set here, clients on your LAN still connect straight to the LAN address, and your router doesn't need hairpin NAT. Forward TCP 7881 too if some outside clients can't use UDP. Don't forward 7880: browsers reach it through Caddy at `/rtc`.
 
 ### Home servers whose public IP changes
@@ -160,13 +164,11 @@ LiveKit reads the node IP only when it starts. `scripts/update-node-ip.sh` check
 
 Your DNS record still needs its own dynamic DNS updater; this only covers LiveKit.
 
-Getting it wrong gives you a connection that establishes successfully and then carries no audio. Signalling works, the participant list populates, and nobody hears anything. It is the most common self-hosted LiveKit failure by a wide margin.
-
 ## Attachments and storage
 
 Uploaded files are stored by the SHA-256 of their contents, spread across two levels of hex directories. In channels that are not end-to-end encrypted the server encrypts each file under its own key first (see [Account keys](#account-keys-and-backups)), so identical uploads are no longer stored once; in encrypted channels the browser has already encrypted them. The database holds the references; the bytes live wherever `OPENVOXA_BLOB_DIR` points.
 
-Two settings in `.env`:
+The size limit per file is set in `.env`:
 
 ```
 OPENVOXA_MAX_ATTACHMENT_MB=25
@@ -183,6 +185,54 @@ docker compose --profile tls down
 docker volume rm deploy_blob-data
 docker compose --profile tls up -d --build
 ```
+
+### Using network storage
+
+Attachments are a good fit for a NAS: write once, read many, no locking. **Do not put Postgres on network storage** — that is a well-known way to corrupt a database.
+
+Export a share to the Docker host, restricted to its IP specifically rather than a subnet. NFS trusts whatever UID a client claims, so the IP restriction is doing real work.
+
+Set ownership on the share, from the NAS:
+
+```bash
+chown -R 65532:65532 /path/to/share
+chmod 750 /path/to/share
+```
+
+Mount it on the Docker host and make it persistent in `/etc/fstab`:
+
+```
+nas.example:/export/openvoxa  /mnt/openvoxa-blobs  nfs  defaults,_netdev,soft,timeo=100,noatime  0  0
+```
+
+`_netdev` stops boot hanging before networking is up. `soft,timeo=100` makes the mount fail fast rather than blocking forever when the NAS is unreachable; without it a NAS reboot can wedge the server.
+
+Confirm the container's UID can write through a Docker mount:
+
+```bash
+docker run --rm -u 65532:65532 -v /mnt/openvoxa-blobs:/test alpine \
+  sh -c 'touch /test/probe && echo writable && rm /test/probe'
+```
+
+Then point the server at it in `docker-compose.override.yml`:
+
+```yaml
+services:
+  server:
+    volumes:
+      - /mnt/openvoxa-blobs:/var/lib/openvoxa/blobs
+```
+
+Migrating from an existing named volume:
+
+```bash
+docker run --rm -v deploy_blob-data:/from -v /mnt/openvoxa-blobs:/to -u 65532:65532 alpine \
+  sh -c 'cp -a /from/. /to/'
+```
+
+Verify attachments still load before removing the old volume. That volume is your undo.
+
+If the share becomes unavailable, uploads and downloads fail while chat and voice keep working.
 
 ## Account keys and backups
 
@@ -297,54 +347,6 @@ Keys come from [developers.giphy.com](https://developers.giphy.com) (instant, fr
 **Clients never contact the provider.** Thumbnails are proxied through your server, and a chosen GIF is downloaded once and stored as an ordinary attachment, so it obeys the channel's retention policy and lives on your own disk. Your server does send search queries to the provider, so they see what this instance searches for but not who searched. If that is not acceptable for your deployment, leave the feature off.
 
 GIFs count against `OPENVOXA_MAX_ATTACHMENT_MB` and against your storage. A couple of megabytes each is normal.
-
-### Using network storage
-
-Attachments are a good fit for a NAS: write once, read many, no locking. **Do not put Postgres on network storage** — that is a well-known way to corrupt a database.
-
-Export a share to the Docker host, restricted to its IP specifically rather than a subnet. NFS trusts whatever UID a client claims, so the IP restriction is doing real work.
-
-Set ownership on the share, from the NAS:
-
-```bash
-chown -R 65532:65532 /path/to/share
-chmod 750 /path/to/share
-```
-
-Mount it on the Docker host and make it persistent in `/etc/fstab`:
-
-```
-nas.example:/export/openvoxa  /mnt/openvoxa-blobs  nfs  defaults,_netdev,soft,timeo=100,noatime  0  0
-```
-
-`_netdev` stops boot hanging before networking is up. `soft,timeo=100` makes the mount fail fast rather than blocking forever when the NAS is unreachable; without it a NAS reboot can wedge the server.
-
-Confirm the container's UID can write through a Docker mount:
-
-```bash
-docker run --rm -u 65532:65532 -v /mnt/openvoxa-blobs:/test alpine \
-  sh -c 'touch /test/probe && echo writable && rm /test/probe'
-```
-
-Then point the server at it in `docker-compose.override.yml`:
-
-```yaml
-services:
-  server:
-    volumes:
-      - /mnt/openvoxa-blobs:/var/lib/openvoxa/blobs
-```
-
-Migrating from an existing named volume:
-
-```bash
-docker run --rm -v deploy_blob-data:/from -v /mnt/openvoxa-blobs:/to -u 65532:65532 alpine \
-  sh -c 'cp -a /from/. /to/'
-```
-
-Verify attachments still load before removing the old volume. That volume is your undo.
-
-If the share becomes unavailable, uploads and downloads fail while chat and voice keep working.
 
 ## Updating
 

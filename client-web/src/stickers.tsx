@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /**
- * Custom stickers (decisions.md Open items, "Custom stickers"): the
+ * Custom stickers (decisions.md Feature decisions, "Custom stickers"): the
  * server's set, the Stickers tab of the composer's emoji picker, a
  * sticker inside a message, and the Stickers tab of Server settings.
  *

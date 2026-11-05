@@ -4,6 +4,17 @@ Why things are the way they are, including the tradeoffs taken on purpose.
 Read this before proposing architectural changes; most of the obvious
 questions already have recorded answers.
 
+How it is laid out: **Goals**, **Threat model**, **Blocking decisions**
+and **Architecture** are the fixed frame. **Feature decisions** has one
+subsection per feature, grouped (text and chat, voice and screen share,
+accounts and administration, desktop app, planned). **Permission
+groups** and **Encryption** are the two designs everything else leans
+on. **Known tensions** are tradeoffs without a clean answer.
+**Implementation notes** are hard-won gotchas, grouped by area (MLS,
+LiveKit, Electron, server, web client, builds): read the relevant group
+before touching that code. **Build order** says what was built when,
+with test IDs. **Open items** is the backlog.
+
 ## Goals and scope
 
 OpenVoxa is a self-hosted text, voice and screen-sharing platform that
@@ -27,7 +38,7 @@ deployments. Target is tens of concurrent users per instance.
 
 ## Threat model
 
-Goes in the README verbatim. Stating the limits is the point.
+The README carries the long version. Stating the limits is the point.
 
 **Protects against:** a curious or malicious server operator reading
 message content in encrypted channels; a network observer; another
@@ -62,23 +73,85 @@ over.
 | 9 | Client shell | Electron | Bundled Chromium gives identical WebRTC, insertable-streams and screen-capture behaviour on every OS. Predictability beats binary size for a media app. |
 | 10 | License | AGPLv3, DCO sign-off | Network-use copyleft prevents a closed-source hosted fork. DCO rather than a full CLA. |
 
+## Architecture
+
+Five components, three of them off the shelf:
+
+```
+Desktop (Electron) ─┐                      ┌─ LiveKit SFU
+                    ├─ WebSocket + REST ──▶├─ (relays encrypted media)
+Web (React) ────────┘                      │
+                              │            │
+                    OpenVoxa server (Go) ──┘ mints JWTs, calls admin API
+                              │
+              Postgres + blob directory + account key folder
+```
+
+The server does auth, channel and permission state, message relay and
+storage, MLS message routing (forwarding opaque blobs it cannot read),
+retention enforcement, LiveKit token minting and room administration
+(kicks, permission changes), link unfurling and file metadata. It never
+decrypts anything in an encrypted channel and never sits in the media
+path.
+
+The server acts as an MLS delivery service: it forwards handshake and
+application messages without understanding them, since all group key
+agreement happens on clients. It therefore needs no MLS implementation.
+
+| Layer | Choice |
+| --- | --- |
+| Server | Go, one binary with the web client embedded |
+| Database | PostgreSQL |
+| Client core | TypeScript (`client-core`), protocol and crypto, no UI |
+| Web client | Vite + React + TypeScript, plain hand-written CSS |
+| Desktop shell | Electron; each server's own web client in its own view |
+| Media | LiveKit, self-hosted, pinned exactly |
+| Reverse proxy | Caddy, optional |
+| Group encryption | MLS (RFC 9420) via ts-mls, behind an `MlsProvider` interface |
+
+Repo layout:
+
+```
+/server          Go: HTTP + WebSocket, Postgres, LiveKit tokens and admin calls,
+                 embedded web client (webui/), host commands (cli.go)
+/client-core     TypeScript: protocol, MLS glue, chat and voice logic, storage
+/client-web      React web client, served by the server at /
+/client-desktop  Electron shell, server pane, Windows audio helper (Rust)
+/deploy          docker-compose, Caddy configs, LiveKit config, scripts
+/docs            this file
+```
+
+The `client-core` split is non-negotiable: protocol, crypto, chat and
+voice logic live there, and client-web only draws snapshots of it.
+
+**How the web client is served** (decided with Ryan 2026-10-31, step
+13). The Go binary embeds the client-web build (`webui/`, `webui.go`)
+and serves it at `/` as a single-page app. Same origin keeps the LiveKit
+E2EE worker working (browsers refuse cross-origin workers). client-web
+imports client-core as source (`@core/*` in tsconfig,
+`resolve.tsconfigPaths` in Vite); the Dockerfile builds client-core,
+then client-web, then Go. The desktop app does not bundle the client: it
+loads each server's own (see "Server browser and desktop shell").
+
 ## Feature decisions
 
 | Area | Decision |
 | --- | --- |
-| Guest access | Off by default, admin-toggleable per instance |
-| File attachments | Content-addressed blobs on local disk, deduplicated by SHA-256. Per-file size limit set by the admin. Attachments inherit their channel's retention through the message that carries them. |
-| Moderation | Client-supplied plaintext with server-side signature verification |
+| Defaults | Least friction for end users: visual pop-ups off, in-page sounds on. |
+| Guest access | Planned: off by default, admin-toggleable per instance. The built-in Everyone group replaced the guest role; there is no anonymous or invite sign-up yet (Open items). |
+| File attachments | Blobs on disk named by the SHA-256 of the stored bytes. Plaintext channels seal every file under the uploader's account key and encrypted channels encrypt in the browser, so nothing is deduplicated (Encryption). Per-file size limit set by the admin. Attachments follow their message's retention. |
+| Moderation | Message removal by author or moderator; reports verified server-side (against the server's copy in plaintext channels; by MLS signature in encrypted ones, not built yet); bans that revoke sessions, live connections and calls; server mute. Purging a banned user's history is administrator-only and separate from the ban itself. |
 | Voice input | Push-to-talk and voice activation, user-selectable; moderators can force PTT per voice channel (advisory: the client complies) and server-mute people (enforced by LiveKit). See "Server mute". |
-| Media stack | LiveKit, self-hosted. MIT-licensed, built-in E2EE, SFU relays ciphertext only. |
+| Media stack | LiveKit, self-hosted. Apache-2.0, built-in E2EE, SFU relays ciphertext only. |
 | GIF provider | Admin-selectable between Giphy and Tenor, or disabled entirely (the default). Every image is proxied by the server and a chosen GIF is stored locally as an attachment, so clients never contact the provider. |
-| Moderation | Message removal by author or moderator; reports verified server-side; bans that revoke sessions and live connections. Purging a banned user's history is administrator-only and separate from the ban itself. |
 | Markdown | Hand-rolled minimal renderer rather than a library: bold, italic, strikethrough, inline and fenced code, blockquote, autolinks. Small enough to audit, and avoids trusting a dependency with untrusted input. |
 | TLS | Required in practice. Caddy provided but optional; three deployment paths documented. |
-| Permissions | Admin-defined groups, each with its own permission switches, assigned to channels (Discord roles / TeamSpeak server groups). Replaced the fixed four roles in build-order step 12. Decided by Ryan, 2026-10-30; model settled 2026-10-31, see "Permission groups" below. |
+| Permissions | Admin-defined groups, each with its own permission switches, assigned to channels (Discord roles / TeamSpeak server groups). Replaced the fixed four roles in build-order step 12. Decided by Ryan, 2026-10-30; model settled 2026-10-31, see "Permission groups". |
 | Encrypted channel membership | Follows channel access automatically. Nobody adds people to encryption groups by hand; every join is announced to the channel: per person by default, per device as a client option (Ryan, 2026-10-31). Decided by Ryan, 2026-10-30; see Encryption. |
 
-### How reporting works under encryption
+### Text and chat
+
+#### How reporting works under encryption
 
 The server has no decryption key, so the plaintext of a reported message
 must come from a client that can read it. That plaintext is not trusted.
@@ -100,7 +173,39 @@ Requirements that follow:
 - Every report is logged with its verification result.
 - In plaintext channels the server compares against its own stored copy.
 
-### Mentions are metadata the server sees
+#### Moderation in the web client
+
+Built 2026-11-03 (step 13, M5 session C).
+
+- **Report** on other people's messages (`ChannelPane.tsx`
+  ReportDialog). It sends the text as shown; in an encrypted channel the
+  dialog says so, since that reveals it to the server and it stays
+  unchecked.
+- **Server settings** gains Reports (needs view_reports:
+  Open/Actioned/Dismissed/Rejected; a Checked / Didn't match / Unchecked
+  tag; Delete message, Ban author, Dismiss, Mark actioned; deleting and
+  banning stay separate calls from closing a report), Bans (needs ban;
+  Unban) and Log (Ban, View reports or Delete messages). Members rows get
+  Ban/Unban and, for administrators, Delete (type the username).
+- **Ban durations** are presets: 1 hour, 1/7/30 days, permanent (Ryan's
+  pick). Purge is administrator only.
+- **Server side:** `GET /users` adds `banned` and `banned_until`; reports
+  add channel name and `message_gone`; administrator deletions write
+  `delete_user` to `moderation_log` (the username in detail, since the
+  row is gone); `GET /moderation-log` (`modlog.go`, `?before=` paging,
+  `?archived=1`).
+- **Pending reports:** a red dot on the Server settings gear for holders
+  of view_reports (Ryan asked for one). `reports_changed` goes only to
+  them (emitUsers) when a report is filed or resolved; the client
+  refetches the open list, also every 2 minutes and on focus as a
+  fallback; the dialog opens on Reports while any are open.
+- **Log archive:** entries older than
+  `server_settings.modlog_archive_days` (migration 0017, a one-row typed
+  table for server-wide settings; default 30, 1 to 3650, set by an
+  administrator in the Log tab) show under Archived. A view only;
+  nothing is deleted.
+
+#### Mentions are metadata the server sees
 
 Decided by Ryan, 2026-11-03 (option A of two). `@name` tags someone in a
 message and notifies them. The sender's client sends the mentioned user
@@ -127,8 +232,21 @@ and encrypted channels behave the same way.
 - **Forgery:** a sender can list someone without writing their name.
   The result is a notification with no visible mention, from a person
   who could already message that channel. Accepted.
+- **Built 2026-11-03** (after M5). Server: migration 0018
+  `message_mentions`, `mentions.go` (filter by the viewer rule, a
+  `mention` event via emitUsers to the mentioned only,
+  `GET /channels/{id}/members` for autocomplete), `mentions` on message
+  frames and history, `last_mention_at` per channel in the list. An edit
+  replaces the set and notifies only the newly added. Core:
+  `findMentions` (code skipped, exact username match first, then a
+  unique case-insensitive one), `ChatMessage.mentions` / `mentionsMe`,
+  `Chat.mentions` (channels with an unread mention, compared with the
+  read mark like unread) and a `mentioned` event. Web: `@` list in the
+  composer and the edit box, pills (stronger for you), highlighted rows,
+  a red `@` badge in the sidebar, a mention sound and opt-in desktop
+  notifications (who and where only, never the text) in Settings > Chat.
 
-### Reactions are metadata the server sees
+#### Reactions are metadata the server sees
 
 Decided by Ryan, 2026-11-04 (option A of two). Emoji reactions on
 messages (`reactions.go`, `message_reactions`, migration 0023).
@@ -159,7 +277,229 @@ messages (`reactions.go`, `message_reactions`, migration 0023).
   accent, hover lists who), click to toggle; "React" on hover and a "+"
   after the chips open the emoji picker beside the message.
 
-### Screen share quality limit
+#### Emoji
+
+Ryan, 2026-11-03; built 2026-11-04 (`client-web/src/emoji.tsx`).
+
+- A picker in the composer (categories, search, recently used, skin
+  tone, all per browser) plus `:name:` shortcodes (GitHub's set): ":smi"
+  opens a list, a complete ":fire:" converts on the closing colon, in the
+  composer and the edit box.
+- Unicode emoji are just text, so they work in encrypted channels
+  unchanged.
+- **Drawn with the system font** (decided with Ryan), no image set
+  shipped: looks native per OS; a bare Linux box may lack a colour emoji
+  font. Emoji newer than the device's font are hidden by a canvas test,
+  one sample per Emoji version (no colour font at all = no filtering).
+- Names and keywords from `emojibase-data` (MIT, pinned exactly), bundled
+  and lazy-loaded as its own chunk (~100 KB gzipped), no CDN.
+- Reactions got their own design pass ("Reactions are metadata the
+  server sees").
+
+#### Custom stickers
+
+Ryan, 2026-11-03: images uploaded to the server and sent like a GIF.
+Built 2026-11-04.
+
+Decided with Ryan:
+
+- **Server-wide:** one set for the whole server, not per channel.
+- **Moderators and administrators only**, through a new permission
+  (`manage_stickers`) given to the Moderator and Administrator groups by
+  default, not a check on group names, so it follows the permission-group
+  system like everything else.
+- **Stickers stay when their uploader deletes their account.** They are a
+  contribution to the server, not the uploader's own content, so they are
+  not sealed under the uploader's key and are not crypto-shredded; the
+  uploader reference just becomes NULL. The upload dialog says so before
+  the first upload.
+- **Limits** (2026-11-04): PNG, APNG, GIF, WebP (static or animated); not
+  SVG, which can carry script. The server checks the real type from the
+  file's bytes, not the name or what the browser claims. At most 1 MB and
+  512 x 512 pixels per file (Ryan chose the larger option for
+  longer/sharper animations), shown at about 160 px; at most 100 per
+  server. All three limits live in server settings. A name per sticker
+  (for search and `:name:` picking) and alt text for screen readers.
+- **Rejected (2026-11-03):** personal stickers that travel with the user
+  across servers. Without federation they could only be client-side
+  images re-uploaded per server, and anyone could post anything as a
+  "sticker" with no approval step: a moderation burden.
+
+Built as: `httpapi/stickers.go` + `stickerimage.go` (type and size read
+from the file's header bytes, no image library); migration 0024 (table,
+limits in server_settings, manage_stickers added to Moderator); blob GC
+keeps sticker blobs. A sticker message's text is the token
+`[sticker:<uuid>]` (client-core `stickers.ts`), so plain and encrypted
+channels work the same and a rename changes nothing sent; a removed
+sticker shows "Sticker removed". Images are fetched with the session
+token and shown from blob: URLs (no signed links to expire). Add and
+remove go in the moderation log.
+
+- **Picking** lives in a Stickers tab of the emoji picker (Ryan: no
+  separate button); reactions stay emoji only.
+- **`:name:` suggestions:** up to 3 matching stickers above the emoji in
+  the composer's shortcode list (not when editing). A sticker can't sit
+  inside text, so picking one sends it at once and removes the ":query";
+  a typed-out ":name:" never sends a sticker by itself (no accidental
+  sends).
+- **In encrypted channels** the message carries only the sticker's id,
+  inside the ciphertext; fetching the image still tells the server who
+  viewed which sticker, as with GIFs.
+
+#### Username colours
+
+Ryan, 2026-11-04; built the same day. A name is drawn in the colour of
+the account's highest group (highest `position`) that has one. Server
+data, the same for everyone.
+
+Decided with Ryan:
+
+- **Defaults** (migration 0025, matched by name): Administrator #d96932
+  (the accent, kept for now; change it if names look like buttons),
+  Moderator #ff00ff, Member #00ffff, Everyone none (plain text colour).
+- **Everywhere a name appears:** message authors, member list (Server
+  settings > Members), @mention chips and the @ suggestion list, voice
+  rosters. Coloured names are bold.
+- **Minimum contrast 3:1** against the background (#333333), the WCAG
+  level for bold text; checked in the picker and by the server. Measured:
+  orange 3.6:1, magenta 4.0:1, cyan 10.1:1, white 12.6:1 (4.5:1 would
+  refuse the default orange and magenta).
+- **On by default;** each user can hide them in Settings > Appearance
+  ("Show name colours", per browser).
+- **Server settings > Groups:** the server-wide switch, a "Default
+  colours" button, and a Colour button per group (picker, hex box, live
+  preview, contrast readout, "No colour").
+
+Built as: `perm_groups.colour` (nullable, lowercase #rrggbb) and
+`server_settings.name_colours` (on by default); `httpapi/namecolours.go`:
+`GET /name-colours` (every live account -> colour or null, all null when
+switched off), `PUT /name-colours` (the switch) and
+`POST /name-colours/defaults` (the four built-in groups back to the
+defaults; other groups and the switch untouched), both manage_groups. A
+group's colour is `PATCH /groups/{id}` with `colour` ("" clears); a
+colour-only edit is allowed on a group at your own rank too (so an
+administrator can recolour Administrator) and sends only `names_changed`,
+not an access change. Clients refetch on `names_changed` and
+`perms_changed`, and when a name appears that the map lacks (a new
+account; at most every 30 s).
+
+#### Text chat in the web client
+
+Scope decided with Ryan 2026-11-01 (step 13, M2).
+
+- **Layout:** Discord-like. Channel sidebar with text and voice channels,
+  message pane, composer, user panel with backup status and Log out.
+  Core text (send and receive in plain and encrypted channels, history
+  paging, archive with a backup upload scheduled per archived message),
+  editing and deleting your own messages, unread markers.
+- **Logic lives in client-core** `chat.ts`: `Chat` per account (event
+  socket, channel list, unread), `ChannelView` per open channel (socket,
+  decrypt/archive queue, paging, send/edit/delete). client-web only draws
+  snapshots.
+- **History paging:** the websocket sends the newest 50 on connect, with
+  `has_more`; older pages come from
+  `GET /channels/{id}/messages?before=<message id>&limit=` (max 100),
+  walking (created_at, id) backwards (index from migration 0016).
+- **Edits:** `PATCH /messages/{id}` `{body}`, author only, while they may
+  still post, never a deleted message. The body is replaced in place (no
+  server-side edit history) and `edited_at` set; `message_edited` carries
+  the new body. In an encrypted channel the new body is a fresh MLS
+  ciphertext of an envelope that keeps the old file keys (or the
+  attachments would become unreadable). Moderators delete; they do not
+  edit others' words.
+- **Unread:** `GET /channels` gives `last_message_at`; a new message sends
+  `channel_activity` (channel, message id, author, time, no content) to
+  the connected accounts that may view the channel and to nobody else,
+  since a hidden channel being busy is itself a leak. The client keeps
+  the last-read time per channel in localStorage; a channel seen for the
+  first time counts as read.
+
+#### Markdown, link previews and GIFs
+
+Built 2026-11-01 (step 13, M4 session A).
+
+- **Markdown** (`markdown.tsx`): bold, italic, strike, inline and fenced
+  code, "> " quotes, links; built as React elements, never HTML strings.
+- **Link previews** (`previews.tsx`) for the first link in a message, via
+  `POST /unfurl`, one request per link per page load. The server asks
+  YouTube's oEmbed endpoint for YouTube links (`unfurl.fetchYouTube`):
+  scraping watch pages failed (huge pages, consent redirects). A YouTube
+  link always gets its click-to-play box (youtube-nocookie), even when no
+  card could be fetched or previews are off: it contacts nobody until
+  clicked.
+- **Previews in encrypted channels are opt-in** (Settings, "Link previews
+  in encrypted channels", per browser). Ryan chose opt-in over never or
+  always: the server learns the link and preview images load from the
+  linked site, and the setting says so.
+- **GIF picker** (`gifs.tsx`): the button appears when `GET /gifs/config`
+  says enabled; trending on open, search as you type (400 ms pause);
+  picking one sends it at once as its own message (text may be empty with
+  an attachment).
+- **Join and leave notices** in encrypted channels: Chat forwards
+  `groups.onMembership` people changes for the open channel; notices sit
+  among messages by time.
+
+#### Attachments in the web client
+
+Built 2026-11-03 (step 13, M4 session B).
+
+- **Adding:** "+" button (several files at once), pasting files or
+  screenshots into the message box, or dropping files anywhere on the
+  channel. Each file uploads the moment it's added (`ChannelView.upload`,
+  which encrypts first in an encrypted channel) into a tray above the
+  composer with thumbnails and a remove button; Send waits for uploads
+  and leaves failed ones out. `ChannelView.send` takes `Upload`s alongside
+  plain `AttachmentInfo` and puts their keys in the envelope. Switching channel drops the tray; the
+  server sweeps unclaimed uploads after an hour.
+- **Limits:** at most 10 per message (the server's cap). Each encrypted
+  file's key and name (cut to 120 characters) ride in the message and
+  count toward its 4,000-character limit, so the error says to send
+  fewer files.
+- **Showing** (`attachments.tsx`): encrypted images decrypt on sight;
+  encrypted video and audio up to 10 MB too, bigger ones behind a "Load"
+  button, because GCM can't stream into a player; other files decrypt on
+  click and save through `download=`, never opening. The blob's type
+  comes from the inline allowlist, never the sender (stored XSS on our
+  origin otherwise). Decrypted copies are shared per attachment and
+  freed a minute after nothing shows them.
+- **Image viewer:** clicking an image opens an in-page viewer (name,
+  "Open in new tab", "Download"; Esc or a click outside closes).
+  Settings, "Open images in a new tab", switches to tabs (per browser,
+  off by default; Ryan asked for the choice). Ctrl/middle-click always
+  opens a tab.
+
+### Voice and screen share
+
+#### Voice and screen share in the web client
+
+Decided with Ryan 2026-11-01 (step 13, M3). Discord-like.
+
+- **Joining:** clicking a voice channel joins its call. The people in
+  each call are listed under the channel (live for your own call:
+  speaking ring, mic off, LIVE when sharing; the server's list for the
+  others). A voice bar above the user panel has mute, deafen, share
+  screen, voice settings and leave.
+- **Controls:** mic and speaker pickers, per-person volume and "mute for
+  me" (right-click a person; this device only), deafen (the mic button is
+  highlighted when deafened too), a push-to-talk key binding (default the
+  backquote key; a page only sees keys while focused, so character keys
+  are ignored while typing; the desktop app is to add a global key).
+- **Screen share options:** quality presets, sharp text or smooth motion,
+  share audio. The Advanced codec and simulcast options went with the
+  voice channel view (VP8 always). "Pin max quality" is a voice setting.
+- **Code:** client-core `voice.ts` (`VoiceClient`: media key ring,
+  `overwriteSlot`, PTT, share encodings). It imports LiveKit, so it is
+  not in client-core's index: client-web loads it on first join (LiveKit
+  is ~500 KB).
+- **Who is in each call:** `GET /voice/participants` asks LiveKit
+  (`ListParticipants`) for the voice channels the caller may view, cached
+  2 s, names from our database. No LiveKit webhooks: a client that joins
+  or leaves posts `POST /channels/{id}/voice/changed`, and the server
+  sends `voice_changed` to the channel's viewers only (as
+  `channel_activity`), who ask again; kicks send it too. Clients also poll
+  every 20 s for people who vanish silently.
+
+#### Screen share quality limit
 
 Decided with Ryan, 2026-11-04. One limit for the whole server
 (`sharelimit.go`, `server_settings.share_max_*`, migration 0026), set by
@@ -203,7 +543,7 @@ Per-group limits were considered and left for later.
   upload. The endpoint is not a documented API, so failures are shown
   as such. A per-user test (sharer's upload) is for later.
 
-### Server mute
+#### Server mute
 
 Decided with Ryan, 2026-11-04, instead of enforcing force-PTT.
 
@@ -240,182 +580,8 @@ Decided with Ryan, 2026-11-04, instead of enforcing force-PTT.
   and "Share audio too" is struck through with the reason.
 - **UI:** "Server Mute" in the right-click menu on a person in a call;
   Mute / Unmute and a "Muted" tag in Server settings > Members.
-- Tested on Docker SM1-SM10 (mute, rejoin, unmute without rejoining,
-  share audio dropped and restored mid-share, timed expiry, log, rank
-  refusal, and that leaving or the browser's Stop sharing still release
-  the capture).
 
-### Server browser and desktop shell
-
-Discussed with Ryan, 2026-11-04. Decided 2026-11-04: one isolated view
-per server loaded from that server; background servers stay connected;
-the pane is desktop-only (browser users keep one server per tab).
-
-- **Ryan's idea:** a pane of server icons down the left of the window,
-  like Discord. Each icon is a bookmark to one OpenVoxa server
-  (`openvoxa.example.com`, `anotherserver.domain.com`, ...), so
-  people can use any number of independent hosts without a central
-  platform or having to remember every address. Each server stays a
-  separate island: accounts, messages and keys never carry over between
-  servers. No federation; the servers never talk to each other.
-- **Why decide it before Electron:** the shell and the server browser
-  are one question (where the desktop app gets the web app from), and
-  choosing wrongly first would mean redoing logins and storage later.
-  Building Electron does not wait for the rest of the app: it loads the
-  same web client, so features arrive in it for free, and
-  Electron-only problems (screen share picker, E2EE worker,
-  permissions, storage) are cheaper to find early.
-- **Recommended approach: each server in its own view, loaded from that
-  server.** The desktop app draws the icon pane itself; clicking an icon
-  shows that server's own web app, from that server's address, in its
-  own isolated view (like a browser tab built into the app). Same
-  origin as today, so no CORS or login changes; each server's storage
-  (session, device keys, archive) is separated by the browser engine;
-  each server serves the client version that matches it, so no version
-  skew. Rejected: one client bundled into the app talking to every
-  server's API (CORS, auth rework, one client compatible with every
-  server version).
-- **Security (must be built in from day one):** bookmarking a server
-  means running its code inside the desktop app, and unlike a browser
-  tab an Electron page can be given access to the computer. Each
-  server's view gets its own storage partition, the sandbox,
-  `contextIsolation` on and `nodeIntegration` off, so it can't touch
-  files, the computer or other servers' views. The only bridge is a
-  tiny preload API whose messages the shell checks by sender: unread and
-  mention counts for the badge, "joined / left voice", push-to-talk key
-  events.
-- **Voice across servers:** in a call on one server at a time; joining
-  voice on server B makes the shell tell server A to leave. The global
-  push-to-talk key goes to the server with the call. That server always
-  stays loaded, or switching views would drop the call.
-- **Background servers:** recommended: they stay connected (messages
-  arrive live, badges and in-page sounds keep working, switching is
-  instant, like Discord), with perhaps an unload after a long idle
-  (say a day) until clicked. The alternative is connecting only the
-  server on screen: less memory, but no badges, and a catch-up on
-  click (nothing is lost; servers store messages). When the app is
-  closed nothing runs either way.
-- **Also needed:** a server name and icon set by the administrator
-  (Server settings; the bookmark falls back to the address); badges
-  need the web client to report counts to the shell (doing nothing in
-  a plain browser); adding a server by pasting an HTTPS address, later
-  an `openvoxa://` invite link; bookmarks stored only on the device,
-  with export / import.
-- **Decided (Ryan, 2026-11-04):** the approach above; background
-  servers stay connected (idle unload later, if memory demands it); the
-  pane is desktop-only, browser users keep one server per tab.
-- **First Electron step once agreed:** the shell with the server pane
-  and the security setup, then voice, screen share (Electron shows no
-  picker; we draw our own) and E2EE tested inside it. Tray,
-  notifications, auto-update and installers later.
-
-### Desktop screen share picker
-
-Decided with Ryan, 2026-11-04 (desktop step 2).
-
-- **Where:** the pane covers the window while the picker is open, like
-  the Add a Server form. The server's page only asks
-  (`getDisplayMedia`); what is shared is chosen in the app's own UI,
-  never by the page. Only the server on screen may open it, one at a
-  time.
-- **What:** Screens and Windows tabs, thumbnails refreshed every 2 s,
-  app icons on windows. Click to choose, then Share; double-click
-  shares at once. A lone screen is chosen for you. Cancel, Escape, a
-  click outside the card, or any pane button closes it without
-  sharing (like the web client's dialogs).
-- **Sound:** Electron offers only "all system sound" (`loopback`), and
-  only on Windows. So Share Sound appears when the page asked for
-  sound, works for whole screens on Windows, and is greyed out and
-  unticked (with the reason) for windows and on other systems. All
-  system sound includes the call's own voices, so the others could
-  hear themselves back (SD2). Fixed in step 3 with `restrictOwnAudio`
-  (RS2, "Per-app share sound"). Minimized windows are left out of
-  Edge's picker (RS3); ours very likely too (unchecked). To look at
-  with window sound.
-- **Next (Ryan: "important"):** per-app sound, below.
-
-### Per-app share sound (desktop step 3)
-
-Raised by Ryan, 2026-11-04, after SP2. Design agreed with Ryan the same
-day (A-D below); background first.
-
-- **The limit is Electron's, not Windows'.** Since Windows 10 2004
-  (build 19041) Windows can record one process tree's sound
-  (`ActivateAudioInterfaceAsync` with
-  `AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`), or everything
-  except one process tree. Discord's per-app sound works this way.
-- **Gives two things:** a window share carries that app's sound, and a
-  whole-screen share can exclude OpenVoxa's own process, so the call's
-  voices are never sent back (the SD2 risk).
-- **Needs:** a small native helper (Rust, Windows only) and a way to get
-  the audio into the server's page as a track. Server views have no
-  preload today; this would be the first narrow one (already foreseen
-  in "Server browser and desktop shell": a tiny preload API checked by
-  sender), offering only "the sound for the share just picked". Linux
-  and Mac stay as they are.
-
-Agreed design (Windows 10 2004 or later; older Windows, Mac and Linux
-unchanged):
-
-- **What is sent.** A window share: the sound of the program owning the
-  window and everything it starts. A whole-screen share: all sound
-  except OpenVoxa's own process tree, so the call never hears itself.
-- **A. Separate helper program, not an addon.** `openvoxa-audio.exe`
-  (Rust) ships in the app folder; the main process starts it when Share
-  is clicked ("include this window's process tree" or "exclude
-  OpenVoxa") and reads raw PCM from it. A crash costs only the share's
-  sound, no rebuild per Electron version, and it cross-builds on Docker.
-  About 5-20 ms extra latency, fine for share sound. The helper finds
-  the window's process itself (`GetWindowThreadProcessId` on the HWND in
-  the source ID).
-- **B. Process tree, not the exact process.** Covers nearly every app.
-  Apps whose sound comes from an unrelated process (some Store apps,
-  games run through a separate launcher): share the screen instead.
-- **C. Try Chromium first for screens.** Recent Chromium has a
-  constraint that leaves the browser's own sound out of a system-sound
-  share (`restrictOwnAudio`). If Electron 45 honours it with `loopback`,
-  the echo half needs no helper. Checked by experiment before relying
-  on it; window sound needs the helper either way. **Result
-  (2026-11-04): it works.** RO1, a throwaway Electron 45 test app on
-  Ryan's Windows PC, recorded its own 1 kHz beep through `loopback`
-  without the constraint and not with it. The web client now always
-  asks for share sound with `restrictOwnAudio: true` (ignored where
-  unknown); RS1-RS3 passed (screen share still carries other apps'
-  sound, no echo of the call's voices, Edge tab sharing unchanged). So
-  the helper is needed for window sound only.
-- **D. Share Sound tickbox.** Enabled for windows too where supported,
-  ticked by default as for screens; greyed out with the reason
-  elsewhere.
-- **The page's side.** A narrow preload in server views hands the page
-  the PCM for the share just picked, and nothing else; the page cannot
-  start a recording, only the user's click in the picker can. The page
-  turns it into an audio track published as the share's sound (E2EE as
-  usual). The helper stops when the share ends or the page goes away.
-- **Order:** (1) test build for C, (2) the helper alone, tested on
-  Windows by writing a WAV, (3) preload and page side, (4) full test
-  steps.
-- **Stage 2 done (2026-11-04):** `client-desktop/audio-helper/`
-  (`build-windows.sh` cross-builds on Docker; system DLLs only). Tested
-  through a throwaway Electron app reading its stdout as the app will:
-  WH1 (an Edge window: `msedge.exe` found from the picker's source ID
-  `window:<HWND>:0`, 7.98 s of 8 received, first sound after about
-  40 ms, clean WAV, exits when stdin closes), WH2 (another app's sound
-  stays out), WH3 (a silent window: silence, no error).
-- **Stage 3 done (2026-11-04):** window shares carry their program's
-  sound in the desktop app. The picker's Share Sound works on the
-  Windows tab where supported (build 19041+ and the helper present).
-  `viewPreload.ts`, the first preload in server views, exposes only
-  `openvoxaDesktop.startShareSound` / `stopShareSound`; the main process
-  answers only the server's own main frame, once, within 15 s of a
-  window pick with Share Sound ticked. The helper's PCM goes to the page
-  over IPC (`share-sound:data`); `client-web/src/desktopShareSound.ts`
-  turns it into a track through an AudioWorklet (40 ms start buffer,
-  drift trimmed above 200 ms) and VoiceClient publishes it as
-  ScreenShareAudio. The helper stops with the share, on leaving, page
-  reload or crash, and when the app quits (stdin closes). WS1-WS7
-  passed.
-
-### Receiving shares on demand
+#### Receiving shares on demand
 
 Ryan, 2026-11-04: a share's sound played for everyone in the call the
 moment it started, wanted or not. Quick fix agreed before the voice
@@ -432,7 +598,7 @@ channel view (next section):
   menu; it keeps playing after Back to Chat. The person's volume
   slider applies to it as before. LS1-LS7 passed.
 
-### Voice channel view
+#### Voice channel view
 
 Ryan, 2026-11-04. The main area shows the voice channel you are in as
 tiles, one per person; a sharer's tile shows the share preview instead,
@@ -471,24 +637,7 @@ with Hide (stop showing it), Listen and Fullscreen. Decided the same day:
   3974 kbps at 27 fps, so tiles take the small copy. Its width reads 0
   without the video element passed in.
 
-### Stay signed in
-
-Decided by Ryan, 2026-11-04, after ED5 (the desktop app signed him out
-on every restart, since closing it is closing the tab).
-
-- **"Stay signed in"** on the login and sign-up page, ticked by default,
-  remembered per browser. Ticked: the session and the unlock copy of the
-  local data key go in localStorage and survive closing the tab, the
-  browser or the desktop app, until the 30-day expiry or sign-out.
-  Unticked: sessionStorage, as before (gone when the tab closes).
-- **Still locked by the server:** the unlock copy is encrypted under the
-  per-session secret the server holds, so signing the session out (here,
-  "end other sessions", or from another device) still locks a lost
-  laptop's keys.
-- **Tabs:** a second tab picks up the stored session but is refused by
-  the one-tab-per-account Web Lock, as before; it never signs anyone out.
-
-### Speaking indicator
+#### Speaking indicator
 
 Ryan, 2026-11-04 (ED7): the green ring lagged about a second both ways.
 LiveKit's speaker updates (`ActiveSpeakersChanged`) default to every
@@ -497,57 +646,7 @@ LiveKit's speaker updates (`ActiveSpeakersChanged`) default to every
 enough, the fallback is measuring levels in each client (WebAudio on
 every incoming track): near-instant, but CPU per participant.
 
-### Planned: server icons, updates, bug reports, channel menus, avatars
-
-Ryan's list, 2026-11-04. Recorded, not designed in detail yet: each gets
-a design talk before it is built. Recommendations below are Claude's.
-
-- **Server icon in the pane.** The administrator uploads an icon in
-  Server settings (with the server name); the pane shows it in place
-  of the letter, same 48 px circle, same hover and selected look; no
-  icon means the letter, as now. Recommended: an unauthenticated
-  `GET /api/v1/server-info` (name, icon URL) that the shell fetches,
-  since the pane must show icons before anyone signs in. The shell
-  accepts PNG, JPEG or WebP only (no SVG: it can carry script), checks
-  the size, and hands the pane a `data:` URL, so the pane never loads
-  anything from a server. Open: size limits; a square crop tool or
-  centre crop.
-- **Updates.** Two parts update separately. The web client already
-  updates itself: each server serves its own, so a refresh picks it up.
-  Only the desktop shell needs an updater. Ryan: the user chooses when
-  to update, with a note like "Some features may not work properly, or
-  at all, until you update", but updating must be easy (one click).
-  Recommended: electron-updater checking GitHub Releases; the app
-  downloads in the background and shows the note with "Restart to
-  Update". Needs an installer (NSIS) instead of the zip, and ideally
-  code signing (otherwise Windows warns on every install). Open:
-  signing (cost), how often to check, whether a server can say "this
-  server needs app version X or later".
-- **Bug reports.** Ryan is one person and can't test everything, so
-  users need an easy way to report bugs. Open: where reports go. Each
-  server is an island, but client bugs belong to the OpenVoxa project,
-  not the server's administrator. Options: (a) GitHub Issues (public,
-  needs a GitHub account; a "Report a Bug" button opens a prefilled
-  issue with app and server version), (b) in-app form sent to the
-  server's administrator (like message reports, but they are not the
-  developer), (c) both: admin first, who forwards. Whatever is
-  chosen, a report must never include message content or keys without
-  the user seeing it first.
-- **Right-click menus on text and voice channels.** Like the menu on a
-  person in a call. Open: the entries. Likely: text: Mark as Read, Mute
-  Sounds, Copy Link, Channel Settings and Delete Channel (with
-  `manage_channels`; greyed out otherwise); voice: Join, Mute Sounds,
-  Channel Settings, Delete Channel.
-- **User avatars.** In voice (and messages, member lists) everyone shows
-  a generic letter. Users upload their own picture in Settings
-  (crop to a circle, same footprint as the letter), per server (islands:
-  a picture on one server is not on another). Stored as a server blob,
-  visible to everyone on that server, so not end-to-end encrypted
-  (like usernames). Open: size and type limits, animated GIFs, whether
-  moderators can remove an offensive avatar (likely yes, logged in
-  the moderation log).
-
-### Custom sounds
+#### Custom sounds
 
 Discussed with Ryan, 2026-11-04. Stage 1 built and verified the same day
 (CS1-CS10); stage 2 (message sound, per-channel mute, cooldown) too
@@ -623,118 +722,429 @@ Discussed with Ryan, 2026-11-04. Stage 1 built and verified the same day
   (released straight away) and lists the real devices
   (`VoiceClient.listDevices(true)`); placeholders are filtered out.
 
-## Architecture
+### Accounts and administration
 
-Five components, three of them off the shelf:
+#### Stay signed in
 
-```
-Desktop (Electron) ─┐                      ┌─ LiveKit SFU
-                    ├─ WebSocket + REST ──▶├─ (relays encrypted media)
-Web (React) ────────┘                      │
-                              │            │
-                    OpenVoxa server (Go) ──┘ mints JWTs
-                              │
-                    Postgres + object store
-```
+Decided by Ryan, 2026-11-04, after ED5 (the desktop app signed him out
+on every restart, since closing it is closing the tab).
 
-The server does auth, channel and permission state, message relay and
-storage, MLS message routing (forwarding opaque blobs it cannot read),
-retention enforcement, LiveKit token minting, link unfurling and file
-metadata. It never decrypts anything in an encrypted channel and never
-sits in the media path.
+- **"Stay signed in"** on the login and sign-up page, ticked by default,
+  remembered per browser. Ticked: the session and the unlock copy of the
+  local data key go in localStorage and survive closing the tab, the
+  browser or the desktop app, until the 30-day expiry or sign-out.
+  Unticked: sessionStorage, as before (gone when the tab closes).
+- **Still locked by the server:** the unlock copy is encrypted under the
+  per-session secret the server holds, so signing the session out (here,
+  "end other sessions", or from another device) still locks a lost
+  laptop's keys.
+- **Tabs:** a second tab picks up the stored session but is refused by
+  the one-tab-per-account Web Lock, as before; it never signs anyone out.
 
-The server acts as an MLS delivery service: it forwards handshake and
-application messages without understanding them, since all group key
-agreement happens on clients. It therefore needs no MLS implementation for
-v1.
+#### Settings and Server settings
 
-| Layer | Choice |
-| --- | --- |
-| Server | Go |
-| Database | PostgreSQL |
-| Client core | TypeScript, shared by desktop and web |
-| Desktop shell | Electron |
-| Media | LiveKit, self-hosted |
-| Reverse proxy | Caddy, optional |
-| Group encryption | MLS (RFC 9420) |
+Built 2026-11-03 (step 13, M5 sessions A and B; M5 was split into A
+account, B groups and members, C moderation, at Ryan's pick).
 
-Repo layout:
+- **Settings** is one dialog (`SettingsDialog.tsx`; tabs Account, Voice,
+  Chat, Appearance, Sounds). The user-panel gear opens Account without
+  loading LiveKit; the voice-bar cog opens Voice.
+- **Account:** username and groups; change password (current + new with
+  the sign-up checklist; the server signs out every other session and
+  says how many); the recovery key (status, Back up now, Set up / Enter
+  key, and "Make a new key", which re-uploads this browser's history
+  under the new key, so nothing is lost: `RecoverySetup rotating`);
+  devices (`GET /devices`, this browser first, with "Sign out and erase";
+  removing another one revokes it and members take it out of encrypted
+  channels); delete account (type the username and the password,
+  `DELETE /me`; the server deletes first, then this browser's keys are
+  wiped, so a refusal such as the two-admin floor leaves everything
+  intact). Calls that check a password use api.ts `call`, not the
+  ApiCall that signs out on any 401, because a 401 there means a wrong
+  password.
+- **Server settings** is a separate dialog (`ServerSettings.tsx`), so
+  personal and server settings stay apart. The gear beside the server
+  name shows for staff (any switch); changing groups needs manage_groups.
+- **Rank** is edited as a number (Ryan's pick over up/down arrows: it
+  matches the server, allows ties, one save per change), with a hint
+  naming the groups either side. The dialog mirrors the server's rules
+  (rank strictly below yours, only switches you hold, not your own
+  groups) as disabled controls with a reason. PATCH sends only changed
+  fields, since an untouched switch list on a group holding a switch you
+  lack would be refused. Membership changes save on each tick. Lists
+  reload on perms_changed.
 
-```
-/server          Go: HTTP + WebSocket, Postgres, LiveKit tokens
-/client-core     TypeScript: protocol, MLS glue, state
-/client-web      React
-/client-desktop  Electron shell
-/deploy          docker-compose, Caddy configs
-/docs            threat model, decisions, protocol notes
-```
+#### Channel management
 
-The `client-core` split is non-negotiable. If desktop and web diverge into
-separate codebases, everything gets maintained twice.
+Moved forward from M5 at Ryan's request, 2026-11-01.
 
-## Known tensions
+- Accounts with manage_channels get a "+" beside the Text and Voice
+  headings (create dialog: type, name, encryption for text, allow-list
+  pre-filled with the server default) and a gear on each channel
+  (allow-list, retention, history sharing for encrypted text, delete with
+  a second confirmation). force_ptt holders get the gear on voice
+  channels for "Require push-to-talk".
+- **Name and encryption are fixed after creation:** no rename on the
+  server, and flipping encryption would strand history or break the
+  promise to people who wrote it. Voice is always encrypted, so the
+  dialog offers no switch for it.
+- Permissions refresh on perms_changed.
 
-These do not have clean answers. Recorded so they are not rediscovered as
-surprises.
+#### Password rules
 
-**Link previews leak URLs to the server.** The client extracts the URL
-locally and asks a server-side unfurl endpoint to fetch the preview. The
-server learns which links are shared but never sees message bodies, and
-user IPs never touch the linked site. Least-bad, not clean.
+Decided with Ryan 2026-11-01, reworked 2026-11-04. Checked when a
+password is set (registration, `PUT /api/v1/me/password`), never at
+login, so older accounts still sign in. Rules, in order:
 
-**Search is client-side only in encrypted channels.** The server indexes
-nothing it cannot read. Bounded retention keeps the local corpus small
-enough for this to work.
+1. 12 to 256 characters.
+2. Not containing the username.
+3. Not a common password, dressed up or not: lower-cased, look-alikes
+   like @/0/$ undone, digits and symbols stripped off both ends, so
+   `Password12345`, `P@ssw0rd!2024` and `Sunshine2025!` all match. The
+   list is the UK NCSC top 100,000 (from HIBP breach data, via SecLists,
+   MIT; `common-passwords.LICENSE`), gzipped and embedded (~430 KB),
+   loaded on first use (~0.2 s): nothing is sent to a third party.
+4. zxcvbn score >= 3 (an estimated 10^8 guesses or more; 4 refused too
+   many reasonable passwords, 2 added little).
 
-**Crypto-shredding still removes content.** Thread structure, reply chains
-and message counts survive; message bodies do not. A shredded message
-renders as a placeholder. Intended behaviour, not a defect.
+- **History:** the first rules (2026-11-01) were 3 of the 4 character
+  kinds (first all four) plus a rule against passwords mostly made of
+  runs like aaa, abc, 321, qwerty. Ryan's reasoning for composition
+  rules, from years in IT: without them users pick `password1234` and,
+  after a breach, reset to `password2345`. Not what NIST SP 800-63B
+  recommends (length plus a breached-password list). On 2026-11-04 zxcvbn
+  replaced both: it catches what they were for (keyboard rows, sequences,
+  repeats, names, dates, dictionary words with a capital and a digit),
+  a long lower-case passphrase like `orange piano kettle sunrise` is now
+  allowed, and the `password2345` worry is still covered by the NCSC
+  list.
+- **zxcvbn runs on the server only** (Ryan chose this over also running
+  it in the browser: one implementation, no ~1 MB of word lists for the
+  browser, no "page said Strong, server refused"). Go port
+  `github.com/trustelem/zxcvbn` v1.0.1 (MIT, faithful port of zxcvbn
+  4.4.2, unmaintained since 2019 but the algorithm is fixed). It has no
+  hint text, so `strength.go` ports zxcvbn's feedback.coffee (British
+  spelling). Only the first 100 characters are scored: 256 characters of
+  `aB3$` took ~180 ms, 100 take ~14 ms. Code: `server/internal/password`
+  (`Problem`).
+- **`POST /api/v1/auth/password-check`** `{password, username}` ->
+  `{problem, score, min_score, common, warning, suggestions}`. No session
+  (sign-up has none), own per-IP limit (30, then 2/s), nothing stored or
+  logged. A common-list hit caps the score at 1 so the meter agrees.
+- **Client** (`password.ts` `usePasswordCheck`): length and username
+  checked at once; the server asked 300 ms after typing stops; the last
+  answer stays on screen meanwhile. Off on the sign-in form, so a
+  password being signed in with is never sent to be checked. Only a
+  known refusal of the exact password blocks submit; while waiting or if
+  the check failed, the server decides on submit.
+- **UI** (`PasswordRules.tsx`): checklist "12+ characters / not your
+  username / hard to guess", a 4-segment bar (danger colour for Very
+  weak/Weak, accent for Fair, save green for Good/Strong) with the label,
+  and below it the warning and suggestions while it is not yet hard to
+  guess. "Passwords don't match." shows under the confirm field once the
+  password itself passes.
+- **Changing the password** needs the current one, uses the login rate
+  limit, signs out every other session and closes all sockets. There is
+  no forgotten-password reset (no email by design); a host command would
+  be the natural path if wanted.
 
-**Shredding works differently in the two kinds of channel.** Encrypted
-channels need no extra key: MLS readers discard each message key after
-use, so the server's copy is already unreadable to everyone. Plaintext
-channels get a server-held key per account, kept outside the database,
-and that is what deletion destroys. See Encryption, "Account deletion is
-crypto-shredding". (Superseded 2026-11-03: this paragraph used to say
-shredding did not apply to plaintext channels at all.)
+#### Palette
 
-**Account recovery depends on the user.** Recovery keys are generated at
-signup and held by the user. A lost password with no recovery key means
-lost history, permanently.
+client-web default (Ryan, 2026-11-01): background #333333, buttons
+#D96932, text #FFFFFF; derived shades are `styles.css` variables. Every
+colour stays a variable: users override them per browser in Settings >
+Appearance (`appearance.ts`). Light mode later: same orange, black text
+instead of white.
 
-**Bandwidth is the real hosting cost.** Ten viewers on one 1080p60 stream
-is roughly 50 to 100 Mbps of sustained egress. "Free to host" assumes the
-operator has the upstream.
+### Desktop app
 
-**The server's permission list decides who joins encrypted channels.**
-Automatic membership means a malicious operator, or anyone who takes over
-the server, can grant a device of their own access and have members'
-clients add it. They then read everything sent from that point on (not
-before: new members see no history). This is the trade Discord's voice
-E2EE and most group messengers make. It is bounded by visibility rather
-than prevented: every join is announced to the channel, so a ghost
-device cannot be added silently. Device verification (comparing safety
-numbers, as Signal does) would let users confirm each other's devices
-and is the eventual stronger answer. Self-hosting limits who the operator
-is; it does not remove the operator from the trust model.
+#### Server browser and desktop shell
 
-External join sharpens this slightly. The GroupInfo the server stores is
-enough on its own to join, so a hostile server needs no member online to
-add a device; the announcement then appears when members next catch up,
-not at the moment of the join. Members treat an external join exactly
-like any other add: it is announced, and a device that is not on the
-channel's allowed list is removed by the next reconciliation.
+Ryan's idea, 2026-11-03; design agreed 2026-11-04. A pane of server
+icons down the left of the window, like Discord. Each icon is a bookmark
+to one OpenVoxa server (`openvoxa.example.com`,
+`anotherserver.domain.com`, ...), so people can use any number of
+independent hosts without a central platform or having to remember every
+address. Each server stays a separate island: accounts, messages and
+keys never carry over between servers. No federation; the servers never
+talk to each other.
 
-**Per-account login limiting can be weaponised.** Five failed attempts
-throttles an account, so someone who knows a username can lock them out
-for a few minutes. Mitigated by a short window, slow refill and an
-immediate reset on successful login. Every major service picks some
-version of this tradeoff; there is no clean answer.
+- **Why decided before Electron:** the shell and the server browser are
+  one question (where the desktop app gets the web app from), and
+  choosing wrongly first would mean redoing logins and storage later.
+- **Each server in its own view, loaded from that server.** The desktop
+  app draws the icon pane itself; clicking an icon shows that server's
+  own web app, from that server's address, in its own isolated view
+  (like a browser tab built into the app). Same origin as in a browser,
+  so no CORS or login changes; each server's storage (session, device
+  keys, archive) is separated by the browser engine; each server serves
+  the client version that matches it, so no version skew. Features
+  arrive in the desktop app for free. Rejected: one client bundled into
+  the app talking to every server's API (CORS, auth rework, one client
+  compatible with every server version).
+- **Security (built in from day one):** bookmarking a server means
+  running its code inside the desktop app, and unlike a browser tab an
+  Electron page can be given access to the computer. Each server's view
+  gets its own storage partition, the sandbox, `contextIsolation` on and
+  `nodeIntegration` off, so it can't touch files, the computer or other
+  servers' views. The only bridges are tiny preload APIs whose messages
+  the shell checks by sender.
+- **Background servers stay connected** (decided): messages arrive live,
+  badges and in-page sounds keep working, switching is instant, like
+  Discord. An unload after a long idle (say a day) can come later if
+  memory demands it. When the app is closed nothing runs.
+- **The pane is desktop-only:** browser users keep one server per tab.
+- **Voice across servers (planned):** in a call on one server at a time;
+  joining voice on server B makes the shell tell server A to leave. The
+  global push-to-talk key goes to the server with the call, and that
+  server always stays loaded.
+- **Also needed (planned):** a server name and icon set by the
+  administrator (the bookmark falls back to the address); badges need the
+  web client to report counts to the shell (doing nothing in a plain
+  browser); adding a server by pasting an HTTPS address, later an
+  `openvoxa://` invite link; bookmarks stored only on the device, with
+  export / import.
+- **Order:** step 1 the shell with the server pane and the security
+  setup; step 2 our own screen share picker (Electron shows none); step 3
+  per-app share sound. Tray, notifications, auto-update and installers
+  later.
 
-**Live deletion reaches connected clients only.** An offline client keeps
-whatever it cached until it reconnects, and nothing prevents a screenshot.
-Deletion is enforced server-side and propagated live, which is the part
-that can be enforced.
+#### Desktop screen share picker
+
+Decided with Ryan, 2026-11-04 (desktop step 2).
+
+- **Where:** the pane covers the window while the picker is open, like
+  the Add a Server form. The server's page only asks
+  (`getDisplayMedia`); what is shared is chosen in the app's own UI,
+  never by the page. Only the server on screen may open it, one at a
+  time.
+- **What:** Screens and Windows tabs, thumbnails refreshed every 2 s,
+  app icons on windows. Click to choose, then Share; double-click
+  shares at once. A lone screen is chosen for you. Cancel, Escape, a
+  click outside the card, or any pane button closes it without
+  sharing (like the web client's dialogs).
+- **Sound:** Electron offers only "all system sound" (`loopback`), and
+  only on Windows. So Share Sound appears when the page asked for
+  sound, works for whole screens on Windows, and is greyed out and
+  unticked (with the reason) for windows and on other systems. All
+  system sound includes the call's own voices, so the others could
+  hear themselves back (SD2). Fixed in step 3 with `restrictOwnAudio`
+  (RS2, "Per-app share sound"). Minimized windows are left out of
+  Edge's picker (RS3); ours very likely too (unchecked). To look at
+  with window sound.
+
+#### Per-app share sound (desktop step 3)
+
+Raised by Ryan, 2026-11-04, after SP2; design agreed the same day
+(options A-D). Windows 10 2004 or later; older Windows, Mac and Linux
+unchanged.
+
+- **The limit is Electron's, not Windows'.** Since Windows 10 2004
+  (build 19041) Windows can record one process tree's sound
+  (`ActivateAudioInterfaceAsync` with
+  `AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`), or everything except
+  one process tree. Discord's per-app sound works this way.
+- **What is sent.** A window share: the sound of the program owning the
+  window and everything it starts. A whole-screen share: all sound
+  except OpenVoxa's own, so the call never hears itself (the SD2 risk).
+- **A. Separate helper program, not an addon.** `openvoxa-audio.exe`
+  (Rust, `client-desktop/audio-helper/`, `build-windows.sh` cross-builds
+  on Docker; system DLLs only) ships in the app folder. The main process
+  starts it when Share is clicked and reads raw PCM from its stdout. A
+  crash costs only the share's sound, no rebuild per Electron version.
+  About 5-20 ms extra latency, fine for share sound. The helper finds the
+  window's process itself (`GetWindowThreadProcessId` on the HWND in the
+  source ID).
+- **B. Process tree, not the exact process.** Covers nearly every app.
+  Apps whose sound comes from an unrelated process (some Store apps,
+  games run through a separate launcher): share the screen instead.
+- **C. Chromium for screens, so the helper is for windows only.**
+  Chromium's `restrictOwnAudio` constraint leaves the app's own sound out
+  of a system-sound share. Checked by experiment first (RO1, a throwaway
+  Electron 45 app on Ryan's PC recorded its own 1 kHz beep through
+  `loopback` without the constraint and not with it). The web client
+  always asks for share sound with `restrictOwnAudio: true` (ignored
+  where unknown); RS1-RS3: screen share still carries other apps' sound,
+  no echo of the call, Edge tab sharing unchanged.
+- **D. Share Sound tickbox.** Enabled for windows too where supported
+  (build 19041+ and the helper present), ticked by default as for
+  screens; greyed out with the reason elsewhere.
+- **The page's side.** `viewPreload.ts`, the first preload in server
+  views, exposes only `openvoxaDesktop.startShareSound` /
+  `stopShareSound`. The main process answers only the server's own main
+  frame, once, within 15 s of a window pick with Share Sound ticked: the
+  page cannot start a recording, only the user's click in the picker
+  can. The PCM goes to the page over IPC (`share-sound:data`);
+  `client-web/src/desktopShareSound.ts` turns it into a track through an
+  AudioWorklet (40 ms start buffer, drift trimmed above 200 ms) and
+  VoiceClient publishes it as ScreenShareAudio (E2EE as usual). The
+  helper stops with the share, on leaving, page reload or crash, and when
+  the app quits (stdin closes).
+- **Tests:** the helper alone through a throwaway Electron app, WH1 (an
+  Edge window: `msedge.exe` found from `window:<HWND>:0`, 7.98 s of 8
+  received, first sound after about 40 ms, exits when stdin closes), WH2
+  (another app's sound stays out), WH3 (a silent window: silence, no
+  error); the whole feature WS1-WS7.
+
+### Planned: server icons, updates, bug reports, channel menus, avatars
+
+Ryan's list, 2026-11-04. Recorded, not designed in detail yet: each gets
+a design talk before it is built. Recommendations below are Claude's.
+Device linking and two-factor sign-in were planned in step 13 and are
+at the end.
+
+- **Server icon in the pane.** The administrator uploads an icon in
+  Server settings (with the server name); the pane shows it in place
+  of the letter, same 48 px circle, same hover and selected look; no
+  icon means the letter, as now. Recommended: an unauthenticated
+  `GET /api/v1/server-info` (name, icon URL) that the shell fetches,
+  since the pane must show icons before anyone signs in. The shell
+  accepts PNG, JPEG or WebP only (no SVG: it can carry script), checks
+  the size, and hands the pane a `data:` URL, so the pane never loads
+  anything from a server. Open: size limits; a square crop tool or
+  centre crop.
+- **Updates.** Two parts update separately. The web client already
+  updates itself: each server serves its own, so a refresh picks it up.
+  Only the desktop shell needs an updater. Ryan: the user chooses when
+  to update, with a note like "Some features may not work properly, or
+  at all, until you update", but updating must be easy (one click).
+  Recommended: electron-updater checking GitHub Releases; the app
+  downloads in the background and shows the note with "Restart to
+  Update". Needs an installer (NSIS) instead of the zip, and ideally
+  code signing (otherwise Windows warns on every install). Open:
+  signing (cost), how often to check, whether a server can say "this
+  server needs app version X or later".
+- **Bug reports.** Ryan is one person and can't test everything, so
+  users need an easy way to report bugs. Open: where reports go. Each
+  server is an island, but client bugs belong to the OpenVoxa project,
+  not the server's administrator. Options: (a) GitHub Issues (public,
+  needs a GitHub account; a "Report a Bug" button opens a prefilled
+  issue with app and server version), (b) in-app form sent to the
+  server's administrator (like message reports, but they are not the
+  developer), (c) both: admin first, who forwards. Whatever is
+  chosen, a report must never include message content or keys without
+  the user seeing it first.
+- **Right-click menus on text and voice channels.** Like the menu on a
+  person in a call. Open: the entries. Likely: text: Mark as Read, Mute
+  Sounds, Copy Link, Channel Settings and Delete Channel (with
+  `manage_channels`; greyed out otherwise); voice: Join, Mute Sounds,
+  Channel Settings, Delete Channel.
+- **User avatars.** In voice (and messages, member lists) everyone shows
+  a generic letter. Users upload their own picture in Settings
+  (crop to a circle, same footprint as the letter), per server (islands:
+  a picture on one server is not on another). Stored as a server blob,
+  visible to everyone on that server, so not end-to-end encrypted
+  (like usernames). Open: size and type limits, animated GIFs, whether
+  moderators can remove an offensive avatar (likely yes, logged in
+  the moderation log).
+- **Device linking by QR** (planned in step 13, after M1): a logged-in
+  device shows a QR of `https://server/link#<one-time secret>` (about 2
+  minutes, single use); the phone's camera opens it; the server only
+  relays encrypted messages; the old device approves the login and hands
+  over the backup key. The typed recovery key is the fallback.
+- **Two-factor sign-in:** TOTP only (authenticator apps, RFC 6238) plus
+  one-time backup codes. No SMS, email or third-party service. After
+  device linking.
+
+## Permission groups
+
+Build-order step 12, decided by Ryan 2026-10-31.
+
+**Switches decide what you can do; rank decides whom you can do it to.**
+A group carries permission switches (`perm.All`: administrator,
+manage_groups, manage_channels, delete_messages, view_reports, ban,
+force_ptt, server_mute, manage_stickers). An account holds the union of its groups' switches. Groups
+are ranked by `position`, and an account's rank is its highest group's.
+Rank grants nothing on its own: Member and Everyone carry no switches,
+so an ordinary account cannot ban a guest whatever the order. Rank only
+limits targets: a moderator with ban can ban members and guests, not
+another moderator. Ryan's concern was keeping a clear line between
+standard and power-user accounts; that line is "holds any switch", and
+the account list is shown to anyone over it.
+
+**Channels carry an allow-list, no deny rules.** Each channel lists the
+groups that may view it and, of those, which may post (and speak, in
+voice). Everyone on the list makes a channel public; an empty list
+leaves it to administrators, who see every channel. Chosen over
+Discord-style allow/deny overrides because there is never a precedence
+question to answer.
+
+**Groups stack.** A moderator is in Member and Moderator, so taking
+Moderator away leaves an ordinary member, and a channel only needs its
+lowest qualifying group on the list.
+
+**Managing groups is bounded twice.** With manage_groups you may only
+touch groups below your rank and accounts below your rank (never your
+own), and only hand out, add or remove switches you hold yourself. So
+manage_groups cannot mint an administrator, and a group manager without
+ban cannot give ban away. For parity with the old roles you may put
+someone in a group at your own position (an administrator can make
+another administrator); neither can then undo the other.
+
+**Everyone is built in.** Every account is implicitly in it (the
+`effective_groups` view). Its permissions can be edited; its name,
+position (0) and membership cannot. It replaced the guest role.
+
+**The upgrade changed nothing visible.** Migration 0012 converted the
+roles: Member (auto-assigned to new accounts), Moderator
+(delete_messages, view_reports, ban, force_ptt), Administrator
+(administrator). Channel minimums became allow-lists. `users.role` and
+`channels.min_role_*` were dropped; `roles` and `role_changes` stay as
+history, and `perm_group_changes` is the new audit log.
+
+**Group-wide changes sweep instead of iterating accounts.** Editing or
+deleting a group, or replacing a channel's allow-list, can move many
+accounts at once. The server sends `perms_changed` with no user (every
+client refetches `/me` and reconciles), re-checks every open socket,
+and asks LiveKit who is in each voice room (`ListParticipants`) rather
+than checking every account against every room. A change to one
+account's groups uses the per-account path, as a role change did.
+
+**Clients keep an event socket.** `GET /ws` with no channel is a
+socket for server-wide events only (perms_changed, channel_changed,
+access_changed, channel_deleted, user_purged). Found on Docker
+2026-10-31: losing a group closed staff's only socket, so the re-add
+never arrived and the channel list stayed stale until a reload. Client-core's
+`Chat` opens one at sign-in and reconnects it; channel sockets
+skip those event types while it is up.
+
+### There is always an administrator
+
+Decided with Ryan 2026-11-01, instead of a built-in "root" account with
+a long password (one internet-facing login with total power is a
+password-guessing and phishing target, and a shared secret nobody can be
+held to). The Linux model is copied instead: root needs the machine.
+
+- **Two-administrator floor** (`lastadmin.go`, `adminGuard`,
+  `MinAdmins = 2`; raised from one the same day at Ryan's request): one is
+  not enough, because whoever takes over an administrator account could
+  remove the others and be the sole controller. Any transaction that can
+  take the switch from someone (deleting an account, either way; editing
+  or deleting a group; removing a group member; a ban, since banned
+  administrators don't count) locks, counts active administrators
+  (holding the switch through any group, not deleted, not banned) before
+  and after, and is refused with 409 if the count drops AND ends below
+  two. A server already under two (new, or older than this rule) is not
+  frozen, only kept from dropping further; startup and `list-admins` warn.
+  With exactly two, neither can leave until a third is added. The floor
+  limits what a rogue administrator can remove; it does not stop other
+  damage they can do with the switch, and same-rank administrators
+  already cannot remove each other.
+- **Host recovery** (`cli.go`): `docker compose exec server
+  /openvoxa-server grant-admin <username>` puts the account in the
+  top-positioned group with the switch, creating one above all others if
+  needed, and writes the audit log (actor NULL, "server command line").
+  `list-admins` shows who holds it; `list-users` lists every account
+  (groups, banned, created, last seen); `delete-user <name>...` deletes
+  like self-deletion (shared `PurgeUserTx`), one transaction per name,
+  keeping the two-admin floor unless `--force`. A deleted user's already
+  open socket stays until it reconnects (the CLI can't reach the hub).
+  Nothing is reachable over the network.
+- **Setup code**: an empty server (no rows in `users`) is no longer
+  claimed by whoever registers first. A random code is printed in the
+  server log at startup (and again on a refused attempt) and the first
+  registration must carry it (`setup_code`); `GET /api/v1/setup` tells the
+  sign-up form to ask. The code changes on every restart.
 
 ## Encryption
 
@@ -773,6 +1183,19 @@ holding the other's private keys. Only single-device is implemented, but
 the schema is multi-device from the start: retrofitting it onto a
 user-keyed design would mean rebuilding every group.
 
+Devices that go unused expire (decided by Ryan, built 2026-10-31): a
+device whose keys are gone (a closed private window, a wiped browser)
+would otherwise stay active forever, members would keep adding it and
+spend its key packages, last resort included. `touchDevice` updates
+`last_seen_at` (at most once a minute) on key package count/publish and
+every MLS call that checks `ownDevice`; `db.StartDeviceExpirySweep`
+revokes devices idle 30 days, hourly and at startup, deletes their
+unclaimed packages and sends `access_changed`. The count check returns
+410 for a revoked device, and `Identity.start` then wipes local storage
+and registers a new one. Migration 0013 restarted every active device's
+clock, since nothing had maintained `last_seen_at` before. Same idea as
+Signal unlinking idle devices.
+
 **Key packages are single use, with a reusable last resort.** You are
 added to groups while offline, so devices publish key packages in advance
 and the server hands them out one at a time. Handing the same one out
@@ -801,6 +1224,23 @@ are already displayed in the channel label beside the retention policy,
 so users know which kind of space they are in before they post. Bounded
 retention softens the edge considerably: in a channel that keeps thirty
 days, "nothing before you joined" is a small loss.
+
+**History sharing is opt-in per channel.** Decided by Ryan, 2026-11-01.
+An administrator can turn it on for an encrypted channel; it is off by
+default and the channel label says when it is on. With it on, every
+device added to the group (new members and existing members' new
+devices alike) is sent the plaintext existing members hold, for every
+message the server still has, so retention is the only limit. The
+member whose client committed the add does the sharing; for a device
+that joined on its own from the GroupInfo, members take turns (the
+reconcile stagger) and the server keeps the first bundle per device.
+The bundle is an MLS application message in the current epoch, stored
+in `mls_history_shares` until the recipient imports it (or a week).
+A shared message is one member's copy and cannot be proven to match
+the original, so it is shown with "shared by <name>", or "an unverified
+member" when the sharer named inside the bundle is not the device that
+uploaded it. This deliberately weakens "new members see no history"
+for channels that opt in; the server still sees only ciphertext.
 
 **Ratchet trees are serialised with our own codec, not MLS wire format.**
 A joiner needs the group's ratchet tree alongside the welcome, and it has
@@ -941,8 +1381,7 @@ moderator pane (reports, tickets, bans, deletions) and an admin pane
 (device history, membership and encryption log, diagnostics, roles and
 channels). The admin pane shows the server's records, useful for running
 the server but not a safeguard against it; the per-device view above is
-that safeguard and stays available to every user. The debug page keeps
-printing everything, as a test tool.
+that safeguard and stays available to every user.
 
 **A group nobody permitted can commit to is replaced, not rescued.**
 Decided by Ryan, 2026-10-31. If every remaining member loses access, no
@@ -967,15 +1406,97 @@ committing without a GroupInfo), but neither gains anything it cannot
 already do: the server can grant itself access (see Known tensions), and
 a member can already wreck a group with garbage commits.
 
-The "Add everyone" and "Add everyone to voice" buttons that stood in for
-this in the debug page were removed on 2026-10-31, along with the public
-`groups.addMembers`: reconciliation is the only way into a group.
+Reconciliation is the only way into a group (the debug page's "Add
+everyone" buttons and the public `groups.addMembers` went on
+2026-10-31).
+
+**Media keys come from the voice channel's own MLS group.** A voice
+channel gets a group exactly like an encrypted text channel. Each member
+derives the frame key with the MLS exporter (label `OpenVoxa media key
+v1`, context = channel ID, 32 bytes) and hands it to LiveKit, which runs
+it through HKDF to an AES-GCM key and encrypts every frame in a worker
+before it leaves the browser. The key is never transmitted. A membership
+change is a new epoch and therefore a new key, so removal and addition
+rotate media keys with no separate key distribution.
+
+**Attachments in encrypted channels are encrypted per file, keyed in the
+message.** The client encrypts each file with a fresh random AES-256-GCM
+key before upload. The key, nonce, real filename, real type and size go
+inside the MLS message that claims the attachment, in a small JSON
+envelope (`{"ovx":1,"text":...,"files":[...]}`; anything else decodes
+as bare text, so earlier messages stay readable). The server stores the
+ciphertext under the name `encrypted` as `application/octet-stream`, and
+overrides whatever the client sent, so a client bug cannot leak a real
+filename into the database.
+
+A per-file key rather than one derived from the epoch: the file stays
+readable to anyone who can read the message, which is what opt-in
+history sharing will need, and its lifetime is not tied to group state.
+GCM authenticates the bytes and the key arrives in an authenticated
+message, so a swapped or altered blob fails to decrypt rather than
+showing something else.
+
+Still visible to the server: approximate file size (ciphertext is
+plaintext plus 16 bytes; no padding yet), upload time, and which message
+carries how many files. Deduplication is gone for these blobs, as
+intended.
+
+Decrypted files are shown through `blob:` URLs, which belong to our
+origin. The type given to the blob comes from the same allowlist the
+server uses for inline serving, never from the sender, and saving uses a
+`download` link rather than opening a tab. Otherwise a member could send
+an HTML file that runs as us when opened. Previews decrypt the whole file
+up front: GCM cannot be streamed into a `<video>` without chunking.
+
+**Encrypted channels must not ask the server to look at content.** Link
+previews did: the server fetches the URL, so it would learn every link
+posted. Previews are skipped in encrypted channels.
+
+**Provider GIFs are allowed in encrypted channels, unencrypted.** A GIF
+from the picker is public content the server fetched itself; storing it
+in the clear tells the server which public image was picked, not
+anything a user wrote or uploaded. The protection that matters there is
+that users never contact the provider, which still holds. A `.gif` a
+user uploads from their own device is an attachment like any other and
+is encrypted. Decided by Ryan, 2026-10-30.
+
+**Recovery key and history backup.** Decided with Ryan 2026-10-31 and
+2026-11-01 (step 13, M1). v1 is history backup only.
+
+- *The key:* generated at sign-up, shown once (12 words and a QR code),
+  confirmed by typing 3 random words (the first four letters suffice);
+  no "Not now" at sign-up. 128 random bits as 12 BIP-39 words (the
+  checksum catches typos) or a QR payload `OVRK1:<hex>`; QR scanning by
+  camera is not built, the text can be pasted. The key is random, not a
+  password, so HKDF-SHA256 with a per-backup salt is enough (no Argon2).
+- *Storage* (server, migration 0015, `recovery.go`): one backup per
+  account, a small opaque header (format, KDF salt, key check, so a wrong
+  key reads as wrong, not as damage) plus named opaque chunks. Chunk
+  names are client-chosen so the server does not learn which channel a
+  chunk covers. Starting a backup replaces the header, drops all chunks
+  and issues a new backup id; uploads carry that id and get 409 if it is
+  stale, so chunks sealed under two keys never mix. Limits: 4 MB per
+  chunk, 1000 chunks, 256 MB per account.
+- *Format* (client-core `recovery.ts`): chunks are gzip'd JSON under
+  AES-256-GCM with the backup id and chunk name as additional data. Each
+  upload writes a whole new generation `<gen>-<n>` then deletes the old
+  one, so an interrupted upload leaves one complete copy. Restore only
+  adds entries the device lacks. The derived key (not the words) is kept
+  on the device as a non-extractable CryptoKey for later uploads; another
+  device starting a new backup locks the others until they enter the new
+  key.
+- *Screens* (`Recovery.tsx`, `backup.ts` BackupManager): an older account
+  without a backup is asked once per browser. A backup this device cannot
+  use (never unlocked here, or replaced by another device) gets the
+  restore screen: restore merges and remembers the key; "Skip for now"
+  lasts the session; "I lost my key" starts a new backup after a
+  warning. Uploads happen before sign-out and about a minute after the
+  latest new message (`BackupManager.scheduleUpload`, debounced).
 
 **Local storage is encrypted under the password, with a server-held
 half for refreshes.** Decided by Ryan, 2026-11-03; built the same day
 (server `sessionsecret.go` + migration 0019, client-core `localkey.ts`,
-`codec.ts`, `storage.ts`, client-web `unlock.ts`). Closes the open item "Group state persists to IndexedDB as
-bytes, but UNENCRYPTED".
+`codec.ts`, `storage.ts`, client-web `unlock.ts`).
 
 - *Data key.* Each account database gets one random 256-bit data key.
   Every stored value (device record, key packages, group state, the
@@ -1145,234 +1666,75 @@ expiry still blank or drop rows, and backups keep the plaintext until
 they age out. A key per message would cover them too, at the cost of a
 key store that grows with every message; revisit if anyone asks.
 
+## Known tensions
+
+These do not have clean answers. Recorded so they are not rediscovered as
+surprises.
+
+**Link previews leak URLs to the server.** The client extracts the URL
+locally and asks a server-side unfurl endpoint to fetch the preview. The
+server learns which links are shared but never sees message bodies, and
+user IPs never touch the linked site. Least-bad, not clean.
+
+**Search is client-side only in encrypted channels.** The server indexes
+nothing it cannot read. Bounded retention keeps the local corpus small
+enough for this to work.
+
+**Crypto-shredding still removes content.** Thread structure, reply chains
+and message counts survive; message bodies do not. A shredded message
+renders as a placeholder. Intended behaviour, not a defect.
+
+**Shredding works differently in the two kinds of channel.** Encrypted
+channels need no extra key: MLS readers discard each message key after
+use, so the server's copy is already unreadable to everyone. Plaintext
+channels get a server-held key per account, kept outside the database,
+and that is what deletion destroys. See Encryption, "Account deletion is
+crypto-shredding".
+
+**Account recovery depends on the user.** Recovery keys are generated at
+signup and held by the user. A lost password with no recovery key means
+lost history, permanently.
+
+**Bandwidth is the real hosting cost.** Ten viewers on one 1080p60 stream
+is roughly 50 to 100 Mbps of sustained egress. "Free to host" assumes the
+operator has the upstream.
+
+**The server's permission list decides who joins encrypted channels.**
+Automatic membership means a malicious operator, or anyone who takes over
+the server, can grant a device of their own access and have members'
+clients add it. They then read everything sent from that point on (not
+before: new members see no history). This is the trade Discord's voice
+E2EE and most group messengers make. It is bounded by visibility rather
+than prevented: every join is announced to the channel, so a ghost
+device cannot be added silently. Device verification (comparing safety
+numbers, as Signal does) would let users confirm each other's devices
+and is the eventual stronger answer. Self-hosting limits who the operator
+is; it does not remove the operator from the trust model.
+
+External join sharpens this slightly. The GroupInfo the server stores is
+enough on its own to join, so a hostile server needs no member online to
+add a device; the announcement then appears when members next catch up,
+not at the moment of the join. Members treat an external join exactly
+like any other add: it is announced, and a device that is not on the
+channel's allowed list is removed by the next reconciliation.
+
+**Per-account login limiting can be weaponised.** Five failed attempts
+throttles an account, so someone who knows a username can lock them out
+for a few minutes. Mitigated by a short window, slow refill and an
+immediate reset on successful login. Every major service picks some
+version of this tradeoff; there is no clean answer.
+
+**Live deletion reaches connected clients only.** An offline client keeps
+whatever it cached until it reconnects, and nothing prevents a screenshot.
+Deletion is enforced server-side and propagated live, which is the part
+that can be enforced.
+
 ## Implementation notes
 
-Things that cost real time to discover and will be invisible when the
-production client is written.
+Things that cost real time to discover and are invisible in the code.
+Grouped by area; read the group before touching that part.
 
-**LiveKit screen shares ignore `videoEncoding`.** Screen-share tracks read
-`screenShareEncoding` and `screenShareSimulcastLayers`, not the video
-equivalents. Setting the wrong one fails silently and leaves LiveKit's
-default of 1080p at 15fps and ~1.5 Mbps in place, producing a stream that
-appears to ignore every setting.
-
-**LiveKit's track info is declared, not measured** (found 2026-11-04,
-LiveKit v1.13.11). `ListParticipants` gives each track's width, height
-and per-layer width/height/bitrate (in `codecs[].layers`; the top-level
-`layers` is deprecated but still filled), all as the browser announced
-them; there is no measured bitrate in the API. Twirp JSON uses
-snake_case and enum names as strings. `UpdateParticipant` replaces the
-whole permission, so send every field back (`setPublishSources` keeps
-them raw). Narrowing `can_publish_sources` unpublishes the dropped
-sources at once and new publishes fail with "insufficient permissions";
-an empty list means every source. livekit-client did not notice the
-server-side unpublish on its own: the share button stayed lit and the
-browser kept capturing until the client handled it.
-
-**LiveKit asks for screen share sizes as "ideal".**
-`createLocalScreenTracks({resolution})` turns into `ideal` constraints
-(`max` only on Safari), so a capture can be bigger than the preset;
-`applyConstraints` with max values after capture holds it down.
-
-**`contentHint` defaults to detail on display capture.** That tells the
-encoder to hold resolution and sacrifice frame rate, which pins screen
-shares around 15fps regardless of bitrate. Set it to `motion` for video
-content. The "prioritise detail / motion" control sets both this and
-`degradationPreference`.
-
-**H.264 simulcast is poorly supported; VP8 simulcast is mature.** So VP8
-when simulcast is on, H.264 when it is off and hardware decoding matters
-(notably Safari and iOS). Awkward and inherent to WebRTC today.
-
-**`adaptiveStream` picks a layer from on-screen element size.** Sensible
-for saving bandwidth, wrong when a fixed quality is wanted. Exposed as a
-"pin max quality" toggle; it is Room-level so it only applies at join.
-
-**Middleware that wraps `ResponseWriter` breaks WebSockets.** Wrapping
-removes any interface beyond `ResponseWriter` itself, including
-`http.Hijacker`, and every upgrade fails. The request logger forwards
-`Unwrap` and `Hijack` for this reason. Any future wrapping middleware must
-do the same.
-
-**Browsers cannot send an `Authorization` header on a WebSocket.** The
-usual workaround puts the token in the query string, which writes
-credentials into access and proxy logs. Instead the client POSTs for a
-single-use 30-second ticket and spends it on the upgrade.
-
-**Session tokens get SHA-256, passwords get argon2id.** Password hashing
-is deliberately slow to defeat dictionary attacks. A session token is 32
-bytes from a CSPRNG with no dictionary to attack, so slow hashing would
-cost latency on every request for no security gain.
-
-**Login burns CPU on nonexistent users.** A dummy argon2 verification runs
-when the username is not found, so a missing account does not return
-noticeably faster than a wrong password. Without it, timing reveals which
-usernames exist.
-
-**`X-Forwarded-For` is read rightmost, not leftmost.** A reverse proxy
-appends the address it saw, so a forged header produces "fake, real" and
-the rightmost value is the trustworthy one. Only honoured when
-`OPENVOXA_TRUST_PROXY` is set, since otherwise anyone can choose their own
-rate-limit key.
-
-**Retention sweep interval scales to the shortest policy.** A quarter of
-the shortest retention on the server, clamped between 30 seconds and 15
-minutes. A fixed interval makes the displayed policy wrong by a variable
-amount; scaling bounds overshoot to 25% of the stated value. The wait is
-chosen after each pass, so changing a channel's retention wakes the sweep
-at once (2026-11-04); before, a channel moved from forever to 2 minutes
-kept its messages until the old 15-minute wait ran out.
-
-**`messages.body` is `BYTEA` from the first migration.** Plaintext
-channels store UTF-8 there today; encrypted channels will store MLS
-ciphertext in the same column. Enabling encryption needs no migration.
-
-**Server-to-client events never grant anything.** `perms_changed` (was
-`role_changed`) makes a client refetch what it displays; the server
-re-reads permissions from the database on every request regardless. A forged event changes what a client draws and
-nothing else.
-
-**The SSRF check belongs in `Dialer.Control`, not `DialContext`.**
-`DialContext` receives the hostname, so `net.ParseIP` there returns nil for
-every real URL and the filter refuses everything while appearing to work.
-`Control` runs once per connection attempt after name resolution, with the
-resolved address, which is the only point where the check is both correct
-and not racing a second DNS lookup. Checking the hostname instead would be
-defeated by any public name with a private A record; `localtest.me`
-resolves to `127.0.0.1` and is the standard test for this.
-
-**A filter that blocks everything looks like a passing test.** The first
-SSRF test set contained only hostile URLs. All four were refused, so it
-looked correct, and the filter was in fact rejecting every request
-including legitimate ones. Any test set for a blocklist must include a
-known-good case, or a completely broken filter stays invisible.
-
-**Markdown escapes before formatting, never after.** Message bodies are
-untrusted input. Escaping first and applying formatting to the escaped
-text means no user-supplied angle bracket can become a tag. The reverse
-order is a stored XSS vulnerability.
-
-**Link previews are click-to-load for embeds.** An auto-embedded YouTube
-player would contact Google for every message containing a link, whether
-or not anyone watches it. The thumbnail comes from the preview the server
-already fetched, and the iframe (on `youtube-nocookie.com`) is only
-created on click.
-
-**Previews are deleted with their message.** A tombstone or retention
-sweep removes the preview card too. Leaving it would keep the deleted
-content's title and thumbnail on screen, which defeats the deletion.
-
-**Attachments are claimed, not asserted.** Upload happens before the
-message is sent, so an oversized file fails before anyone has composed
-anything. When a message claims attachment IDs, the `UPDATE` matches only
-rows where uploader, channel and unclaimed status all line up. Guessing
-someone else's attachment ID matches nothing, so the authorisation check
-and the claim are the same statement.
-
-**Attachment downloads use signed URLs, not sessions.** A browser will not
-send an `Authorization` header on an `<img src>` or `<video src>`, so the
-download route cannot require a session. Putting the session token in the
-URL would write credentials into access logs, which is exactly what the
-websocket ticket exists to avoid. Instead the server mints an HMAC-signed,
-time-limited link when it delivers the message, and the permission check
-happens at minting time when the caller's role is known.
-
-The tradeoff is the one presigned object-storage URLs make: anyone holding
-the link can fetch the file until it expires, regardless of channel
-access. A two-hour lifetime bounds it. The signing key is random per
-process, so a restart invalidates outstanding links and clients get fresh
-ones on their next history load.
-
-**SVG is not in the inline-serving allowlist.** It is an image to users
-and a scriptable document to browsers. Served inline it is stored
-cross-site scripting against our own origin. Content type is taken from
-the file extension rather than the client's claim, and anything
-unrecognised becomes `application/octet-stream` with `nosniff` and an
-attachment disposition.
-
-**Docker applies image directory ownership only on a volume's first
-mount.** A named volume for the blob store arrives owned by root, and the
-server runs as `nonroot` (UID 65532), so directory creation fails and the
-container crash-loops. Distroless has no shell, so the Dockerfile uses a
-throwaway Alpine stage to create the directory with the right ownership
-and copies it into the final image. Changing this after a volume exists
-requires removing the volume.
-
-**Oversized uploads must be rejected before the multipart parser runs.**
-`MaxBytesReader` kills the parser before it yields a file, so the error
-that surfaces is "malformed form" when the truth is "file too large".
-Checking `Content-Length` first gives the right message and avoids
-buffering the upload at all; the body cap stays as a backstop because a
-chunked request declares no length.
-
-**Blobs are safe on network storage; Postgres is not.** Attachment bytes
-are write-once, read-many, with no locking, which NFS handles fine. A
-database over NFS is a well-documented way to corrupt things. The blob
-directory is a single path in config precisely so it can be a bind mount
-to whatever an operator wants.
-
-**Clients never contact the GIF provider.** Thumbnails in the picker are
-proxied through this server, and picking a GIF makes the server download
-it once and store it as an ordinary attachment. Linking to the provider's
-CDN instead would mean every viewer, for as long as the message exists,
-quietly tells Giphy they are reading this channel. As an attachment it is
-also deduplicated, governed by channel retention, and destroyed with its
-message.
-
-The server still sends search queries to the provider, so they learn what
-this instance searches for but not who searched. Same shape as link
-previews, which is why the feature is off by default and an operator opts
-in knowingly. The media proxy only fetches from a hardcoded list of
-provider CDN hosts, and only URLs this server signed: a provider response
-is still remote input.
-
-**Reports carry the reporter's copy and are verified against ours.** A
-reporter's client sends what it believes the message said. In a plaintext
-channel the server compares that against its own stored copy; in an
-encrypted channel it will verify the author's MLS signature over the
-claimed bytes instead. A mismatch is rejected and recorded, because filing
-a provably false report is itself actionable. `verified` is nullable so a
-moderator can tell "checked and failed" apart from "could not be checked",
-and the UI offers destructive actions only on verified reports.
-
-**Banning is not deleting.** Deletion is the user's own right; using it as
-a punishment would destroy both the evidence that justified the ban and
-content other people are still reading. A banned account stays, locked.
-Purging their history is a separate, administrator-only decision on top of
-the ban, and it is irreversible: unbanning restores the account, never its
-messages.
-
-There is a tension worth knowing before it bites: purging destroys the
-evidence for the ban. If the ban is later disputed, the moderation log
-records that a purge happened and how many messages it covered, but not
-what they said. Resolving the reports first preserves the reported content
-in the `reports` table.
-
-**Revoking access must reach live connections explicitly.** A websocket is
-authenticated once, at upgrade, and then runs until it is closed. Deleting
-sessions stops the next request and does nothing to a socket already open,
-so a banned user kept posting until they happened to disconnect. The hub
-tracks which user owns each connection and closes them on ban or account
-deletion. A role change re-checks each channel the subject has a socket
-open to and closes only the ones they can no longer view
-(`closeLostChannels`, 2026-10-31). Any future change that revokes access
-needs the same treatment.
-
-**Index predicates cannot reference `now()`.** Postgres requires them to
-be IMMUTABLE, because an index whose membership changed with the clock
-would silently stop matching its own definition. "One active ban per user"
-is therefore a unique index over permanent bans only, with overlapping
-temporary bans caught in the handler under a row lock. Any time-dependent
-uniqueness constraint needs the same split.
-
-**One parse-time throw disables every handler below it.** The debug client
-is a single script with no module boundaries. A reference to an element
-that did not exist threw while handlers were being attached, and
-everything after that line — including the login button — was silently
-never wired up. The symptom was a button that did nothing, with no network
-request and no error anywhere obvious. GIF and moderation controls are now
-attached through a helper that warns rather than throws. This disappears
-with `client-web`, where components fail independently.
+### MLS and ts-mls
 
 **Eleven ts-mls API details were observed rather than documented.** Each
 was written against the README first and was wrong. The pattern, not any
@@ -1434,178 +1796,19 @@ The details themselves:
   cannot apply as removal: drop the state, rejoin by welcome or
   GroupInfo.
 
-**The Docker build context is the repository root.** The server image
-bundles client-core alongside the Go binary, so the Node stage and the Go
-stage both need to be in context. The bundle must be copied in BEFORE
-`go build`: the embed directive reads the directory at compile time, so a
-bundle copied afterwards silently produces a server with no client.
-
-**Attachments in encrypted channels are encrypted per file, keyed in the
-message.** The client encrypts each file with a fresh random AES-256-GCM
-key before upload. The key, nonce, real filename, real type and size go
-inside the MLS message that claims the attachment, in a small JSON
-envelope (`{"ovx":1,"text":...,"files":[...]}`; anything else decodes
-as bare text, so earlier messages stay readable). The server stores the
-ciphertext under the name `encrypted` as `application/octet-stream`, and
-overrides whatever the client sent, so a client bug cannot leak a real
-filename into the database.
-
-A per-file key rather than one derived from the epoch: the file stays
-readable to anyone who can read the message, which is what opt-in
-history sharing will need, and its lifetime is not tied to group state.
-GCM authenticates the bytes and the key arrives in an authenticated
-message, so a swapped or altered blob fails to decrypt rather than
-showing something else.
-
-Still visible to the server: approximate file size (ciphertext is
-plaintext plus 16 bytes; no padding yet), upload time, and which message
-carries how many files. Deduplication is gone for these blobs, as
-intended.
-
-Decrypted files are shown through `blob:` URLs, which belong to our
-origin. The type given to the blob comes from the same allowlist the
-server uses for inline serving, never from the sender, and saving uses a
-`download` link rather than opening a tab. Otherwise a member could send
-an HTML file that runs as us when opened. Previews decrypt the whole file
-up front: GCM cannot be streamed into a `<video>` without chunking.
-
-**History sharing is opt-in per channel.** Decided by Ryan, 2026-11-01.
-An administrator can turn it on for an encrypted channel; it is off by
-default and the channel label says when it is on. With it on, every
-device added to the group (new members and existing members' new
-devices alike) is sent the plaintext existing members hold, for every
-message the server still has, so retention is the only limit. The
-member whose client committed the add does the sharing; for a device
-that joined on its own from the GroupInfo, members take turns (the
-reconcile stagger) and the server keeps the first bundle per device.
-The bundle is an MLS application message in the current epoch, stored
-in `mls_history_shares` until the recipient imports it (or a week).
-A shared message is one member's copy and cannot be proven to match
-the original, so it is shown with "shared by <name>", or "an unverified
-member" when the sharer named inside the bundle is not the device that
-uploaded it. This deliberately weakens "new members see no history"
-for channels that opt in; the server still sees only ciphertext.
-
-**A message can be decrypted once.** MLS deletes each message key as
-soon as it is used, which is what forward secrecy means. Reloading the
-page and decrypting history again therefore fails for every message,
-not just ones from before joining. The client keeps a local archive of
-plaintext (IndexedDB, keyed by message id) and checks it before trying
-to decrypt; attachment keys survive reloads because they are inside
-that plaintext. Messages read before the archive existed are gone for
-good on that device. Received messages are processed through a single
-queue, because two decryptions running at once each start from the same
-saved group state and the later save throws away the earlier one's
-ratchet progress.
-
-**Encrypted channels must not ask the server to look at content.** Link
-previews did: the server fetches the URL, so it would learn every link
-posted. Previews are skipped in encrypted channels.
-
-**Provider GIFs are allowed in encrypted channels, unencrypted.** A GIF
-from the picker is public content the server fetched itself; storing it
-in the clear tells the server which public image was picked, not
-anything a user wrote or uploaded. The protection that matters there is
-that users never contact the provider, which still holds. A `.gif` a
-user uploads from their own device is an attachment like any other and
-is encrypted. Decided by Ryan, 2026-10-30.
-
-**`go mod tidy` silently raises the `go` directive.** Running it with a
-newer local toolchain than the Dockerfile's base image rewrites `go.mod`
-and the container build then fails with a confusing version error. Keep
-the Dockerfile's Go version at or above the directive.
-
-**Media keys come from the voice channel's own MLS group.** A voice
-channel gets a group exactly like an encrypted text channel. Each member
-derives the frame key with the MLS exporter (label `OpenVoxa media key
-v1`, context = channel ID, 32 bytes) and hands it to LiveKit, which runs
-it through HKDF to an AES-GCM key and encrypts every frame in a worker
-before it leaves the browser. The key is never transmitted. A membership
-change is a new epoch and therefore a new key, so removal and addition
-rotate media keys with no separate key distribution.
-
-**LiveKit key slots are epoch mod 16.** Members process a commit at
-different moments, so for a short while some encrypt under the new epoch
-and some under the old. LiveKit keeps a ring of keys and every frame
-carries the slot it was encrypted with, so both keys stay usable during
-the handover. `ExternalE2EEKeyProvider.setKey` always writes slot 0, which
-would overwrite the old key mid-handover; the client subclasses
-`BaseKeyProvider` instead. Options: `sharedKey: true`, `ratchetWindowSize:
-0` (keys come only from MLS, never from LiveKit's ratchet),
-`failureTolerance: -1` (a failed frame never marks a key invalid; with the
-default of 10 a member who is briefly behind would discard the right key).
-
-**Voice refuses to start without encryption.** Keys are loaded and
-`setE2EEEnabled(true)` is called before `connect`, so nothing is ever
-published in the clear, and a browser without insertable streams or
-`RTCRtpScriptTransform` cannot join. `room.isE2EEEnabled` reads false until
-connected (it waits for an event naming the local participant);
-`localParticipant.isE2EEEnabled` is what governs publishing and is true
-from the start.
-
-**LiveKit is served from our origin, pinned exactly.** Browsers refuse a
-Worker script from another origin, and the E2EE worker speaks a message
-protocol to the main library that changes between releases, so a floating
-CDN tag would eventually break encryption silently. Self-hosting also
-removes a third party able to serve code that sees every decrypted frame.
-(Originally copied into the debug page's `debugui/`; since step 13 the
-web client's Vite build bundles the worker from client-core's own copy,
-`voiceWorker.ts`, and the debug page is gone.) The worker is not terminated by
-LiveKit; the client terminates it on leave.
-
-**Losing access removes you from the call, and old media keys expire.**
-Found on Docker 2026-10-31: a banned account stayed in the call and stayed
-audible. A LiveKit token only gates joining, and with `failureTolerance:
--1` nothing ever retired the old epochs' keys, which are all a removed
-device can encrypt with. Two fixes. The server calls LiveKit's
-`RoomService.RemoveParticipant` (Twirp JSON, room-admin token, internal
-URL `OPENVOXA_LIVEKIT_API_URL`, default `http://host.docker.internal:7880`) for every
-voice channel the account can no longer view, after a ban, a role change
-or an account deletion. And each client overwrites every key slot but the
-current one with random bytes 10 seconds after a new epoch key, so frames
-under an old key stop decrypting even from a client that ignores the
-removal. A member slow to apply a commit can drop out for a moment after
-that handover. Revoking a single device does not kick, because LiveKit
-identities are accounts and the account's other device may be the one in
-the call; the key expiry covers that case.
-
-**Voice commits are polled.** `group_advanced` only reaches subscribers of
-the text channel a socket is connected to, so a call also catches up on
-its voice group when someone joins, on any decryption error, and every 5
-seconds. Cheap at this scale; a socket subscribed to several channels
-would replace it.
-
-**Background reconciles are triggered by hints and staggered by leaf.**
-Every online member hears the same events, and if all reconciled at
-once each would claim a single-use key package for the same new device;
-only one commit wins and the other packages are burned. So
-`groups.reconcileSoon` debounces (300 ms), coalesces (one run at a time
-per channel, plus at most one queued), and waits 1.5 s per member leaf
-ahead of its own (capped at 8, plus jitter). The lowest leaf goes first;
-later members catch up on its commit and find nothing to do. Nothing
-depends on this for correctness: the epoch compare-and-swap still
-prevents a fork. Hints, 2026-10-31: the group was opened, a commit
-landed (`group_advanced`, and the 5 s voice poll), `perms_changed`,
-`user_purged`, and a new `access_changed` event the server sends on ban,
-unban, device revoke and key package publish. Publish rather than
-device registration, because a device is not addable until it has
-packages; it also re-adds a device that was skipped for running dry.
-Temporary bans expiring send nothing; the next hint picks them up.
-
-**Join and leave notices come from the group, names from the server.**
-Each device diffs the member identities in its own state before and
-after every commit it makes or applies, including ones it catches up on
-after being offline, so a device the server slips in is seen by every
-member regardless of what the server reports. The device ID in each
-notice is that ground truth; the account name and label next to it come
-from the allowed list (cached) or `GET /channels/{id}/mls/device-names`,
-which needs view access and resolves any device ID, revoked included,
-because a device that just left is usually one no longer allowed.
-Leavers are always looked up fresh, so a revocation shows. The notice
-names the committer from the handshake log's `sender_device_id`, which
-is also the server's word. Notices are emitted only after the new state
-is persisted, and in order through one queue. The debug page holds them
-while a channel's history loads, since history clears the log.
+**ts-mls tree validation is patched.** ts-mls (1.6.2 to at least 1.6.4)
+checks unmerged leaves wrongly: for an unmerged leaf of a parent node it
+demands that every non-blank node on the leaf's whole direct path carry
+exactly the same unmerged list, where RFC 9420 7.9.1 only requires the
+nodes between the leaf and that parent to list the leaf. A higher node
+legitimately lists more (adds into its other subtree), so a group with two
+adds into different subtrees and no path update in between refused every
+new device ("non-blank intermediate node must list leaf node in its
+unmerged_leaves"), by welcome or external join. Found 2026-11-01 when a
+voice group had collected many devices in the cloud test.
+`client-core/scripts/patch-ts-mls.mjs` fixes the check in node_modules,
+idempotently, from `build.mjs` and client-web's build, and fails the build
+if the code it expects is gone (re-check a new ts-mls before dropping it).
 
 **External commit works in ts-mls 1.6.2.** Proven in Node on
 2026-10-30 (throwaway script, not committed), with states round-tripped
@@ -1661,6 +1864,11 @@ its private key and verifies them against the public key in the leaf at
 its own index (`privatePath.leafIndex`). Proven in Node 2026-10-31: in a
 combined remove + add commit the removed device reports `active` and its
 leaf holds the newcomer, and the probe fails as it should.
+
+**Only a device removes its own duplicate leaves.** After rejoining from
+a GroupInfo a device can hold two leaves. Another member cannot tell
+which is live, and removing the wrong one would kick the device out, so
+reconcile removes duplicates of its own device ID only.
 
 **Spent commit keys are wiped only after the server accepts.**
 `createCommit` returns `consumed` arrays to zero, but they are shared
@@ -1726,49 +1934,170 @@ path, so a new device no longer needs someone in the call. Details:
   catch-up, one from stored state); two simultaneous external joins; a
   stale-generation commit refused (409) and catch-up told 410.
 
-**One browser database per account, one tab per account.** Found on
-Docker 2026-10-31: two windows of one Brave profile signed in as
-different accounts shared the single `openvoxa` IndexedDB, so they shared
-one device identity slot and one copy of each group. Each sign-in wiped
-the other's identity, and a window that loaded the other account's group
-state removed its own real leaf as a "duplicate" and rejoined, 70 epochs
-in a few minutes. Now each account has its own database
-(`openvoxa-<user id>`); the old shared one is moved into its owner's on
-first sign-in and deleted. Two tabs of the same account would share keys
-just as badly, so a Web Lock lets one tab per account and browser hold
-them; a second tab is refused with a message. And a client drops any
-stored group whose own leaf is not its device, whatever put it there.
+**Background reconciles are triggered by hints and staggered by leaf.**
+Every online member hears the same events, and if all reconciled at
+once each would claim a single-use key package for the same new device;
+only one commit wins and the other packages are burned. So
+`groups.reconcileSoon` debounces (300 ms), coalesces (one run at a time
+per channel, plus at most one queued), and waits 1.5 s per member leaf
+ahead of its own (capped at 8, plus jitter). The lowest leaf goes first;
+later members catch up on its commit and find nothing to do. Nothing
+depends on this for correctness: the epoch compare-and-swap still
+prevents a fork. Hints, 2026-10-31: the group was opened, a commit
+landed (`group_advanced`, and the 5 s voice poll), `perms_changed`,
+`user_purged`, and a new `access_changed` event the server sends on ban,
+unban, device revoke and key package publish. Publish rather than
+device registration, because a device is not addable until it has
+packages; it also re-adds a device that was skipped for running dry.
+Temporary bans expiring send nothing; the next hint picks them up.
 
-**Own echoes are paired by a ref, not by order.** The debug page paired
-its own echoed messages with what it sent by queue order, so a send the
-server refused ("slow down") left an orphan and every later own message
-in that session was archived with the previous one's text. A send frame
-now carries an optional client-chosen `ref` (up to 64 chars), echoed on
-the resulting message and on an error about that frame; client-core
-pairs by it. The debug page still sends none and is unaffected.
+**Join and leave notices come from the group, names from the server.**
+Each device diffs the member identities in its own state before and
+after every commit it makes or applies, including ones it catches up on
+after being offline, so a device the server slips in is seen by every
+member regardless of what the server reports. The device ID in each
+notice is that ground truth; the account name and label next to it come
+from the allowed list (cached) or `GET /channels/{id}/mls/device-names`,
+which needs view access and resolves any device ID, revoked included,
+because a device that just left is usually one no longer allowed.
+Leavers are always looked up fresh, so a revocation shows. The notice
+names the committer from the handshake log's `sender_device_id`, which
+is also the server's word. Notices are emitted only after the new state
+is persisted, and in order through one queue.
 
-**MLS handshake bodies have their own size cap.** Every JSON body was
-capped at 64 KB. An add commit carries the Welcome and the whole ratchet
-tree (tagged JSON) once per added device, so it grows with the square of
-the devices added at once; adding about ten devices to a new channel got
-413 and nobody was added (found 2026-11-01 in the cloud test). Group
-creation, commits, resets and GroupInfo uploads now allow 8 MB
-(`maxMLSBody`). Sending the tree once per commit instead of per welcome
-would make it linear; not needed at our scale yet.
+**Voice commits are polled.** `group_advanced` only reaches subscribers of
+the text channel a socket is connected to, so a call also catches up on
+its voice group when someone joins, on any decryption error, and every 5
+seconds. Cheap at this scale; a socket subscribed to several channels
+would replace it.
 
-**ts-mls tree validation is patched.** ts-mls (1.6.2 to at least 1.6.4)
-checks unmerged leaves wrongly: for an unmerged leaf of a parent node it
-demands that every non-blank node on the leaf's whole direct path carry
-exactly the same unmerged list, where RFC 9420 7.9.1 only requires the
-nodes between the leaf and that parent to list the leaf. A higher node
-legitimately lists more (adds into its other subtree), so a group with two
-adds into different subtrees and no path update in between refused every
-new device ("non-blank intermediate node must list leaf node in its
-unmerged_leaves"), by welcome or external join. Found 2026-11-01 when a
-voice group had collected many devices in the cloud test.
-`client-core/scripts/patch-ts-mls.mjs` fixes the check in node_modules,
-idempotently, from `build.mjs` and client-web's build, and fails the build
-if the code it expects is gone (re-check a new ts-mls before dropping it).
+**A message can be decrypted once.** MLS deletes each message key as
+soon as it is used, which is what forward secrecy means. Reloading the
+page and decrypting history again therefore fails for every message,
+not just ones from before joining. The client keeps a local archive of
+plaintext (IndexedDB, keyed by message id) and checks it before trying
+to decrypt; attachment keys survive reloads because they are inside
+that plaintext. Messages read before the archive existed are gone for
+good on that device. Received messages are processed through a single
+queue, because two decryptions running at once each start from the same
+saved group state and the later save throws away the earlier one's
+ratchet progress.
+
+**Edits and the archive.** The archive is keyed by message id and MLS
+keys are single-use, so an edited message needs a second decryption and
+a way to know whether the archived text is the latest. An edit's
+plaintext replaces the archived text and an `edit:<id>` entry in the same
+store records the `edited_at` it belongs to (a plain string, so backups
+carry it with no format change). On a history load, a matching mark means
+the archive is current; otherwise the body is decrypted; if that fails the
+older archived text is shown, labelled as not the newest version. The
+editor cannot decrypt its own edit, so the plaintext is kept from the
+PATCH until the `message_edited` echo or the response, whichever comes
+first. A backup restore only takes an edit mark together with its text.
+
+### LiveKit and media
+
+**LiveKit is served from our origin, pinned exactly.** Browsers refuse a
+Worker script from another origin, and the E2EE worker speaks a message
+protocol to the main library that changes between releases, so a floating
+CDN tag would eventually break encryption silently. Self-hosting also
+removes a third party able to serve code that sees every decrypted frame.
+The web client's Vite build bundles the worker from client-core's
+own copy (`voiceWorker.ts`). The worker is not terminated by
+LiveKit; the client terminates it on leave.
+
+**Voice refuses to start without encryption.** Keys are loaded and
+`setE2EEEnabled(true)` is called before `connect`, so nothing is ever
+published in the clear, and a browser without insertable streams or
+`RTCRtpScriptTransform` cannot join. `room.isE2EEEnabled` reads false until
+connected (it waits for an event naming the local participant);
+`localParticipant.isE2EEEnabled` is what governs publishing and is true
+from the start.
+
+**LiveKit key slots are epoch mod 16.** Members process a commit at
+different moments, so for a short while some encrypt under the new epoch
+and some under the old. LiveKit keeps a ring of keys and every frame
+carries the slot it was encrypted with, so both keys stay usable during
+the handover. `ExternalE2EEKeyProvider.setKey` always writes slot 0, which
+would overwrite the old key mid-handover; the client subclasses
+`BaseKeyProvider` instead. Options: `sharedKey: true`, `ratchetWindowSize:
+0` (keys come only from MLS, never from LiveKit's ratchet),
+`failureTolerance: -1` (a failed frame never marks a key invalid; with the
+default of 10 a member who is briefly behind would discard the right key).
+
+**Losing access removes you from the call, and old media keys expire.**
+Found on Docker 2026-10-31: a banned account stayed in the call and stayed
+audible. A LiveKit token only gates joining, and with `failureTolerance:
+-1` nothing ever retired the old epochs' keys, which are all a removed
+device can encrypt with. Two fixes. The server calls LiveKit's
+`RoomService.RemoveParticipant` (Twirp JSON, room-admin token, internal
+URL `OPENVOXA_LIVEKIT_API_URL`, default `http://host.docker.internal:7880`) for every
+voice channel the account can no longer view, after a ban, a role change
+or an account deletion. And each client overwrites every key slot but the
+current one with random bytes 10 seconds after a new epoch key, so frames
+under an old key stop decrypting even from a client that ignores the
+removal. A member slow to apply a commit can drop out for a moment after
+that handover. Revoking a single device does not kick, because LiveKit
+identities are accounts and the account's other device may be the one in
+the call; the key expiry covers that case.
+
+**LiveKit's track info is declared, not measured** (found 2026-11-04,
+LiveKit v1.13.11). `ListParticipants` gives each track's width, height
+and per-layer width/height/bitrate (in `codecs[].layers`; the top-level
+`layers` is deprecated but still filled), all as the browser announced
+them; there is no measured bitrate in the API. Twirp JSON uses
+snake_case and enum names as strings. `UpdateParticipant` replaces the
+whole permission, so send every field back (`setPublishSources` keeps
+them raw). Narrowing `can_publish_sources` unpublishes the dropped
+sources at once and new publishes fail with "insufficient permissions";
+an empty list means every source. livekit-client did not notice the
+server-side unpublish on its own: the share button stayed lit and the
+browser kept capturing until the client handled it.
+
+**LiveKit stops a local track the server unpublishes.** Found on Docker
+2026-11-04 (livekit-client 2.23.0): when the server takes a source away,
+the client calls `unpublishTrack` with the Room option
+`stopLocalTrackOnUnpublish`, true by default, which ends the capture. A
+screen share's audio can't be reopened without the browser's picker, so
+an unmute had nothing to send. The Room now sets it to false; every
+place that should end a track (`stopShare`, `#syncMic`, `#cleanup`)
+stops it itself, and a server-muted share's audio waits in
+`#heldShareAudio` until the source is allowed again.
+
+**LiveKit screen shares ignore `videoEncoding`.** Screen-share tracks read
+`screenShareEncoding` and `screenShareSimulcastLayers`, not the video
+equivalents. Setting the wrong one fails silently and leaves LiveKit's
+default of 1080p at 15fps and ~1.5 Mbps in place, producing a stream that
+appears to ignore every setting.
+
+**LiveKit asks for screen share sizes as "ideal".**
+`createLocalScreenTracks({resolution})` turns into `ideal` constraints
+(`max` only on Safari), so a capture can be bigger than the preset;
+`applyConstraints` with max values after capture holds it down.
+
+**`contentHint` defaults to detail on display capture.** That tells the
+encoder to hold resolution and sacrifice frame rate, which pins screen
+shares around 15fps regardless of bitrate. Set it to `motion` for video
+content. The "prioritise detail / motion" control sets both this and
+`degradationPreference`.
+
+**H.264 simulcast is poorly supported; VP8 simulcast is mature.** So VP8
+when simulcast is on, H.264 when it is off and hardware decoding matters
+(notably Safari and iOS). Awkward and inherent to WebRTC today.
+
+**Safari screen share layers (2026-11-05, CV5).** An iPad Pro in Safari
+sharing with VP8 simulcast sent only the small layer: tiles worked,
+but Watch (full layer) received 0x0, 0 kbps, a black view, and the
+tile stayed black after coming back until resubscribed. WebKit
+browsers therefore share one full H.264 copy (`#publishShare`).
+Two more from the same work: a share's subscription is let go 1.5 s
+after its last element detaches, so a tile handing over to the big view
+doesn't stop and restart the download; and TrackUnsubscribed must never
+remove the page's video elements (only our hidden audio ones).
+
+**`adaptiveStream` picks a layer from on-screen element size.** Sensible
+for saving bandwidth, wrong when a fixed quality is wanted. Exposed as a
+"pin max quality" toggle; it is Room-level so it only applies at join.
 
 **LAN clients and a public node IP (no hairpin NAT).** With
 `LIVEKIT_NODE_IP` set to the public IP for outside friends, a client on
@@ -1786,31 +2115,11 @@ networking can't do this: the "internal" address would be the
 container's. Caddy and the server reach LiveKit at
 `host.docker.internal:7880` (`extra_hosts: host-gateway`).
 
-**LiveKit stops a local track the server unpublishes.** Found on Docker
-2026-11-04 (livekit-client 2.23.0): when the server takes a source away,
-the client calls `unpublishTrack` with the Room option
-`stopLocalTrackOnUnpublish`, true by default, which ends the capture. A
-screen share's audio can't be reopened without the browser's picker, so
-an unmute had nothing to send. The Room now sets it to false; every
-place that should end a track (`stopShare`, `#syncMic`, `#cleanup`)
-stops it itself, and a server-muted share's audio waits in
-`#heldShareAudio` until the source is allowed again.
-
 **Old LiveKit servers hang publishing.** Against livekit-server 1.9.0 the
 2.23 client connected but publishing timed out in negotiation; 1.10.1
-works. Docker runs `livekit/livekit-server:latest`.
+works. The compose file pins v1.13.11 (see the note above).
 
-**Edits and the archive.** The archive is keyed by message id and MLS
-keys are single-use, so an edited message needs a second decryption and
-a way to know whether the archived text is the latest. An edit's
-plaintext replaces the archived text and an `edit:<id>` entry in the same
-store records the `edited_at` it belongs to (a plain string, so backups
-carry it with no format change). On a history load, a matching mark means
-the archive is current; otherwise the body is decrypted; if that fails the
-older archived text is shown, labelled as not the newest version. The
-editor cannot decrypt its own edit, so the plaintext is kept from the
-PATCH until the `message_edited` echo or the response, whichever comes
-first. A backup restore only takes an edit mark together with its text.
+### Electron and Windows
 
 **Electron screen share (desktop step 2, found by experiment).**
 `display-capture` must pass the session's permission handler or the
@@ -1822,6 +2131,12 @@ constraints`, not NotAllowedError, so the web client treats both as
 `-extension MIT-SHM` or screen capture fails ("Failed to initialize
 pixel buffer", empty source list), and run a window manager (openbox)
 or no windows are listed.
+
+**Electron's permission check origin has a trailing slash.** The
+permission check handler gets `requestingOrigin` as
+`https://host/`, so a plain comparison with the view's origin fails and
+the page is refused device names. Compare normalised origins. Found in
+desktop step 1 (ED7b).
 
 **Windows process loopback (desktop step 3, found by experiment).**
 Chromium 156's `restrictOwnAudio` constraint works with Electron's
@@ -1835,908 +2150,520 @@ feature. Windows sends packets continuously while the target is silent
 (WH3), so the reader gets a steady 192,000 bytes a second. Electron's
 `desktopCapturer` window IDs are `window:<HWND as decimal>:0`.
 
-**Safari screen share layers (2026-11-05, CV5).** An iPad Pro in Safari
-sharing with VP8 simulcast sent only the small layer: tiles worked,
-but Watch (full layer) received 0x0, 0 kbps, a black view, and the
-tile stayed black after coming back until resubscribed. WebKit
-browsers therefore share one full H.264 copy (`#publishShare`).
-Two more from the same work: a share's subscription is let go 1.5 s
-after its last element detaches, so a tile handing over to the big view
-doesn't stop and restart the download; and TrackUnsubscribed must never
-remove the page's video elements (only our hidden audio ones).
+### Server (Go, Postgres, HTTP)
 
-**Only a device removes its own duplicate leaves.** After rejoining from
-a GroupInfo a device can hold two leaves. Another member cannot tell
-which is live, and removing the wrong one would kick the device out, so
-reconcile removes duplicates of its own device ID only.
+**Middleware that wraps `ResponseWriter` breaks WebSockets.** Wrapping
+removes any interface beyond `ResponseWriter` itself, including
+`http.Hijacker`, and every upgrade fails. The request logger forwards
+`Unwrap` and `Hijack` for this reason. Any future wrapping middleware must
+do the same.
 
-## Permission groups
+**Browsers cannot send an `Authorization` header on a WebSocket.** The
+usual workaround puts the token in the query string, which writes
+credentials into access and proxy logs. Instead the client POSTs for a
+single-use 30-second ticket and spends it on the upgrade.
 
-Build-order step 12, decided by Ryan 2026-10-31.
+**Session tokens get SHA-256, passwords get argon2id.** Password hashing
+is deliberately slow to defeat dictionary attacks. A session token is 32
+bytes from a CSPRNG with no dictionary to attack, so slow hashing would
+cost latency on every request for no security gain.
 
-**Switches decide what you can do; rank decides whom you can do it to.**
-A group carries permission switches (`perm.All`: administrator,
-manage_groups, manage_channels, delete_messages, view_reports, ban,
-force_ptt, server_mute, manage_stickers). An account holds the union of its groups' switches. Groups
-are ranked by `position`, and an account's rank is its highest group's.
-Rank grants nothing on its own: Member and Everyone carry no switches,
-so an ordinary account cannot ban a guest whatever the order. Rank only
-limits targets: a moderator with ban can ban members and guests, not
-another moderator. Ryan's concern was keeping a clear line between
-standard and power-user accounts; that line is "holds any switch", and
-the account list is shown to anyone over it.
+**Login burns CPU on nonexistent users.** A dummy argon2 verification runs
+when the username is not found, so a missing account does not return
+noticeably faster than a wrong password. Without it, timing reveals which
+usernames exist.
 
-**Channels carry an allow-list, no deny rules.** Each channel lists the
-groups that may view it and, of those, which may post (and speak, in
-voice). Everyone on the list makes a channel public; an empty list
-leaves it to administrators, who see every channel. Chosen over
-Discord-style allow/deny overrides because there is never a precedence
-question to answer.
+**`X-Forwarded-For` is read rightmost, not leftmost.** A reverse proxy
+appends the address it saw, so a forged header produces "fake, real" and
+the rightmost value is the trustworthy one. Only honoured when
+`OPENVOXA_TRUST_PROXY` is set, since otherwise anyone can choose their own
+rate-limit key.
 
-**Groups stack.** A moderator is in Member and Moderator, so taking
-Moderator away leaves an ordinary member, and a channel only needs its
-lowest qualifying group on the list.
+**Server-to-client events never grant anything.** `perms_changed` (was
+`role_changed`) makes a client refetch what it displays; the server
+re-reads permissions from the database on every request regardless. A forged event changes what a client draws and
+nothing else.
 
-**Managing groups is bounded twice.** With manage_groups you may only
-touch groups below your rank and accounts below your rank (never your
-own), and only hand out, add or remove switches you hold yourself. So
-manage_groups cannot mint an administrator, and a group manager without
-ban cannot give ban away. For parity with the old roles you may put
-someone in a group at your own position (an administrator can make
-another administrator); neither can then undo the other.
+**Revoking access must reach live connections explicitly.** A websocket is
+authenticated once, at upgrade, and then runs until it is closed. Deleting
+sessions stops the next request and does nothing to a socket already open,
+so a banned user kept posting until they happened to disconnect. The hub
+tracks which user owns each connection and closes them on ban or account
+deletion. A role change re-checks each channel the subject has a socket
+open to and closes only the ones they can no longer view
+(`closeLostChannels`, 2026-10-31). Any future change that revokes access
+needs the same treatment.
 
-**Everyone is built in.** Every account is implicitly in it (the
-`effective_groups` view). Its permissions can be edited; its name,
-position (0) and membership cannot. It replaced the guest role.
+**Index predicates cannot reference `now()`.** Postgres requires them to
+be IMMUTABLE, because an index whose membership changed with the clock
+would silently stop matching its own definition. "One active ban per user"
+is therefore a unique index over permanent bans only, with overlapping
+temporary bans caught in the handler under a row lock. Any time-dependent
+uniqueness constraint needs the same split.
 
-**The upgrade changed nothing visible.** Migration 0012 converted the
-roles: Member (auto-assigned to new accounts), Moderator
-(delete_messages, view_reports, ban, force_ptt), Administrator
-(administrator). Channel minimums became allow-lists. `users.role` and
-`channels.min_role_*` were dropped; `roles` and `role_changes` stay as
-history, and `perm_group_changes` is the new audit log.
+**`messages.body` is `BYTEA` from the first migration.** Plaintext
+channels store UTF-8 there today; encrypted channels will store MLS
+ciphertext in the same column. Enabling encryption needs no migration.
 
-**Group-wide changes sweep instead of iterating accounts.** Editing or
-deleting a group, or replacing a channel's allow-list, can move many
-accounts at once. The server sends `perms_changed` with no user (every
-client refetches `/me` and reconciles), re-checks every open socket,
-and asks LiveKit who is in each voice room (`ListParticipants`) rather
-than checking every account against every room. A change to one
-account's groups uses the per-account path, as a role change did.
+**Retention sweep interval scales to the shortest policy.** A quarter of
+the shortest retention on the server, clamped between 30 seconds and 15
+minutes. A fixed interval makes the displayed policy wrong by a variable
+amount; scaling bounds overshoot to 25% of the stated value. The wait is
+chosen after each pass, so changing a channel's retention wakes the sweep
+at once (2026-11-04); before, a channel moved from forever to 2 minutes
+kept its messages until the old 15-minute wait ran out.
 
-**Clients keep an event socket.** `GET /ws` with no channel is a
-socket for server-wide events only (perms_changed, channel_changed,
-access_changed, channel_deleted, user_purged). Found on Docker
-2026-10-31: losing a group closed staff's only socket, so the re-add
-never arrived and the channel list stayed stale until a reload. The
-debug client opens one at sign-in and reconnects it; channel sockets
-skip those event types while it is up.
+**MLS handshake bodies have their own size cap.** Every JSON body was
+capped at 64 KB. An add commit carries the Welcome and the whole ratchet
+tree (tagged JSON) once per added device, so it grows with the square of
+the devices added at once; adding about ten devices to a new channel got
+413 and nobody was added (found 2026-11-01 in the cloud test). Group
+creation, commits, resets and GroupInfo uploads now allow 8 MB
+(`maxMLSBody`). Sending the tree once per commit instead of per welcome
+would make it linear; not needed at our scale yet.
 
-### There is always an administrator
+**The SSRF check belongs in `Dialer.Control`, not `DialContext`.**
+`DialContext` receives the hostname, so `net.ParseIP` there returns nil for
+every real URL and the filter refuses everything while appearing to work.
+`Control` runs once per connection attempt after name resolution, with the
+resolved address, which is the only point where the check is both correct
+and not racing a second DNS lookup. Checking the hostname instead would be
+defeated by any public name with a private A record; `localtest.me`
+resolves to `127.0.0.1` and is the standard test for this.
 
-Decided with Ryan 2026-11-01, instead of a built-in "root" account with
-a long password (one internet-facing login with total power is a
-password-guessing and phishing target, and a shared secret nobody can be
-held to). The Linux model is copied instead: root needs the machine.
+**A filter that blocks everything looks like a passing test.** The first
+SSRF test set contained only hostile URLs. All four were refused, so it
+looked correct, and the filter was in fact rejecting every request
+including legitimate ones. Any test set for a blocklist must include a
+known-good case, or a completely broken filter stays invisible.
 
-- **Two-administrator floor** (`lastadmin.go`, `adminGuard`,
-  `MinAdmins = 2`; raised from one the same day at Ryan's request): one is
-  not enough, because whoever takes over an administrator account could
-  remove the others and be the sole controller. Any transaction that can
-  take the switch from someone (deleting an account, either way; editing
-  or deleting a group; removing a group member; a ban, since banned
-  administrators don't count) locks, counts active administrators
-  (holding the switch through any group, not deleted, not banned) before
-  and after, and is refused with 409 if the count drops AND ends below
-  two. A server already under two (new, or older than this rule) is not
-  frozen, only kept from dropping further; startup and `list-admins` warn.
-  With exactly two, neither can leave until a third is added. The floor
-  limits what a rogue administrator can remove; it does not stop other
-  damage they can do with the switch, and same-rank administrators
-  already cannot remove each other.
-- **Host recovery** (`cli.go`): `docker compose exec server
-  /openvoxa-server grant-admin <username>` puts the account in the
-  top-positioned group with the switch, creating one above all others if
-  needed, and writes the audit log (actor NULL, "server command line").
-  `list-admins` shows who holds it; `list-users` lists every account
-  (groups, banned, created, last seen); `delete-user <name>...` deletes
-  like self-deletion (shared `PurgeUserTx`), one transaction per name,
-  keeping the two-admin floor unless `--force`. A deleted user's already
-  open socket stays until it reconnects (the CLI can't reach the hub).
-  Nothing is reachable over the network.
-- **Setup code**: an empty server (no rows in `users`) is no longer
-  claimed by whoever registers first. A random code is printed in the
-  server log at startup (and again on a refused attempt) and the first
-  registration must carry it (`setup_code`); `GET /api/v1/setup` tells the
-  sign-up form to ask. The code changes on every restart.
+**Attachments are claimed, not asserted.** Upload happens before the
+message is sent, so an oversized file fails before anyone has composed
+anything. When a message claims attachment IDs, the `UPDATE` matches only
+rows where uploader, channel and unclaimed status all line up. Guessing
+someone else's attachment ID matches nothing, so the authorisation check
+and the claim are the same statement.
 
-### Password rules
+**Attachment downloads use signed URLs, not sessions.** A browser will not
+send an `Authorization` header on an `<img src>` or `<video src>`, so the
+download route cannot require a session. Putting the session token in the
+URL would write credentials into access logs, which is exactly what the
+websocket ticket exists to avoid. Instead the server mints an HMAC-signed,
+time-limited link when it delivers the message, and the permission check
+happens at minting time when the caller's role is known.
 
-Decided with Ryan 2026-11-01: 12 to 256 characters using at least three
-of the four kinds: upper-case letter, lower-case letter, number, symbol
-(anything not a letter, digit or space). First all four; relaxed to 3 of
-4 the same day as a middle ground. Checked when a password is set
-(registration, `PUT /api/v1/me/password`), never at login, so older
-accounts still sign in.
+The tradeoff is the one presigned object-storage URLs make: anyone holding
+the link can fetch the file until it expires, regardless of channel
+access. A two-hour lifetime bounds it. The signing key is random per
+process, so a restart invalidates outstanding links and clients get fresh
+ones on their next history load.
 
-Hardened the same day (Ryan: `Password12345` passes 3-of-4 but anyone
-guessing puts the capital first). Also refused: passwords containing the
-username; common passwords, including dressed-up ones (lower-cased,
-look-alikes like @/0/$ undone, digits and symbols stripped off both ends,
-so `Password12345`, `P@ssw0rd!2024`, `Sunshine2025!` all match); and
-passwords more than half made of runs of 3+ with the same predictable step
-(aaa, abc, 321, qwerty). The list is the UK NCSC top 100,000 (from HIBP
-breach data, via SecLists, MIT; `common-passwords.LICENSE`), gzipped and
-embedded (~430 KB), loaded on first use (~0.2 s): nothing is sent to a
-third party. On 20,000 random 12-character passwords that pass the kind
-rule, under 10 are refused. Code: `server/internal/password` (`Problem`);
-client-web `password.ts` mirrors everything but the list for the live
-checklist. Changing the password
-needs the current one, uses the login rate limit, signs out every other
-session and closes all sockets. There is no forgotten-password reset (no
-email by design); a host command would be the natural path if wanted.
-Composition rules are not what NIST SP 800-63B recommends (it favours
-length plus a breached-password list). Ryan's reasoning, from years in
-IT: without them users pick `password1234` and, after a breach, reset to
-`password2345`; the rules force a rethink. The sign-up form shows the
-checklist live, and "Passwords don't match." under the confirm field once
-the password itself passes.
+**SVG is not in the inline-serving allowlist.** It is an image to users
+and a scriptable document to browsers. Served inline it is stored
+cross-site scripting against our own origin. Content type is taken from
+the file extension rather than the client's claim, and anything
+unrecognised becomes `application/octet-stream` with `nosniff` and an
+attachment disposition.
 
-**zxcvbn, 2026-11-04** (Ryan). Added zxcvbn and, with it, **dropped the
-3-of-4 kinds rule and the pattern rule**: zxcvbn already catches what they
-were for (keyboard rows, sequences, repeats, names, dates, dictionary
-words with a capital and a digit added), and without the kinds rule a long
-lower-case passphrase like `orange piano kettle sunrise` is allowed. The
-`password1234` -> `password2345` worry is still covered by the NCSC list.
-Rules now, in order: 12-256 characters; not the username; not on the NCSC
-list (dressed up or not); zxcvbn score >= 3 (an estimated 10^8 guesses or
-more; 4 refused too many reasonable passwords, 2 added little).
-- Server only (Ryan chose this over also running it in the browser: one
-  implementation, no ~1 MB of word lists for the browser, no "page said
-  Strong, server refused"). Go port `github.com/trustelem/zxcvbn` v1.0.1
-  (MIT, faithful port of zxcvbn 4.4.2, unmaintained since 2019 but the
-  algorithm is fixed). It has no hint text, so `strength.go` ports
-  zxcvbn's feedback.coffee (British spelling). Only the first 100
-  characters are scored: 256 characters of `aB3$` took ~180 ms, 100 take
-  ~14 ms.
-- `POST /api/v1/auth/password-check` `{password, username}` ->
-  `{problem, score, min_score, common, warning, suggestions}`. No session
-  (sign-up has none), own per-IP limit (30, then 2/s), nothing stored or
-  logged. A common-list hit caps the score at 1 so the meter agrees.
-- Client (`password.ts` `usePasswordCheck`): length and username checked
-  at once; the server asked 300 ms after typing stops; the last answer
-  stays on screen meanwhile. Off on the sign-in form, so a password being
-  signed in with is never sent to be checked. Only a known refusal of the
-  exact password blocks submit; while waiting or if the check failed, the
-  server decides on submit.
-- UI (`PasswordRules.tsx`): checklist "12+ characters / not your username /
-  hard to guess", a 4-segment bar (danger colour for Very weak/Weak,
-  accent for Fair, save green for Good/Strong) with the label, and below
-  it the warning and suggestions while it is not yet hard to guess.
+**Oversized uploads must be rejected before the multipart parser runs.**
+`MaxBytesReader` kills the parser before it yields a file, so the error
+that surfaces is "malformed form" when the truth is "file too large".
+Checking `Content-Length` first gives the right message and avoids
+buffering the upload at all; the body cap stays as a backstop because a
+chunked request declares no length.
 
-### Palette
+**Previews are deleted with their message.** A tombstone or retention
+sweep removes the preview card too. Leaving it would keep the deleted
+content's title and thumbnail on screen, which defeats the deletion.
 
-client-web default (Ryan, 2026-11-01): background #333333, buttons
-#D96932, text #FFFFFF; derived shades are `styles.css` variables. Light
-mode later: same orange, black text instead of white. Users will be able
-to pick their own colours later, so every colour stays a variable.
+**Clients never contact the GIF provider.** Thumbnails in the picker are
+proxied through this server, and picking a GIF makes the server download
+it once and store it as an ordinary attachment. Linking to the provider's
+CDN instead would mean every viewer, for as long as the message exists,
+quietly tells Giphy they are reading this channel. As an attachment it is
+also deduplicated, governed by channel retention, and destroyed with its
+message.
+
+The server still sends search queries to the provider, so they learn what
+this instance searches for but not who searched. Same shape as link
+previews, which is why the feature is off by default and an operator opts
+in knowingly. The media proxy only fetches from a hardcoded list of
+provider CDN hosts, and only URLs this server signed: a provider response
+is still remote input.
+
+**Reports carry the reporter's copy and are verified against ours.** A
+reporter's client sends what it believes the message said. In a plaintext
+channel the server compares that against its own stored copy; in an
+encrypted channel it will verify the author's MLS signature over the
+claimed bytes instead. A mismatch is rejected and recorded, because filing
+a provably false report is itself actionable. `verified` is nullable so a
+moderator can tell "checked and failed" apart from "could not be checked",
+and the UI offers destructive actions only on verified reports.
+
+**Banning is not deleting.** Deletion is the user's own right; using it as
+a punishment would destroy both the evidence that justified the ban and
+content other people are still reading. A banned account stays, locked.
+Purging their history is a separate, administrator-only decision on top of
+the ban, and it is irreversible: unbanning restores the account, never its
+messages.
+
+There is a tension worth knowing before it bites: purging destroys the
+evidence for the ban. If the ban is later disputed, the moderation log
+records that a purge happened and how many messages it covered, but not
+what they said. Resolving the reports first preserves the reported content
+in the `reports` table.
+
+**Archive copies follow deletions while the app is open.** Built
+2026-11-04. The startup `archive-check` (crypto-shredding S5) already
+covers retention, so the gap was an app left open. Deleting a message or
+a retention sweep in an **encrypted** channel also sends
+`archive_message_gone` (message id) or `archive_channel_expired` to every
+connected viewer (`notifyArchives` in events.go, the `channelViewers`
+rule, so outsiders learn nothing). New type names, because emitUsers
+reaches channel sockets too and the open view must not apply a deletion
+twice. The client deletes a single copy directly and runs the coalesced
+archive check after a sweep or `channel_deleted` (which also catches the
+open channel's unloaded older messages). Someone who lost access keeps
+copies until their next start. Storing channel and time per archive
+entry was rejected: it changes the archive and backup formats for little
+gain.
+
+### Web client and browsers
+
+**Markdown escapes before formatting, never after.** Message bodies are
+untrusted input. Escaping first and applying formatting to the escaped
+text means no user-supplied angle bracket can become a tag. The reverse
+order is a stored XSS vulnerability.
+
+**Link previews are click-to-load for embeds.** An auto-embedded YouTube
+player would contact Google for every message containing a link, whether
+or not anyone watches it. The thumbnail comes from the preview the server
+already fetched, and the iframe (on `youtube-nocookie.com`) is only
+created on click.
+The player iframe sends `Referer` as our origin only (`strict-origin`):
+with no referrer at all YouTube shows "Error 153" and won't play.
+
+**One browser database per account, one tab per account.** Found on
+Docker 2026-10-31: two windows of one Brave profile signed in as
+different accounts shared the single `openvoxa` IndexedDB, so they shared
+one device identity slot and one copy of each group. Each sign-in wiped
+the other's identity, and a window that loaded the other account's group
+state removed its own real leaf as a "duplicate" and rejoined, 70 epochs
+in a few minutes. Now each account has its own database
+(`openvoxa-<user id>`); the old shared one is moved into its owner's on
+first sign-in and deleted. Two tabs of the same account would share keys
+just as badly, so a Web Lock lets one tab per account and browser hold
+them; a second tab is refused with a message. And a client drops any
+stored group whose own leaf is not its device, whatever put it there.
+
+**Own echoes are paired by a ref, not by order.** The debug page (since
+deleted) paired its own echoed messages with what it sent by queue
+order, so a send the server refused ("slow down") left an orphan and
+every later own message in that session was archived with the previous
+one's text. A send frame now carries an optional client-chosen `ref` (up
+to 64 chars), echoed on the resulting message and on an error about that
+frame; client-core pairs by it.
+
+**Uploads must leave Content-Type alone.** A FormData body needs the
+browser's own multipart boundary header; the upload `ApiCall` in
+client-web `core.ts` must not set Content-Type.
+
+### Docker and builds
+
+**The Docker build context is the repository root.** The server image
+bundles client-core alongside the Go binary, so the Node stage and the Go
+stage both need to be in context. The bundle must be copied in BEFORE
+`go build`: the embed directive reads the directory at compile time, so a
+bundle copied afterwards silently produces a server with no client.
+
+**Docker applies image directory ownership only on a volume's first
+mount.** A named volume for the blob store arrives owned by root, and the
+server runs as `nonroot` (UID 65532), so directory creation fails and the
+container crash-loops. Distroless has no shell, so the Dockerfile uses a
+throwaway Alpine stage to create the directory with the right ownership
+and copies it into the final image. Changing this after a volume exists
+requires removing the volume.
+
+**Blobs are safe on network storage; Postgres is not.** Attachment bytes
+are write-once, read-many, with no locking, which NFS handles fine. A
+database over NFS is a well-documented way to corrupt things. The blob
+directory is a single path in config precisely so it can be a bind mount
+to whatever an operator wants.
+
+**`go mod tidy` silently raises the `go` directive.** Running it with a
+newer local toolchain than the Dockerfile's base image rewrites `go.mod`
+and the container build then fails with a confusing version error. Keep
+the Dockerfile's Go version at or above the directive.
 
 ## Build order
 
+What was built when, with test IDs. Design detail lives in the sections
+named; Docker is Ryan's homelab test server.
+
 1. ✅ Server skeleton, auth, one text channel
-2. ✅ Permissions: Administrator, Moderator, User, Guest
+2. ✅ Permissions: Administrator, Moderator, User, Guest (replaced in 12)
 3. ✅ Voice via LiveKit, unencrypted
 4. ✅ TLS deployment
 5. ✅ Screen sharing with configurable resolution and frame rate
 6. ✅ Retention enforcement, account deletion, live deletion events
-7. ✅ Rich text — markdown, link previews, attachments, GIF picker
-8. ✅ Moderation tooling — message removal, verified reports, bans
-9. 🔶 MLS for text — the largest single piece of work
-   - ✅ `client-core` package, build pipeline, MLS provider interface
-   - ✅ Browser self-test: group create, add, join, encrypt, decrypt,
-     matching exported secrets
-   - ✅ Server-side device identity and key package storage
-   - ✅ Client identity: real keys in IndexedDB, device registration,
-     key package publishing and replenishment
-   - ✅ Server-side group state, epoch-ordered commits, handshake log,
-     welcome delivery
-   - ✅ Tree and state serialisation proven end to end in the browser
-   - ✅ Client group logic: create or join, apply commits, persist,
-     rebase on conflict
-   - ✅ Encrypted application messages (verified single-user: ciphertext
-     at rest, plaintext channels unchanged)
-   - ✅ Two-party test: welcome path and forward-secrecy boundary on a
-     real second device (ryan + staff, 2026-10-30)
-   - ✅ Encrypted attachments: client-side AES-GCM, key in the MLS
-     message. Verified on Docker 2026-10-30 (ryan + staff): image, mp3
-     and PDF readable by the other member; stored blob is opaque data;
-     server row shows `encrypted` / octet-stream
-10. ✅ Media encryption keyed off the MLS exporter secret
-   - ✅ Exporter-derived media key, verified in Node: members agree,
-     key changes per epoch and per channel
-   - ✅ LiveKit E2EE wired with epoch-indexed key slots, self-hosted
-     and pinned LiveKit 2.23.0; checked headless against the real bundle
-   - ✅ Two-party call on Docker (ryan + staff, 2026-10-30): a device
-     outside the group is refused; adding it rotates the key (epoch 1);
-     audio and screen share both ways, simultaneous streams fine
-11. ✅ Automatic group membership from channel access: member
-    reconciliation, join and leave notices, then external join.
-    Built against the current roles.
-   - ✅ ts-mls external commit and removal behaviour proven in Node
-   - ✅ Server: one access rule (`access.go`), allowed-devices endpoint,
-     welcome recipients checked, key package claims scoped to a channel.
-     Verified on Docker 2026-10-31 (ryan + staff, admin-only channel):
-     allowed list correct, staff refused the list, claim for staff
-     refused, claim without channel refused, commit with a welcome to
-     staff refused, existing channel and "Add everyone" unaffected
-   - 🔶 Client: `groups.reconcile(channelId)` built (removals commit,
-     then additions commit, own-leaf check after every commit, removed
-     device discards its state and rejoins from a welcome). Passed a Node
-     run against a fake server incl. a real epoch race, 2026-10-31.
-     Verified on Docker 2026-10-31 (ryan + staff, `mods-only-test`, staff
-     toggled user/moderator): nothing added without access; staff added
-     (epoch 1), removed (2), re-added (3) while offline; staff then joined
-     from the newest welcome at epoch 3 and messages flowed both ways
-   - ✅ Triggers (`reconcileSoon`, `access_changed`, demotion closes
-     lost sockets, chat.html handles `RemovedFromGroup` and joins on
-     `group_advanced` while waiting). Verified on Docker 2026-10-31
-     (ryan + staff, `mods-only-test`): demote closed staff's socket and
-     ryan removed it automatically (epoch 4); promote re-added it (5);
-     staff revoking its own device while connected showed the removal as
-     a normal event and ryan removed it (6); the new device was added
-     automatically after publishing key packages (7). One commit per
-     change, both sides in sync, messages both ways
-   - ✅ Join/leave notices (`groups.onMembership`,
-     `GET /channels/{id}/mls/device-names`). Verified on Docker
-     2026-10-31 (ryan + staff + an incognito ryan device): removal and
-     re-add named on the committer (epochs 8, 9); staff added the new
-     device (10) and removed it after revocation, marked revoked (11);
-     ryan's main device, offline throughout, announced both on
-     reconnecting, credited to staff
-   - ✅ "Add everyone" buttons and public `groups.addMembers` removed
-     (2026-10-31)
-   - ✅ External join and stuck-group reset. Verified on Docker
-     2026-10-31 (ryan + staff): a new staff device joined an empty voice
-     call from the group info; with staff demoted as the only member,
-     ryan joined `stuck-test` from the group info and removed staff
-     automatically; with the group info deleted, staff replaced
-     `ext-test` (generation 2), ryan, connected throughout, saw
-     "replaced; rejoining" and joined on his own; a device returning with
-     the previous group's state rejoined and said so; messages both ways
-   - ✅ "Forget this device" revokes it on the server first. Before, the
-     device stayed active and members kept re-adding a device nobody held
-     keys for (found in the step 8 test; old ones revoked by hand)
-12. ✅ Custom permission groups replacing the fixed roles (migration
-    0012, `groups.go`, `perm`). Verified on Docker 2026-10-31 (ryan,
-    staff, tester): upgrade kept every account's access; new group +
-    encrypted channel; removal and re-add while connected (one commit
-    each, no reload, after adding the event socket); losing access mid
-    call removed staff via the LiveKit sweep; a ban-only group at rank 12
-    could act on a Member but not on staff, and could not hand out
-    groups. Found on the way: retiring old voice keys switched every
-    device onto junk keys 10 s after a key change (fixed `efc38c6`)
-13. ⬜ The real client: `client-web`, `client-desktop`
-    Decided with Ryan 2026-10-31:
-    - `client-web` is Vite + React + TypeScript with plain hand-written CSS
-      (dark, Discord-like). The Go binary embeds the build (`webui/`,
-      `webui.go`) and serves it at `/` as a single-page app; chat.html stays
-      at `/debug/`. Same origin keeps the LiveKit E2EE worker working and
-      lets the new client read the IndexedDB the debug page wrote.
-      `client-desktop` (Electron) later loads the same bundle.
-    - Order: M1 signup/login + recovery key, M2 text (history paging),
-      M3 voice/screen share, M4 attachments/GIFs/unfurls/notices,
-      M5 settings and admin panes.
-    - Recovery key v1 = history backup only: generated at signup, shown
-      once (words/characters AND a QR code), confirmed by retyping part
-      of it; it encrypts an uploaded backup of the local plaintext
-      archive (server stores opaque chunks). Existing accounts are asked
-      once. Local IndexedDB encryption reuses it later.
-    - Backup storage (server, migration 0015): one backup per account, a
-      small opaque header (format, KDF salt, key check) plus named opaque
-      chunks. Chunk names are client-chosen so the server does not learn
-      which channel a chunk covers. Starting a backup replaces the header,
-      drops all chunks and issues a new backup id; uploads carry that id
-      and get 409 if it is stale, so chunks sealed under two keys never
-      mix. Limits: 4 MB per chunk, 1000 chunks, 256 MB per account.
-    - Recovery key and backup format (client-core `recovery.ts`): 128
-      random bits as 12 BIP-39 words (checksum catches typos; first four
-      letters of each word suffice) or a QR payload `OVRK1:<hex>`. The key
-      is random, not a password, so HKDF-SHA256 with a per-backup salt is
-      enough (no Argon2). Header holds format, salt and a key-check value
-      so a wrong key reads as wrong, not as damage. Each upload writes a
-      whole new generation `<gen>-<n>` then deletes the old one, so an
-      interrupted upload leaves one complete copy. Chunks are gzip'd JSON
-      under AES-256-GCM with the backup id and chunk name as additional
-      data. Restore only adds entries the device lacks. The derived key
-      (not the words) is kept on the device as a non-extractable
-      CryptoKey for later uploads; another device starting a new backup
-      locks the others until they enter the new key.
-    - Recovery screens (client-web, M1 part 4; decided with Ryan
-      2026-11-01): signup shows the 12 words and a QR, then asks for 3
-      random words (first four letters suffice, as in parse) before
-      `Backup.create`; no "Not now" at signup. An older account without a
-      backup is asked once per browser (remembered in localStorage). A
-      backup this device cannot use (never unlocked here, or replaced by
-      another device) gets the restore screen: restore merges and
-      remembers the key; "Skip for now" lasts the session; "I lost my key"
-      starts a new backup after a warning. Upload policy: always before
-      sign-out, and about a minute after the latest new message
-      (`BackupManager.scheduleUpload`, debounced; called by the chat view
-      from M2). QR scanning by camera is not
-      built; the `OVRK1:` text can be pasted. client-web imports
-      client-core as source (`@core/*` in tsconfig, `resolve.tsconfigPaths`
-      in Vite); the Dockerfile puts the client stage's tree beside it.
-    - Text in client-web (M2; scope decided with Ryan 2026-11-01):
-      Discord-like layout (channel sidebar with text and voice channels,
-      voice inert until M3; message pane; composer; user panel with
-      backup status and Log out). M2 is core text (send/receive in plain
-      and encrypted channels, history paging, archive plus
-      `scheduleUpload` per archived message) plus editing and deleting
-      your own messages and unread markers. Attachments, GIFs, unfurls
-      and join/leave notices stay M4 (a message with attachments says so
-      and points at the debug page).
-    - client-web owns the device from M2: it runs `startSession`, so the
-      debug page in another tab of the same account gets the "already
-      open in another tab" refusal (Web Lock). Sign-out originally
-      revoked the device and wiped the local database, so every sign-in
-      after it needed the recovery key. Replaced 2026-11-03: sign-out
-      keeps the device (Encryption, "Local storage is encrypted under
-      the password", sign-out bullet).
-    - Chat logic lives in client-core `chat.ts` (`Chat` per account:
-      event socket, channel list, unread; `ChannelView` per open channel:
-      socket, decrypt/archive queue, paging, send/edit/delete), so the
-      desktop client reuses it. client-web only draws snapshots.
-    - History paging: the websocket still sends the newest 50 on connect,
-      now with `has_more`; older pages come from `GET
-      /channels/{id}/messages?before=<message id>&limit=` (max 100),
-      walking (created_at, id) backwards (index from migration 0016).
-    - Edits: `PATCH /messages/{id}` `{body}`, author only, while they may
-      still post, never a deleted message; the body is replaced in place
-      (no server-side edit history) and `edited_at` set; event
-      `message_edited` carries the new body. In an encrypted channel the
-      new body is a fresh MLS ciphertext of an envelope that keeps the
-      old file keys (or the attachments would become unreadable).
-      Moderators delete; they do not edit others' words.
-    - Unread: `GET /channels` gives `last_message_at`; a new message
-      sends `channel_activity` (channel, message id, author, time, no
-      content) to the connected accounts that may view the channel and to
-      nobody else, since that a hidden channel is busy is itself a leak.
-      The client keeps the last-read time per channel in localStorage; a
-      channel seen for the first time counts as read.
-    - Channel management in client-web (moved forward from M5 at Ryan's
-      request 2026-11-01): accounts with manage_channels get a "+" beside
-      the Text and Voice headings (create dialog: type, name, encryption
-      for text, allow-list pre-filled with the server default) and a gear
-      on each channel (allow-list, retention, history sharing for
-      encrypted text, delete with a second confirmation). force_ptt
-      holders get the gear on voice channels for "Require push-to-talk".
-      Name and encryption stay fixed after creation (no rename on the
-      server; flipping encryption would strand history or break the
-      promise to people who wrote it). Voice is always encrypted, so the
-      dialog offers no switch for it. Permissions refresh on
-      perms_changed.
-    - Voice and screen share in client-web (M3; decided with Ryan
-      2026-11-01): Discord-like. Clicking a voice channel joins its call;
-      the people in each call are listed under the channel (live for
-      your own call: speaking ring, mic off, LIVE when sharing; the
-      server's list for the others). A voice bar above the user panel has
-      mute, deafen, share screen, voice settings and leave. Screen shares
-      open in a stage in the main pane (grid, click to focus, fullscreen,
-      optional stats), "Back to chat" returns. Also in M3: mic and
-      speaker pickers, per-person volume and "mute for me" (right-click a
-      person; this device only), deafen, a push-to-talk key binding
-      (default the backquote key; a page only sees keys while focused, so
-      character keys are ignored while typing; the desktop app adds a
-      global key later). Share options: the debug page's presets,
-      detail/motion, audio, and under Advanced codec and simulcast; "pin
-      max quality" is a voice setting.
-    - Voice logic is client-core `voice.ts` (`VoiceClient`), the debug
-      page's code moved over (media key ring, `overwriteSlot`, PTT,
-      share encodings). It imports LiveKit, so it is not in client-core's
-      index: client-web loads it on first join (LiveKit is ~500 KB). The
-      E2EE worker is built by Vite from client-core's own livekit-client
-      copy (`voiceWorker.ts` imports it by relative path) so it is always
-      the library's exact build; nothing points at `/debug/`, which is off
-      in production.
-    - Who is in each call: `GET /voice/participants` asks LiveKit
-      (`ListParticipants`) for the voice channels the caller may view,
-      cached 2 s, names from our database. There are no LiveKit webhooks:
-      a client that joins or leaves posts `POST /channels/{id}/voice/
-      changed`, and the server sends `voice_changed` to the channel's
-      viewers only (as `channel_activity`), who ask again; kicks send it
-      too. Clients also poll every 20 s for people who vanish silently.
-    - Chat extras in client-web (M4 session A, 2026-11-01): Markdown
-      (`markdown.tsx`: bold, italic, strike, inline and fenced code,
-      "> " quotes, links; built as React elements, never HTML strings,
-      same subset as the debug page). Link previews (`previews.tsx`) for
-      the first link in a message, via `POST /unfurl`, one request per
-      link per page load; YouTube is click-to-load (youtube-nocookie).
-      The server asks YouTube's oEmbed endpoint for YouTube links
-      (`unfurl.fetchYouTube`): scraping watch pages failed on Docker
-      (huge pages, consent redirects). A YouTube link always gets its
-      click-to-play box, even when no card could be fetched or previews
-      are off (it contacts nobody until clicked). The player iframe sends
-      `Referer` as our origin only (`strict-origin`): with no referrer at
-      all YouTube shows "Error 153" and won't play.
-      In encrypted channels previews are off unless the user opts in
-      (Settings, "Link previews in encrypted channels", per browser):
-      Ryan chose opt-in over never or always, since the server learns
-      the link and preview images load from the linked site; the setting
-      says so. GIF picker (`gifs.tsx`): the GIF button appears when
-      `GET /gifs/config` says enabled; trending on open, search as you
-      type (400 ms pause), picking one sends it at once as its own
-      message (`ChannelView.send(text, attachments)`, text may be empty
-      with an attachment). Plain attachments (any in plain channels,
-      GIFs in any) show inline from their signed URL; sender-encrypted
-      files were a placeholder until session B (below). Join/leave notices: Chat
-      forwards `groups.onMembership` people changes for the open
-      encrypted channel; `ChannelSnapshot.notices` are now
-      `{id, at, text, kind}` and sit among messages by time. Voice
-      join/leave tones (`tones.ts`; since 2026-11-04 `sounds.ts`, Feature decisions "Custom sounds"): two WebAudio notes, rising for a
-      join and falling for a leave, for you connecting/leaving and others
-      in your call; people already there when you connect are not
-      announced (2 s settle). On by default, "Join and leave sounds" in
-      Settings. The user-panel gear and the voice-bar cog open one
-      Settings dialog (Voice and Chat sections). Mic button is
-      highlighted when deafened too.
-    - Attachment upload in client-web (M4 session B, built and verified
-      on Docker 2026-11-03): "+" button (file picker, several at
-      once), pasting files or screenshots into the message box, and
-      dropping files anywhere on the channel. Each file uploads the moment
-      it's added (`ChannelView.upload`, which encrypts first in an
-      encrypted channel) into a tray above the composer with thumbnails
-      and a remove button; Send waits for uploads to finish and leaves
-      failed ones out. At most 10 per message (the server's cap); each
-      encrypted file's key and name (cut to 120 characters) ride in the
-      message and count toward its 4,000-character limit, so the error
-      says to send fewer files. `ChannelView.send` takes `Upload`s
-      alongside plain `AttachmentInfo` and puts their keys in the
-      envelope. Showing (`attachments.tsx`): encrypted images decrypt on
-      sight; encrypted video/audio up to 10 MB too, bigger ones behind a
-      "Load" button, because GCM can't stream into a player; other files
-      decrypt on click and save through `download=`, never opening. The
-      blob's type comes from the inline allowlist, never the sender
-      (stored-XSS on our origin otherwise). Decrypted copies are shared
-      per attachment and freed a minute after nothing shows them.
-      Switching channel drops the tray; the server sweeps unclaimed
-      uploads after an hour. The upload `ApiCall` must leave
-      Content-Type alone for FormData (client-web `core.ts` does).
-      Clicking an image opens an in-page viewer (name, "Open in new tab",
-      "Download", Esc or a click outside closes); Settings, "Open images
-      in a new tab", switches to tabs (per browser, off by default; Ryan
-      asked for the choice after A1). Ctrl/middle-click always opens a tab.
-    - Account settings in client-web (M5 session A, 2026-11-03; M5 split
-      into A account, B groups and members, C moderation, at Ryan's pick).
-      Settings is one dialog with Account, Voice and Chat tabs
-      (`SettingsDialog.tsx`); the user-panel gear opens Account without
-      loading LiveKit, the voice-bar cog opens Voice. Account: username and
-      groups; change password (current + new with the signup checklist;
-      the server signs out every other session and says how many); the
-      recovery key (status, Back up now, Set up / Enter key, and "Make a
-      new key" for a working key, which re-uploads this browser's history
-      under the new key, so nothing is lost: `RecoverySetup rotating`);
-      devices (`GET /devices`, this browser first and not removable here,
-      since Log out does that with a backup first; removing another one
-      revokes it and members take it out of encrypted channels); delete
-      account (type the username and the password, `DELETE /me`; the
-      server deletes first, then this browser's keys are wiped, so a
-      refusal such as the two-admin floor leaves everything intact).
-      Calls that check a password use api.ts `call`, not the ApiCall
-      that signs out on any 401, because a 401 there means a wrong
-      password.
-    - Groups and members in client-web (M5 session B, 2026-11-03).
-      A separate Server settings dialog (`ServerSettings.tsx`), not more
-      tabs in Settings, so personal and server settings stay apart and
-      session C adds its moderation tabs there. The gear beside the server
-      name shows for staff (any switch); changing anything needs
-      manage_groups. Rank is edited as a number (Ryan's pick over up/down
-      arrows: it matches the server, allows ties, one save per change),
-      with a hint naming the groups either side. The dialog mirrors the
-      server's rules (rank strictly below yours, only switches you hold,
-      not your own groups) as disabled controls with a reason; PATCH
-      sends only changed fields, since an untouched switch list on a
-      group holding a switch you lack would be refused. Membership
-      changes save on each tick. Lists reload on perms_changed.
-    - Moderation in client-web (M5 session C, 2026-11-03). Report on
-      other people's messages (`ChannelPane.tsx` ReportDialog; sends the
-      text as shown, and in an encrypted channel says so, since that
-      reveals it to the server and it stays unchecked). Server settings
-      gains Reports (needs view_reports: Open/Actioned/Dismissed/Rejected,
-      Checked/Didn't match/Unchecked tag, Delete message, Ban author,
-      Dismiss, Mark actioned; deleting and banning stay separate calls
-      from closing a report), Bans (needs ban; Unban), and Log (Ban, View
-      reports or Delete messages). Members rows get Ban/Unban and, for
-      administrators, Delete (type the username). Ban durations are
-      presets (1 hour, 1/7/30 days, permanent; Ryan's pick); purge is
-      administrator only. Server: `GET /users` adds `banned` and
-      `banned_until`, reports add channel name and `message_gone`, admin
-      deletions now write `delete_user` to `moderation_log` (the username
-      in detail, since the row is gone), `GET /moderation-log`
-      (`modlog.go`, `?before=` paging, `?archived=1`).
-      Pending reports: a red dot on the Server settings gear for holders
-      of view_reports (Ryan asked for one). `reports_changed` goes only to
-      them (emitUsers) when a report is filed or resolved; the client
-      refetches the open list, also every 2 minutes and on focus as a
-      fallback; the dialog opens on Reports while any are open.
-      Log archive: entries older than `server_settings.modlog_archive_days`
-      (migration 0017, one-row typed table for server-wide settings,
-      default 30, 1 to 3650, administrator sets it in the Log tab) show
-      under Archived. A view only; nothing is deleted.
-    - @mentions (2026-11-03, after M5; see Feature decisions, "Mentions
-      are metadata the server sees"). Server: migration 0018
-      `message_mentions`, `mentions.go` (filter by viewer rule, `mention`
-      event via emitUsers to the mentioned only, `GET /channels/{id}/
-      members` for autocomplete), `mentions` on message frames and
-      history, `last_mention_at` per channel in the list. An edit
-      replaces the set and notifies only the newly added. Core:
-      `findMentions` (code skipped, exact username match first, then a
-      unique case-insensitive one), `ChatMessage.mentions`/`mentionsMe`,
-      `Chat.mentions` (channels with an unread mention, compared with the
-      read mark like unread) and a `mentioned` event. Web: `@` list in the
-      composer and the edit box, pills (stronger for you), highlighted
-      rows, a red `@` badge in the sidebar, a mention tone and opt-in
-      desktop notifications (who and where only, never the text) in
-      Settings > Chat. Not built: `@everyone`/`@group`, mention counts,
-      notifications while the app is closed.
-    - Device linking by QR (after M1): a logged-in device shows a QR of
-      `https://server/link#<one-time secret>` (about 2 min, single use);
-      the phone's camera opens it; the server only relays encrypted
-      messages; the old device approves the login and hands over the
-      backup key. The typed recovery key is the fallback.
-    - 2FA: TOTP only (authenticator apps, RFC 6238) plus one-time backup
-      codes. No SMS, email or third-party service. After device linking.
+7. ✅ Rich text: markdown, link previews, attachments, GIF picker
+8. ✅ Moderation tooling: message removal, verified reports, bans
+9. ✅ MLS for text, the largest single piece of work. `client-core`
+   package and `MlsProvider` interface; browser self-test; server-side
+   device identity, key package storage, group state, epoch-ordered
+   commits, handshake log, welcome delivery; client identity in
+   IndexedDB; tree and state serialisation; encrypted messages.
+   Two-party test on Docker 2026-10-30 (ryan + staff): welcome path and
+   forward-secrecy boundary. Encrypted attachments verified the same day
+   (image, mp3, PDF; stored blob opaque, row shows `encrypted` /
+   octet-stream).
+10. ✅ Media encryption keyed off the MLS exporter secret. Members agree
+    on the key, it changes per epoch and channel (Node); LiveKit E2EE
+    with epoch-indexed key slots, LiveKit 2.23.0 self-hosted and pinned.
+    Two-party call on Docker 2026-10-30: a device outside the group is
+    refused; adding it rotates the key; audio and screen share both ways.
+11. ✅ Automatic group membership from channel access (Encryption, "Group
+    membership follows channel access"). All verified on Docker
+    2026-10-31 with ryan + staff:
+    - ts-mls external commit and removal behaviour proven in Node.
+    - Server: one access rule (`access.go`), allowed-devices endpoint,
+      welcome recipients checked, key package claims scoped to a channel
+      (every refusal case checked).
+    - Client `groups.reconcile` (removals, then additions, own-leaf check
+      after every commit). Node run with a real epoch race; on Docker
+      staff was added, removed and re-added while offline, then joined
+      from the newest welcome.
+    - Triggers (`reconcileSoon`, `access_changed`, demotion closes lost
+      sockets): demote, promote, self-revoke and a new device each made
+      exactly one commit.
+    - Join/leave notices (`groups.onMembership`, `device-names`): an
+      offline device announced changes on reconnecting, credited to the
+      committer.
+    - "Add everyone" buttons and public `groups.addMembers` removed.
+    - External join and stuck-group reset: a new device joined an empty
+      call from the GroupInfo; a demoted sole member was replaced and
+      removed; a reset (`ext-test`, generation 2) with both old members
+      rejoining.
+    - "Forget this device" revokes it on the server first.
+12. ✅ Custom permission groups replacing the fixed roles (migration 0012,
+    `groups.go`, `perm`). Verified on Docker 2026-10-31 (ryan, staff,
+    tester): upgrade kept every account's access; removal and re-add
+    while connected; losing access mid-call removed staff via the LiveKit
+    sweep; a ban-only group at rank 12 acted on a Member but not on staff.
+    Found on the way: retiring old voice keys switched every device onto
+    junk keys 10 s after a key change (fixed `efc38c6`).
+13. ✅ The real client, `client-web` (Architecture, "How the web client is
+    served"). Order decided with Ryan 2026-10-31:
+    - M1 sign-up, login, recovery key (2026-11-01; T1, B1, R1, K1 flow 1;
+      K1 flows 2-5 deferred by Ryan). Encryption, "Recovery key and
+      history backup". Password rules and the two-administrator floor
+      (A2) came with it.
+    - M2 text chat (Feature decisions, "Text chat in the web client").
+    - M3 voice and screen share ("Voice and screen share in the web
+      client").
+    - M4 session A markdown, previews, GIFs, notices (2026-11-01); session
+      B attachment upload (2026-11-03, A1).
+    - M5 session A account settings, B groups and members, C moderation
+      (2026-11-03). Channel management was moved forward from M5.
+    - @mentions (2026-11-03).
+    - Local storage encrypted under the password (2026-11-03).
+14. ✅ Crypto-shredding (2026-11-03; Encryption, "Account deletion is
+    crypto-shredding"). One commit per step, each tested on Docker:
+    - S1 key folder (`internal/keystore`: a file per account, created on
+      first seal via temp file + link, cached) and sealing of new
+      plaintext bodies and edits (`httpapi/sealing.go`: AES-256-GCM,
+      format byte 0x01, channel and author as associated data; an
+      unopenable body is delivered empty). Migration 0020, compose volume
+      `key-data`.
+    - S2 existing bodies and report copies sealed at startup
+      (`SealExisting`, batches of 500, guarded UPDATEs so a concurrent
+      edit or delete wins). Migration 0021 (`reports.claimed_body` to
+      BYTEA, `claimed_sealed`; blanks leftovers of already-deleted
+      accounts). 17 messages and 4 reports sealed.
+    - S3 plaintext-channel attachments sealed (`internal/sealedfile`:
+      random key per file, 64 KiB AES-GCM chunks, nonce = chunk index +
+      last flag, so range requests and video seeking work;
+      `httpapi/attachseal.go`: file key and name sealed under the
+      uploader's key, bound to channel, uploader and blob hash; download
+      decrypts on the fly, 410 once the key is gone; `storeAttachment` shared
+      by uploads and GIFs). Migration 0022 (`file_key`, `sealed_name`).
+      GIFs in plaintext channels sealed too.
+    - S4 deletion destroys the key (`keystore.Destroy`: unlink, folder
+      fsync, and refuses to re-create that account's key in the same
+      process, so a racing send cannot revive it). Called after the purge
+      commits, in `purgeUser` and `delete-user`; a failure is logged with
+      the file to remove by hand. `PurgeUserTx` also deletes the account's
+      attachments and blanks report copies; the report list has
+      `content_deleted`. Rejected: a startup sweep of
+      key files with no account (a server pointed at the wrong database
+      would destroy every key).
+    - S5 delete-account wording; `POST /messages/archive-check` (up to 500
+      ids, `archivecheck.go`) and `Chat.pruneArchive` at every start and
+      2 s after `user_purged`, followed by a backup upload.
+    - S6 `deploy/README.md`, "Account keys and backups".
+    - Later the same day: keys wrapped under an optional KEK (Encryption,
+      "Encrypting the keys at rest").
 
-14. **Crypto-shredding** (DONE 2026-11-03; design agreed with Ryan the same day; see
-    Encryption, "Account deletion is crypto-shredding"). One commit per
-    step, each tested on Docker:
-    - [x] S1 Key folder (`OPENVOXA_KEY_DIR`, own volume, created by the
-          server) and sealing of new plaintext message bodies and edits;
-          readers unseal. Migration adds `messages.sealed`. Done
-          2026-11-03: `internal/keystore` (file per account, created on
-          first seal via temp file + link, cached; unit tests),
-          `httpapi/sealing.go` (AES-256-GCM, format byte 0x01, channel and
-          author as associated data; an unopenable body is delivered
-          empty), migration 0020, compose volume `key-data`. Verified on
-          Docker: send, file-only send, edit, reload.
-    - [x] S2 Seal existing plaintext bodies and report copies during the
-          upgrade; seal new report copies. Done 2026-11-03: migration 0021
-          (`reports.claimed_body` to BYTEA, `claimed_sealed`; blanks report
-          copies and message bodies whose author is already deleted, which
-          account deletion had left behind in reports), `SealExisting` in
-          `sealing.go` runs in the background at startup (batches of 500,
-          guarded UPDATEs so a concurrent edit or delete wins). Report
-          copies are sealed under the accused's key in every channel kind.
-          Verified on Docker: 17 messages and 4 reports sealed, old
-          history, old reports and a new Checked report all read.
-    - [x] S3 Plaintext-channel attachments sealed under the uploader's
-          key (bytes and filename), no more dedup there; existing blobs
-          converted. Done 2026-11-03: `internal/sealedfile` (random key
-          per file, 64 KiB AES-GCM chunks, nonce = chunk index + last
-          flag, so range requests and video seeking work; tests cover
-          truncation and tampering), `httpapi/attachseal.go` (file key and
-          name sealed under the uploader's key, bound to channel, uploader
-          and blob hash; `storeAttachment` shared by uploads and GIFs;
-          download decrypts on the fly, 410 once the key is gone),
-          migration 0022 (`file_key`, `sealed_name`; drops leftover files
-          of already-deleted accounts). GIFs in plaintext channels are
-          sealed too (one rule; old ones cannot be told from uploaded
-          .gif files). Verified on Docker: 4 existing files converted,
-          old and new files, video seeking, GIF, size limit.
-    - [x] S4 Deletion destroys the key file and removes the account's
-          attachments; reports show "content deleted". Done 2026-11-03:
-          `keystore.Destroy` (unlink + folder fsync, drops the cached
-          key, and refuses to re-create a key for that account in the
-          same process, so a send racing the deletion cannot revive it).
-          Called only after the purge commits, in `purgeUser` and the
-          `delete-user` host command (which opens the key store itself);
-          a failure is logged / printed with the file to remove by hand,
-          not rolled back. `PurgeUserTx` now also deletes the account's
-          attachments (on its messages, and unsent uploads) and blanks
-          report copies of its words; the report list has
-          `content_deleted`. Rejected: a startup sweep of key files with
-          no account, since a server pointed at the wrong database would
-          destroy every key. Verified on Docker: two accounts deleted,
-          files and report text gone, no leftover key files.
-    - [x] S5 Delete-account dialog with the new wording (password and
-          typed username); other clients delete stored copies of a
-          deleted account's messages on `user_purged`. Done 2026-11-03:
-          the typed username and password already existed (M5 A); the
-          paragraph is now the agreed one. The archive is keyed by
-          message id alone and an offline device never sees
-          `user_purged`, so the client asks instead:
-          `POST /messages/archive-check` (up to 500 ids, answers which
-          are deleted or no longer exist; `archivecheck.go`).
-          `Chat.pruneArchive` runs at every start (which also covers a
-          backup restore, since the chat restarts after one) and 2 s
-          after `user_purged`, deletes the gone copies, then schedules a
-          backup upload so the server-held backup drops them too. It
-          also catches single deletes, retention and deleted channels.
-          Verified on Docker: check at start and 2 s after a deletion,
-          each followed by a backup re-upload.
-    - [x] S6 `deploy/README.md`: key folder, separate short-lived
-          backups, what losing it means. Done 2026-11-03: section
-          "Account keys and backups" (back up separately from the
-          database, keep about a week; backup, restore and
-          leftover-key commands, tested on Docker; what a lost folder
-          does). Also corrected the storage section's dedup claim.
+After step 14 the work went feature by feature. Dates are when Ryan
+verified; the section named holds the design.
+
+- 2026-11-04 Emoji (Feature decisions, "Emoji").
+- 2026-11-04 Custom stickers, ST1-ST7 (ST6 as a plain Member, testuser);
+  `:name:` suggestions SC1-SC5.
+- 2026-11-04 Reactions ("Reactions are metadata the server sees").
+- 2026-11-04 Sign out and erase, E1-E5 (Encryption, "Local storage").
+- 2026-11-04 Username colours, NC1-NC7, ND1-ND3.
+- 2026-11-04 Screen share quality limit and upload speed test.
+- 2026-11-04 Server mute, SM1-SM10 (mute, rejoin, unmute without
+  rejoining, share audio dropped and restored, timed expiry, log, rank
+  refusal); force-PTT closed as advisory.
+- 2026-11-04 Debug page deleted (Open items, closed list).
+- 2026-11-04 Archive copies follow deletions, AR1-AR6 (Implementation
+  notes, server).
+- 2026-11-04 Custom sounds stage 1, CS1-CS10; stage 2 (message sound,
+  Mute Sounds, cooldown), MS1-MS9, MC1-MC9; Speaker output and device
+  names, SO0a-SO0c, SO1-SO7.
+- 2026-11-04 Password strength with zxcvbn, ZX1-ZX7.
+- 2026-11-04 Desktop step 1, Electron shell with the server pane: ED1-ED7,
+  ED9-ED11, ED7b. Unsigned Windows zip built on Docker
+  (`npm run package:win`, pure-JS packager, no Wine).
+- 2026-11-04 Stay signed in (after ED5); speaking indicator tuned (ED7).
+- 2026-11-04 Desktop step 2, screen share picker: ED8, SP1-SP7, SD1 (SD2
+  no echo seen). The web client now explains an operating-system refusal
+  ("Permission denied by system") instead of closing quietly.
+- 2026-11-04 Desktop step 3, per-app share sound: RO1, RS1-RS3, WH1-WH3,
+  WS1-WS7.
+- 2026-11-04 Receiving shares on demand, LS1-LS7.
+- 2026-11-05 Voice channel view, CV1-CV11, CK1-CK5 (`fd4fcde`).
 
 ## Open items
 
-- [x] Username colours by group (Ryan, 2026-11-04). DONE 2026-11-04,
-      verified by Ryan (NC1-NC7, ND1-ND3). A name is drawn in the
-      colour of the account's highest group (highest `position`) that
-      has one. Defaults (migration 0025, matched by name): Administrator
-      #d96932 (the accent, kept for now; change it if names look like
-      buttons), Moderator #ff00ff, Member #00ffff, Everyone none (plain
-      text colour, white). Server data, the same for everyone.
-      Built as: `perm_groups.colour` (nullable, lowercase #rrggbb) and
-      `server_settings.name_colours` (on by default), migration 0025;
-      `httpapi/namecolours.go`: `GET /name-colours` (every live account
-      -> colour or null, all null when switched off), `PUT /name-colours`
-      (the switch) and `POST /name-colours/defaults` (Administrator,
-      Moderator, Member and Everyone back to the defaults; other groups
-      untouched; the switch untouched), both manage_groups. A group's
-      colour is `PATCH /groups/{id}` with `colour` ("" clears); a
-      colour-only edit is allowed on a group at your own rank too (so an
-      administrator can recolour Administrator) and sends only
-      `names_changed`, not an access change. Clients refetch on
-      `names_changed` and `perms_changed` (membership), and when a name
-      appears that the map lacks (a new account; at most every 30 s).
-      Decided with Ryan:
-      - Coloured everywhere a name appears: message authors, member
-        list (Server settings > Members), @mention chips and the @
-        suggestion list, voice rosters. Coloured names are bold.
-      - Minimum contrast 3:1 against the background (#333333), the WCAG
-        level for bold text; checked in the picker and by the server.
-        Measured: orange 3.6:1, magenta 4.0:1, cyan 10.1:1, white
-        12.6:1 (4.5:1 would refuse the default orange and magenta).
-      - On by default; each user can hide them in Settings > Appearance
-        ("Show name colours", per browser).
-      - Server settings > Groups: the server-wide switch, a "Default
-        colours" button, and a Colour button per group (picker, hex
-        box, live preview, contrast readout, "No colour").
-- [x] Emoji (Ryan, 2026-11-03; done 2026-11-04, `client-web/src/emoji.tsx`).
-      A picker in the composer (categories, search, recently used, skin
-      tone, all per browser) plus `:name:` shortcodes (GitHub's set):
-      ":smi" opens a list, a complete ":fire:" converts on the closing
-      colon, in the composer and the edit box. Unicode emoji are just
-      text, so they work in encrypted channels unchanged. Decided with
-      Ryan: drawn with the **system font**, no image set shipped (looks
-      native per OS; a bare Linux box may lack a colour emoji font).
-      Names/keywords from `emojibase-data` (MIT, pinned exactly),
-      bundled and lazy-loaded as its own chunk (~100 KB gzipped), no
-      CDN. Emoji newer than the device's font are hidden by a canvas
-      test, one sample per Emoji version (no colour font at all = no
-      filtering). **Reactions deferred** to their own design pass
-      (server table; what the server sees in encrypted channels).
-      Reactions done 2026-11-04: Feature decisions, "Reactions are
-      metadata the server sees".
-      Not built: arrow keys inside the grid, bigger emoji-only messages.
-- [x] Custom stickers (Ryan, 2026-11-03): images uploaded to the server
-      and sent like a GIF. DONE 2026-11-04, verified by Ryan (ST1-ST7;
-      ST6 as a plain Member, testuser). Built as: `httpapi/stickers.go`
-      + `stickerimage.go` (type and size read from the file's header
-      bytes, no image library), migration 0024 (table, limits in
-      server_settings, manage_stickers added to Moderator), blob GC also
-      keeps sticker blobs. A sticker message's text is the token
-      `[sticker:<uuid>]` (client-core `stickers.ts`), so plain and
-      encrypted channels work the same and a rename changes nothing
-      sent; a removed sticker shows "Sticker removed". Images are
-      fetched with the session token and shown from blob: URLs (no
-      signed links to expire). Add/remove go in the moderation log.
-      Picking lives in a Stickers tab of the composer's emoji picker
-      (Ryan, 2026-11-04: no separate button); reactions stay emoji only.
-      `:name:` suggestions (2026-11-04, SC1-SC5 verified): up to 3
-      matching stickers above the emoji in the composer's shortcode
-      list (not when editing). A sticker can't sit inside text, so
-      picking one sends it at once and removes the ":query"; a typed-out
-      ":name:" never sends a sticker by itself (no accidental sends).
-      Decided with Ryan:
-      - Server-wide: one set for the whole server, not per channel.
-      - Moderators and administrators only. Done as a new permission
-        (`manage_stickers`) given to the Moderator and Administrator
-        groups by default, not a check on group names, so it follows the
-        permission-group system like everything else.
-      - Stickers stay when their uploader deletes their account. They
-        are a contribution to the server, not the uploader's own
-        content, so they are not sealed under the uploader's key and
-        are not crypto-shredded; the uploader reference just becomes
-        NULL. The upload dialog says so before the first upload.
-      Limits agreed with Ryan (2026-11-04):
-      - Types: PNG, APNG, GIF, WebP (static or animated). Not SVG: it can
-        carry script. The server checks the file's real type from its
-        bytes, not the name or what the browser claims.
-      - At most 1 MB per file and 512 x 512 pixels (Ryan chose the larger
-        option for longer/sharper animations); shown at about 160 px.
-      - At most 100 stickers per server. All three limits live in server
-        settings so an operator can change them.
-      - Name per sticker (for search and `:name:` style picking) and
-        alt text for screen readers.
-      Rejected (Ryan, 2026-11-03): personal stickers that travel with
-      the user across servers. Without federation they could only be
-      client-side images re-uploaded per server, and anyone could post
-      anything as a "sticker" with no approval step: a moderation
-      burden. Server stickers, chosen by staff, only.
-      In encrypted channels the message carries only the sticker's id,
-      inside the ciphertext; fetching the image still tells the server
-      who viewed which sticker, as with GIFs.
-- [ ] Server browser (Ryan, 2026-11-03, "if this takes off"): a column
-      on the left of the window to switch between OpenVoxa servers. Fits
-      "no federation in v1": each server is still an island with its own
-      account and device keys, and the client just keeps several sign-ins
-      side by side. Worth keeping in mind now so per-server state in
-      client-core (storage, keys, settings) is keyed by server, not
-      global. 2026-11-04: proposed design (one isolated view per server,
-      loaded from that server, which makes per-server state automatic) in
-      Feature decisions, "Server browser and desktop shell"; agreed by
-      Ryan the same day.
-- [x] Desktop app, step 1: `client-desktop/` Electron shell with the
-      server pane and the security setup. Done 2026-11-04 (ED1-ED7,
-      ED9-ED11; ED7b after the permission-check fix). Unsigned Windows
-      zip built on Docker (`npm run package:win`, pure-JS packager, no
-      Wine). Electron gives the permission check handler
-      `requestingOrigin` with a trailing slash: compare normalised
-      origins or device names stay hidden.
-- [x] Desktop app, step 2: our own screen share picker. Done
-      2026-11-04 (ED8, SP1-SP7, SD1; SD2 no echo seen): Feature
-      decisions, "Desktop screen share picker". The web client now
-      explains an operating-system refusal ("Permission denied by
-      system") instead of closing quietly.
-- [x] Desktop app, step 3: per-app share sound. Done 2026-11-04
-      (Feature decisions, "Per-app share sound"; RO1, RS1-RS3, WH1-WH3,
-      WS1-WS7).
-- [ ] Desktop app, later: badges via a preload, voice handoff between
-      servers, global push-to-talk, tray, notifications.
-- [ ] On-screen push-to-talk button for touchscreens (Ryan,
-      2026-11-04). Push-to-talk is keyboard-only today, so a phone or
-      tablet in push-to-talk mode (or in a channel that requires it)
-      can't talk at all. Design first: where the button sits, hold vs
-      tap, when it shows (touch devices only, or always in PTT mode).
-- [ ] Server icon and name in the pane, set in Server settings (Feature
-      decisions, "Planned: server icons, updates, bug reports, channel
-      menus, avatars"; Ryan, 2026-11-04).
+### Next up (Ryan picks; each gets a design talk first)
+
+- [ ] On-screen push-to-talk button for touchscreens (Ryan, 2026-11-04).
+      Push-to-talk is keyboard-only today, so a phone or tablet in
+      push-to-talk mode (or in a channel that requires it) can't talk at
+      all. Open: where the button sits, hold vs tap, when it shows (touch
+      devices only, or always in PTT mode).
+- [ ] User avatars, uploaded in Settings, per server. They replace the
+      letter circles in voice tiles. Feature decisions, "Planned".
+- [ ] Server icon and name in the pane, set in Server settings (same
+      section).
 - [ ] Desktop updates: user-confirmed, one click, with a "may not work
       until you update" note; installer and signing (same section).
 - [ ] Bug reports from users (same section; where they go is open).
 - [ ] Right-click menus on text and voice channels (same section).
-- [ ] User avatars, uploaded in Settings, per server (same section).
-      They replace the letter circles in voice tiles ("Voice channel
-      view").
+- [ ] Desktop app, later: badges via a preload, voice handoff between
+      servers, global push-to-talk, tray, notifications, idle unload of
+      background servers.
+- [ ] Minimized windows are probably missing from our share picker, as
+      from Edge's (RS3; unchecked).
 
-- [x] Custom sounds, stage 1. Done 2026-11-04 (Feature decisions,
-      "Custom sounds"; CS1-CS10).
-- [x] Custom sounds, stage 2: message sound, per-channel "Mute
-      sounds", message cooldown. Done 2026-11-04 (Feature decisions,
-      "Custom sounds"; MS1-MS9, MC1-MC9).
-- [x] Sounds follow the Speaker picked in Settings > Voice; "Show My
-      Devices" when the browser hides device names. Done 2026-11-04
-      (Feature decisions, "Custom sounds"; SO0a-SO0c, SO1-SO7).
+### Features not built yet
 
-- [x] Password strength estimation with zxcvbn. Done 2026-11-04, server
-      only, replacing the kinds and pattern rules (Feature decisions,
-      "Password rules"; ZX1-ZX7).
-
-- [ ] Confirm whether screen sharing should have its own `min_role_stream`
-      rather than reusing the voice publish permission
-- [x] Server-side bitrate ceiling so one user cannot saturate the
-      operator's uplink. Done 2026-11-04 (Feature decisions, "Screen
-      share quality limit"), with an upload speed test of the server.
-      Not built: per-group limits, a per-user upload test in the share
+- [ ] Device linking by QR, two-factor sign-in (Feature decisions,
+      "Planned"); several devices per account at once (schema ready).
+- [ ] Guest accounts: the Everyone group exists, but there is no
+      anonymous or invite flow to create one.
+- [ ] `@everyone` / `@group` mentions, mention counts, notifications
+      while the app is closed.
+- [ ] Per-group screen share limits; a per-user upload test in the share
       dialog.
-- [x] Force-PTT is advisory: the server tells the client and the client
-      complies. Closed 2026-11-04 as advisory by design (the server can't
-      know whether a key is down; Feature decisions, "Server mute"). Built
-      the enforceable tool instead: server mute.
-- [ ] Guest accounts can be assigned but there is no anonymous or invite
-      flow to create one
-- [x] Delete the debug page. Done 2026-11-04 (Ryan: "having it early was
-      a blessing but it's now a security hole"). chat.html was unmaintained
-      code rendering other people's messages on the same origin as the web
-      client, so a rendering bug there could read the real client's session
-      and keys; it granted no extra API powers. Removed `debugui/`, the
-      `/debug/` route, `OPENVOXA_DEBUG_UI`, and the core.js / LiveKit
-      bundle steps (client-core's build now only patches ts-mls; esbuild
-      dropped). `/debug/...` now gets the web app like any unknown path.
-- [ ] Reproducible builds
-- [x] Role demotion does not reach a live websocket. Fixed 2026-10-31:
-      sockets to channels the account can no longer view are closed.
-      A promotion still leaves an open read-only socket read-only until
-      it reconnects (`can_post` is fixed at upgrade).
-- [x] Nothing reads `moderation_log` yet. Done 2026-11-03 (M5 session
-      C): `GET /moderation-log` and the Log tab in Server settings. Group
-      changes still go to `perm_group_changes`, which nothing reads.
-- [ ] Reports in encrypted channels will need MLS signature verification
+- [ ] Emoji: arrow keys inside the picker grid, bigger emoji-only
+      messages.
+- [ ] Recovery: QR scanning by camera; a second wrapping of the local
+      data key under the recovery key (so a password changed elsewhere
+      doesn't force a restore); Electron `safeStorage` on top.
+- [ ] Reproducible builds.
+
+### Untested
+
+- [ ] K1 flows 2-5 (recovery screens other than sign-up; deferred by
+      Ryan), G2-G4 (GIFs), P3 (password), D1 (`delete-user` host
+      command).
+
+### Security and protocol gaps
+
+- [ ] Reports in encrypted channels need MLS signature verification
       before `verified` can be anything but NULL there.
-- [x] Group state persists to IndexedDB as bytes, but UNENCRYPTED. The
-      protection today is browser origin isolation; anyone able to read
-      browser profile data on the device can read the keys. The fix needs
-      recovery keys to exist first, since encrypting with a key also
-      stored in IndexedDB would look like protection while providing
-      none. Done 2026-11-03: Encryption, "Local storage is encrypted
-      under the password, with a server-held half for refreshes".
-- [ ] The `ratchet_tree` column in migration 0010 assumes the tree
-      travels separately from the welcome. If the extension route is ever
-      made to work, both that column and the custom serialiser go away.
-- [x] Recovery keys do not exist. Without one, a forgotten password means
-      permanently unreadable history, because the server holds only
-      ciphertext. The key has to be generated at signup and shown once.
-      Done in step 13 M1 (`client-core/src/recovery.ts`).
-- [x] Removing a revoked device from the groups it belongs to is
-      client-side work. Done: reconciliation removes it (step 11).
-- [x] Inactive devices expire after 30 days. Decided by Ryan, 2026-10-31.
-      Done 2026-10-31: `touchDevice` updates `last_seen_at` (at most once a
-      minute) on the key package count/publish and every MLS call that
-      checks `ownDevice`; `db.StartDeviceExpirySweep` revokes idle devices
-      hourly and at startup, deletes their unclaimed packages and sends
-      `access_changed`; migration 0013 restarts every active device's
-      clock, since nothing had maintained it. The count check returns 410
-      for a revoked device, and `Identity.start` then wipes local storage
-      (the device's keys and its local plaintext archive) and registers a
-      new one. Original plan, kept for the record: A device whose keys are gone
-      (a closed private window, a wiped browser) stays active forever, and
-      members keep adding it and spending its key packages, last resort
-      included. Plan: update `devices.last_seen_at` on group activity and
-      key package publishing (nothing updates it today), revoke devices
-      idle 30 days in the existing sweep (revoking already makes members
-      remove them), and have a client that finds itself revoked register
-      a new device and rejoin. Same idea as Signal unlinking idle devices.
-      Until then: use "Forget this device" before closing a private
-      window.
-- [x] Attachments in PLAINTEXT channels are still content-addressed and
-      deduplicated across users, which reveals that someone else uploaded
-      an identical file. Accepted there; encrypted channels no longer
-      dedup.
-      Closed 2026-11-03 by crypto-shredding S3: every plaintext-channel
-      file has its own key, so nothing is shared.
+- [ ] Media frames are authenticated to the group, not to a sender. The
+      key is shared, so any member could forge frames under another
+      member's identity. Per-sender media keys (exporter context
+      including the leaf) would close this at the cost of one key per
+      participant.
+- [ ] Device verification (comparing safety numbers, as Signal does):
+      the stronger answer to "the server's permission list decides who
+      joins" (Known tensions).
 - [ ] Encrypted attachment sizes are visible to the server. Padding to
       size buckets would blur them at some storage cost.
-- [x] The local plaintext archive is deleted per message on deletion
-      events, but a message removed by retention while not on screen
-      stays in IndexedDB. Done 2026-11-04, without timestamps: the
-      startup `archive-check` (S5 of step 14) already covered retention,
-      so the gap was an app left open. Deleting a message or a
-      retention sweep in an **encrypted** channel now also sends
-      `archive_message_gone` (message id) or `archive_channel_expired`
-      to every connected viewer (`notifyArchives` in events.go, the
-      `channelViewers` rule, so outsiders learn nothing). New type names,
-      because emitUsers reaches channel sockets too and the open view
-      must not apply a deletion twice. The client deletes a single copy
-      directly and runs the coalesced archive check after a sweep or
-      `channel_deleted` (which also catches the open channel's unloaded
-      older messages). Someone who lost access keeps copies until their
-      next start. Storing channel and time per entry was rejected: it
-      changes the archive and backup formats for little gain. Tested on
-      Docker AR1-AR6, with the sweep wake-up ("Retention sweep
-      interval scales to the shortest policy").
 - [ ] Link previews in encrypted channels: would need to be generated by
       the sender's client and carried inside the message, as Signal does.
-- [x] Opt-in history sharing for encrypted channels: built 2026-11-01, see
-      Encryption, "History sharing is opt-in per channel". Original note: An
-      admin-set per-channel option, shown in the channel badge like
-      retention, under which an existing member's client re-encrypts the
-      plaintext it holds into the current epoch for a newly added device.
-      Weakens the "new members see no history" guarantee by design, so it
-      must be visible and off by default. Needs a local plaintext archive
-      on member devices first; only own sent messages are kept today.
 - [ ] A device whose commit the server accepted but which crashed before
       persisting the new state is stuck: it cannot process its own commit
       from the handshake log. Recovery would be a rejoin (external commit
       or re-invite).
-- [ ] Media frames are authenticated to the group, not to a sender. The
-      key is shared, so any member could forge frames under another
-      member's identity. MLS gives per-sender keys for text; per-sender
-      media keys (exporter context including the leaf) would close this
-      at the cost of one key per participant.
-- [x] The commit endpoint checks that each welcome's recipient device
-      belongs to an account with access to the channel (step 11, server
-      side). The whole commit is refused if one does not.
-- [x] A new device can only join a call while someone already in that
-      voice group is in the call, and can only join an encrypted text
-      channel once a member comes online. External join (step 11, last
-      part) closes both.
-      Done: built and verified on Docker 2026-10-31.
+- [ ] The `ratchet_tree` column in migration 0010 assumes the tree
+      travels separately from the welcome. If the extension route is ever
+      made to work, both that column and the custom serialiser go away.
+- [ ] An add commit carries the tree once per welcome, so it grows with
+      the square of devices added at once (8 MB cap, `maxMLSBody`).
+      Sending it once per commit would make it linear; not needed at our
+      scale yet.
+- [ ] Single message deletion and retention expiry don't crypto-shred:
+      backups keep plaintext-channel bodies until they age out. A key per
+      message would cover them (Encryption, "Account deletion").
+- [ ] An optional boot-time unseal passphrase ("sealed mode") that would
+      also defend the account keys against a live-server compromise, at
+      the cost of unattended restarts.
+- [ ] The OpenMLS swap behind `MlsProvider` (Encryption, "ts-mls now").
 - [ ] LiveKit's `encryption` option also turns on data channel
       encryption. Nothing uses data channels yet; anything that does
       later gets it for free, but must not assume the SFU can read them.
 - [ ] Unfurl endpoint is a deliberate SSRF surface. Worth naming in
       SECURITY.md so reviewers look at it first.
+- [ ] A promotion leaves an open read-only socket read-only until it
+      reconnects (`can_post` is fixed at upgrade). Demotion is handled.
+- [ ] Group changes go to `perm_group_changes`, which nothing reads yet.
+- [ ] Confirm whether screen sharing should have its own permission
+      rather than reusing the voice publish permission.
+
+### Closed
+
+One line each; the section named has the detail.
+
+- [x] Server browser (Ryan, 2026-11-03): built as the desktop app's
+      server pane (Feature decisions, "Server browser and desktop
+      shell").
+- [x] Server-side bitrate ceiling so one user cannot saturate the
+      operator's uplink: "Screen share quality limit" (2026-11-04).
+- [x] Force-PTT is advisory: closed 2026-11-04 as advisory by design (the
+      server can't know whether a key is down); server mute is the
+      enforceable tool ("Server mute").
+- [x] Delete the debug page. Done 2026-11-04 (Ryan: "having it early was
+      a blessing but it's now a security hole"). chat.html was
+      unmaintained code rendering other people's messages on the same
+      origin as the web client, so a rendering bug there could read the
+      real client's session and keys. Removed `debugui/`, the `/debug/`
+      route, `OPENVOXA_DEBUG_UI` and the core.js / LiveKit bundle steps
+      (client-core's build now only patches ts-mls). `/debug/...` now
+      gets the web app like any unknown path.
+- [x] Role demotion did not reach a live websocket: fixed 2026-10-31
+      (Implementation notes, "Revoking access must reach live
+      connections").
+- [x] Nothing read `moderation_log`: the Log tab, 2026-11-03.
+- [x] Group state persisted to IndexedDB unencrypted: Encryption, "Local
+      storage is encrypted under the password" (2026-11-03).
+- [x] Recovery keys: step 13 M1.
+- [x] Removing a revoked device from its groups: reconciliation (step 11).
+- [x] Inactive devices expire after 30 days (2026-10-31; Encryption, "A
+      device is the cryptographic identity").
+- [x] Plaintext-channel attachments were deduplicated across users,
+      revealing identical uploads: every file has its own key since
+      crypto-shredding S3.
+- [x] Archive copies of messages removed while the app was open:
+      Implementation notes, "Archive copies follow deletions".
+- [x] Opt-in history sharing for encrypted channels (2026-11-01;
+      Encryption, "History sharing is opt-in per channel").
+- [x] The commit endpoint checks each welcome's recipient (step 11).
+- [x] A new device could only join a call or encrypted channel while a
+      member was online: external join (step 11).
