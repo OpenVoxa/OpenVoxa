@@ -1,8 +1,8 @@
 // Copyright (C) 2026 The OpenVoxa Authors
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Preload for the server pane only (our own local page). Server views get
-// no preload at all. This is the whole bridge: a handful of named calls,
+// Preload for the server pane only (our own local page). Server views have
+// their own, narrower one (viewPreload.ts). This is the whole bridge: a handful of named calls,
 // no raw ipcRenderer, and the main process checks every one came from the
 // pane.
 
@@ -11,6 +11,7 @@ import { contextBridge, ipcRenderer } from "electron";
 type ServerList = { servers: { origin: string }[]; selected: string | null };
 type ServerError = { origin: string; message: string | null };
 type ShareOpen = { host: string; audio: boolean; screenSound: boolean; windowSound: boolean };
+type UpdateState = { current: string; ready: string | null };
 type ShareSource = { id: string; name: string; screen: boolean; thumbnail: string | null; icon: string | null };
 
 contextBridge.exposeInMainWorld("shell", {
@@ -35,6 +36,10 @@ contextBridge.exposeInMainWorld("shell", {
   },
   onServers: (cb: (list: ServerList) => void) => {
     ipcRenderer.on("servers", (_e, list: ServerList) => cb(list));
+  },
+  installUpdate: () => ipcRenderer.invoke("pane:install-update"),
+  onUpdate: (cb: (s: UpdateState) => void) => {
+    ipcRenderer.on("update", (_e, s: UpdateState) => cb(s));
   },
   onServerError: (cb: (err: ServerError) => void) => {
     ipcRenderer.on("server-error", (_e, err: ServerError) => cb(err));

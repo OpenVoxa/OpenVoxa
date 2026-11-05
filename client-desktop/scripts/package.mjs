@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Packages the app for one platform ("win32" for now) into release/, then
-// zips it. Unsigned, no installer: those come later (decisions.md, "Server
-// browser and desktop shell").
+// zips it. Unsigned. The installer and update files are made from this
+// folder by scripts/release.mjs (decisions.md, "Desktop updates").
 import { packager } from "@electron/packager";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const platform = process.argv[2] ?? "win32";
@@ -20,6 +20,23 @@ if (platform === "win32" && !existsSync(helper)) {
   process.exit(1);
 }
 
+// The updater's settings (src/updater.ts): where to look, and the name of
+// its download cache folder. electron-updater reads them from
+// resources/app-update.yml, which electron-builder writes only when it
+// packages the app itself; we package with @electron/packager, so it is
+// written here. Without it the update check works but the download never
+// starts (found by experiment, DU3).
+const updateConfig = "release/app-update.yml";
+if (platform === "win32" && pkg.openvoxaUpdateUrl) {
+  mkdirSync("release", { recursive: true });
+  writeFileSync(updateConfig, [
+    "provider: generic",
+    `url: ${pkg.openvoxaUpdateUrl}`,
+    "updaterCacheDirName: openvoxa-updater",
+    "",
+  ].join("\n"));
+}
+
 const [dir] = await packager({
   dir: ".",
   out: "release",
@@ -30,9 +47,10 @@ const [dir] = await packager({
   asar: true,
   executableName: "OpenVoxa",
   appCopyright: "The OpenVoxa Authors, AGPL-3.0-or-later",
-  // Only the compiled app and package.json go in; sources and tooling stay out.
-  ignore: (p) => p !== "" && !/^\/(out|package\.json)(\/|$)/.test(p),
-  extraResource: platform === "win32" ? [helper] : [],
+  // Only the compiled app, package.json and the runtime dependencies
+  // (electron-updater; prune drops the dev ones) go in.
+  ignore: (p) => p !== "" && !/^\/(out|node_modules|package\.json)(\/|$)/.test(p),
+  extraResource: platform === "win32" ? [helper, ...(pkg.openvoxaUpdateUrl ? [updateConfig] : [])] : [],
   win32metadata: { CompanyName: "The OpenVoxa Authors", ProductName: "OpenVoxa", FileDescription: "OpenVoxa" },
 });
 
