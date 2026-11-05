@@ -205,6 +205,8 @@ button.secondary:hover:not(:disabled) { background: var(--sidebar-active); }
 .channel-list ul { list-style: none; margin: 0; padding: 0; }
 .channel-list .empty { padding: 4px 8px; font-size: 13px; }
 .channel {
+  -webkit-touch-callout: none; /* long press opens our menu, not the browser's */
+  user-select: none;
   width: 100%;
   display: flex;
   align-items: center;
@@ -575,6 +577,13 @@ button.live { cursor: pointer; }
   box-shadow: 0 8px 24px rgb(0 0 0 / 0.45);
 }
 .menu p { margin: 0; }
+.channel-menu { gap: 0; padding: 6px; }
+.channel-menu-title { padding: 6px 8px 8px; font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu-item { display: block; width: 100%; text-align: left; background: transparent; color: var(--text); font-size: 14px; padding: 6px 8px; border-radius: 4px; }
+.menu-item:hover:not(:disabled), .menu-item:focus-visible { background: var(--sidebar-active); }
+.menu-item.danger { color: var(--danger); }
+.menu-item:disabled { color: var(--muted); opacity: 0.6; cursor: not-allowed; }
+.menu-sep { height: 1px; margin: 4px 2px; background: var(--line); }
 .menu-section { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
 input[type="range"] { accent-color: var(--accent); width: 100%; }
 .key-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }

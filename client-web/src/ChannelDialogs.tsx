@@ -6,12 +6,12 @@
  * force push-to-talk needs force_ptt). The server already had every
  * endpoint; the debug page reached them through console helpers.
  *
- * What can change after creation: who may view and post (the allow-list),
- * how long messages are kept, history sharing (encrypted text channels)
- * and forced push-to-talk (voice). The name and whether a text channel is
- * encrypted are fixed at creation: the server has no rename, and turning
- * encryption on or off later would strand either the history or the
- * promise made to the people who wrote it.
+ * What can change after creation: the name, who may view and post (the
+ * allow-list), how long messages are kept, history sharing (encrypted
+ * text channels) and forced push-to-talk (voice). Whether a text channel
+ * is encrypted is fixed at creation: turning it on or off later would
+ * strand either the history or the promise made to the people who wrote
+ * it. Renaming is safe: everything is keyed by the channel's id.
  */
 
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
@@ -265,9 +265,11 @@ export function CreateChannelDialog({ call, kind: initialKind, onClose, onCreate
 
 // ----------------------------------------------------------- settings
 
-export function ChannelSettingsDialog({ call, channel, canManage, canForcePTT, onClose, onDeleted }: {
+export function ChannelSettingsDialog({ call, channel, canManage, canForcePTT, focus, onClose, onDeleted }: {
   call: ApiCall;
   channel: ChannelInfo;
+  /** Opened from the channel menu: put the cursor in the name, or go straight to the delete confirmation. */
+  focus?: "name" | "delete";
   canManage: boolean;
   canForcePTT: boolean;
   onClose: () => void;
@@ -283,7 +285,8 @@ export function ChannelSettingsDialog({ call, channel, canManage, canForcePTT, o
   const [forcePTT, setForcePTT] = useState(channel.force_ptt);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(focus === "delete" && canManage);
+  const [name, setName] = useState(channel.name);
 
   useEffect(() => {
     if (groups && !rows) {
@@ -301,7 +304,10 @@ export function ChannelSettingsDialog({ call, channel, canManage, canForcePTT, o
     : retention !== (preset?.value ?? null);
   const sharingChanged = sharing !== channel.history_sharing;
   const pttChanged = forcePTT !== channel.force_ptt;
-  const dirty = accessChanged || retentionChanged || sharingChanged || pttChanged;
+  const newName = name.trim().toLowerCase();
+  const nameChanged = newName !== channel.name;
+  const nameValid = /^[a-z0-9-]{1,32}$/.test(newName);
+  const dirty = accessChanged || retentionChanged || sharingChanged || pttChanged || nameChanged;
 
   async function save(e: FormEvent) {
     e.preventDefault();
@@ -310,7 +316,11 @@ export function ChannelSettingsDialog({ call, channel, canManage, canForcePTT, o
     const base = `/api/v1/channels/${channel.id}`;
     try {
       // One call per setting, each its own server endpoint. Stops at the
-      // first refusal so the message names what failed.
+      // first refusal so the message names what failed. The name goes
+      // first: a name already taken is the likeliest refusal.
+      if (canManage && nameChanged) {
+        await call(`${base}/name`, { method: "PATCH", body: JSON.stringify({ name: newName }) });
+      }
       if (canManage && accessChanged && rows) {
         await call(`${base}/access`, { method: "PUT", body: JSON.stringify({ access: accessBody(rows) }) });
       }
@@ -349,11 +359,18 @@ export function ChannelSettingsDialog({ call, channel, canManage, canForcePTT, o
         <p className="muted small">
           {voice ? "Voice channel, always end-to-end encrypted."
             : channel.encrypted ? "Text channel, end-to-end encrypted." : "Text channel, not encrypted."}
-          {" "}The name and encryption are fixed when a channel is created.
+          {voice ? "" : " Encryption is fixed when a channel is created."}
         </p>
 
         {canManage && (
           <>
+            <label>
+              Name
+              <input value={name} maxLength={32} autoFocus={focus === "name"}
+                onFocus={(e) => focus === "name" && e.currentTarget.select()}
+                onChange={(e) => setName(e.target.value.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, ""))} />
+            </label>
+            {nameChanged && !nameValid && <p className="error small">A name needs at least one character.</p>}
             {groupsError && <p className="error">Couldn't load groups: {groupsError}</p>}
             {rows && <AccessEditor rows={rows} setRows={setRows} kind={channel.kind} />}
 
@@ -405,7 +422,7 @@ export function ChannelSettingsDialog({ call, channel, canManage, canForcePTT, o
         {error && <p className="error" role="alert">{error}</p>}
         <div className="modal-actions">
           <button type="button" className="secondary" onClick={onClose}>Cancel</button>
-          <button type="submit" className="primary" disabled={busy || !dirty}>{busy ? "Saving…" : "Save"}</button>
+          <button type="submit" className="primary" disabled={busy || !dirty || (nameChanged && !nameValid)}>{busy ? "Saving…" : "Save"}</button>
         </div>
 
         {canManage && (

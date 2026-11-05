@@ -784,9 +784,9 @@ Moved forward from M5 at Ryan's request, 2026-11-01.
   (allow-list, retention, history sharing for encrypted text, delete with
   a second confirmation). force_ptt holders get the gear on voice
   channels for "Require push-to-talk".
-- **Name and encryption are fixed after creation:** no rename on the
-  server, and flipping encryption would strand history or break the
-  promise to people who wrote it. Voice is always encrypted, so the
+- **Encryption is fixed after creation** (renaming came later: "Channel
+  menus"): flipping it would strand history or break the promise to
+  people who wrote it. Voice is always encrypted, so the
   dialog offers no switch for it.
 - Permissions refresh on perms_changed.
 
@@ -1070,11 +1070,24 @@ at the end.
   developer), (c) both: admin first, who forwards. Whatever is
   chosen, a report must never include message content or keys without
   the user seeing it first.
-- **Right-click menus on text and voice channels.** Like the menu on a
-  person in a call. Open: the entries. Likely: text: Mark as Read, Mute
-  Sounds, Copy Link, Channel Settings and Delete Channel (with
-  `manage_channels`; greyed out otherwise); voice: Join, Mute Sounds,
-  Channel Settings, Delete Channel.
+- **Channel menus** (agreed with Ryan 2026-11-05, built the same day,
+  CM1-CM9; `ChannelMenu.tsx`). Right-click a channel in the sidebar,
+  or long-press it (500 ms) on a touchscreen. Text: Mark as Read (greyed
+  when nothing is unread), Mute Sounds / Unmute Sounds, Rename Channel,
+  Channel Settings, Delete Channel. Voice: Join Call or Leave Call,
+  Rename Channel, Channel Settings, Delete Channel. Rename and Delete
+  need manage_channels; Settings what the gear needs; greyed out
+  otherwise. Rename and Delete open Channel Settings (name field
+  selected; delete confirmation showing), so there is one place for
+  each. The gear stays. No Mute Sounds on voice: no message sounds
+  there. Copy Link waits for per-channel addresses (Open items).
+  - **Rename** (Ryan asked; the old "fixed after creation" was only for
+    want of an endpoint). `PATCH /api/v1/channels/{id}/name`,
+    manage_channels, same rules as creation, 409 when taken, then
+    `channel_changed` so every list and open header updates. Safe any
+    time: messages, MLS groups, the LiveKit room, access and read
+    markers are keyed by id. Not in the moderation log, like the other
+    channel changes (modlog.go); the server log records who renamed.
 - **User avatars.** In voice (and messages, member lists) everyone shows
   a generic letter. Users upload their own picture in Settings
   (crop to a circle, same footprint as the letter), per server (islands:
@@ -2649,6 +2662,8 @@ verified; the section named holds the design.
 - 2026-11-05 About tab in Settings, AB1-AB8 (Feature decisions, "About
   tab in Settings"); desktop app 0.1.8 adds `appInfo` (AB8: 0.1.7 to
   0.1.8 fetched 0.8 MB and installed on quit).
+- 2026-11-05 Channel menus and channel rename, CM1-CM9 (Feature
+  decisions, "Channel menus").
 
 ## Open items
 
@@ -2664,7 +2679,8 @@ verified; the section named holds the design.
 - [ ] Server icon and name in the pane, set in Server settings (same
       section).
 - [ ] Bug reports from users (same section; where they go is open).
-- [ ] Right-click menus on text and voice channels (same section).
+- [ ] Channel links (an address per channel, Copy Link in the channel
+      menu); Ryan: later.
 - [ ] Desktop app, later: badges via a preload, voice handoff between
       servers, global push-to-talk, tray, notifications, idle unload of
       background servers.
