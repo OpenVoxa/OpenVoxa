@@ -107,6 +107,9 @@ func run() error {
 	// Lifts timed server mutes and gives the microphone back mid-call.
 	api.StartVoiceMuteSweep(ctx)
 
+	// Rotates the server password on its schedule, if one is set.
+	api.StartSignupRotation(ctx)
+
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           api,

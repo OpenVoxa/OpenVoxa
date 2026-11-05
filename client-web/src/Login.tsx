@@ -34,6 +34,9 @@ export function Login({ onSession, notice }: {
   // An empty server is claimed with a code from the server log.
   const [needsSetup, setNeedsSetup] = useState(false);
   const [setupCode, setSetupCode] = useState("");
+  // Who may sign up (server signup.go): anyone, with the server password, or nobody.
+  const [signupMode, setSignupMode] = useState<"open" | "password" | "closed">("open");
+  const [serverPassword, setServerPassword] = useState("");
   const [stay, setStay] = useState(staySignedInChoice);
 
   const registering = mode === "register";
@@ -42,12 +45,18 @@ export function Login({ onSession, notice }: {
   // comparing; before that the checklist is what needs attention.
   const mismatch = registering && pw.ok && confirm !== "" && confirm !== password;
 
+  // On the login page too, so "Register" can be greyed out when closed.
   useEffect(() => {
-    if (!registering) return;
-    call<{ needs_setup_code: boolean }>("/api/v1/setup")
-      .then((r) => setNeedsSetup(r.needs_setup_code))
+    call<{ needs_setup_code: boolean; signup_mode?: "open" | "password" | "closed" }>("/api/v1/setup")
+      .then((r) => {
+        setNeedsSetup(r.needs_setup_code);
+        setSignupMode(r.signup_mode ?? "open");
+      })
       .catch(() => {});
   }, [registering]);
+  // The first account (setup code) is never blocked by the sign-up mode.
+  const askServerPassword = registering && !needsSetup && signupMode === "password";
+  const closed = !needsSetup && signupMode === "closed";
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -70,6 +79,7 @@ export function Login({ onSession, notice }: {
         body: {
           username, password, device_name: guessDeviceName(),
           ...(registering && needsSetup ? { setup_code: setupCode } : {}),
+          ...(askServerPassword ? { server_password: serverPassword } : {}),
         },
       });
       // The password unlocks this browser's encrypted storage too; this
@@ -102,10 +112,19 @@ export function Login({ onSession, notice }: {
         <p className="muted">{registering ? "Create an account" : "Welcome back"}</p>
         {notice && <p className="muted" role="status">{notice}</p>}
 
+        {askServerPassword && (
+          <label>
+            Server password
+            <input value={serverPassword} onChange={(e) => { setServerPassword(e.target.value); setError(null); }}
+              autoComplete="off" spellCheck={false} autoFocus required />
+            <span className="muted">This server only lets people in who have its password. Ask whoever invited you.</span>
+          </label>
+        )}
+
         <label>
           Username
           <input value={username} onChange={(e) => { setUsername(e.target.value); setError(null); }}
-            autoComplete="username" autoFocus required />
+            autoComplete="username" autoFocus={!askServerPassword} required />
         </label>
         <label>
           Password
@@ -144,9 +163,11 @@ export function Login({ onSession, notice }: {
         <button type="submit" className="primary" disabled={busy}>
           {busy ? "…" : registering ? "Create account" : "Log in"}
         </button>
-        <button type="button" className="link" onClick={switchMode}>
+        <button type="button" className="link" onClick={switchMode} disabled={!registering && closed}
+          title={!registering && closed ? "This server isn't accepting new accounts" : undefined}>
           {registering ? "Already have an account? Log in" : "Need an account? Register"}
         </button>
+        {!registering && closed && <p className="muted small">This server isn't accepting new accounts.</p>}
       </form>
     </div>
   );

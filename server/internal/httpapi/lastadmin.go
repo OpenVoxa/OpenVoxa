@@ -169,5 +169,6 @@ func (a *API) setupStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not check setup")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"needs_setup_code": !exists})
+	// signup_mode: open, password (ask for the server password) or closed.
+	writeJSON(w, http.StatusOK, map[string]any{"needs_setup_code": !exists, "signup_mode": a.signupMode(r.Context())})
 }

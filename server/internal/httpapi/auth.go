@@ -43,6 +43,8 @@ type registerRequest struct {
 	DeviceName string `json:"device_name"`
 	// Only for the first account on an empty server (lastadmin.go).
 	SetupCode string `json:"setup_code,omitempty"`
+	// When the server's sign-up mode asks for it (signup.go).
+	ServerPassword string `json:"server_password,omitempty"`
 }
 
 type sessionResponse struct {
@@ -96,6 +98,19 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 	// Rules in password.go.
 	if msg := password.Problem(req.Password, req.Username); msg != "" {
 		writeError(w, http.StatusBadRequest, msg)
+		return
+	}
+
+	// Once the server has accounts, the sign-up mode decides: open, server
+	// password, closed. Before hashing, so wrong guesses cost no argon2
+	// time. (The empty-server case is settled under the lock below.)
+	var hasUsers bool
+	if err := a.pool.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM users)`).Scan(&hasUsers); err != nil {
+		slog.Error("checking for existing users", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not create account")
+		return
+	}
+	if hasUsers && !a.signupAllowed(w, r, req.ServerPassword) {
 		return
 	}
 
@@ -174,6 +189,16 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		slog.Error("assigning groups", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not create account")
 		return
+	}
+
+	// At most three new accounts per address an hour, counted only when
+	// one is actually made (a taken username costs nothing).
+	if anyUsers {
+		if ip := a.clientIP(r); !a.signupIP.Allow(ip) {
+			slog.Warn("sign-up refused: too many new accounts from this address", "ip", ip)
+			writeTooManyRequests(w, a.signupIP.RetryAfter(ip))
+			return
+		}
 	}
 
 	if err := tx.Commit(r.Context()); err != nil {
