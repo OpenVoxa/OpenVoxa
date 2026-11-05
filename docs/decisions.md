@@ -432,23 +432,42 @@ channel view (next section):
   menu; it keeps playing after Back to Chat. The person's volume
   slider applies to it as before. LS1-LS7 passed.
 
-### Voice channel view (to design)
+### Voice channel view
 
-Ryan, 2026-11-04. The main area shows a voice channel as tiles, one per
-person with their avatar; a sharer's tile shows the share preview
-instead, with Hide (stop showing it), Listen and Fullscreen. Open
-questions, asked but not answered yet:
+Ryan, 2026-11-04. The main area shows the voice channel you are in as
+tiles, one per person; a sharer's tile shows the share preview instead,
+with Hide (stop showing it), Listen and Fullscreen. Decided the same day:
 
-- **Preview cost.** A live preview means everyone downloads the share.
-  Shares send one full-quality H.264 copy (simulcast off), so options:
-  live preview from a half-size simulcast layer (VP8, more upload and
-  CPU for the sharer), live preview at full quality (heavy with
-  several sharers), or a still frame refreshed every few seconds (not
-  live, needs its own encrypted channel).
-- **Avatars.** Not built (Planned section): letter circles until then,
-  or avatars first.
-- **When it shows.** Clicking a voice channel shows its tiles (with
-  Join), or only while in the call.
+- **Previews from a small copy.** The sharer also sends a half-size
+  simulcast layer; tiles take that, Watch and Fullscreen the full one.
+  Cheap for viewers, a little more upload and CPU for the sharer. H.264
+  simulcast is poorly supported, so this means VP8 (see Implementation
+  notes on simulcast).
+- **Letter circles for now**, as in the sidebar; uploaded avatars
+  replace them later (Open items, "User avatars").
+- **Only while you are in the call.** No looking into a channel before
+  joining.
+- **Layout (agreed 2026-11-05):** joining shows the tiles; a text
+  channel shows its chat with the call going on; clicking the voice
+  channel you are in shows the tiles again. A tile: letter circle,
+  name, speaking ring, mic and "muted for me" icons. A sharer's tile:
+  the preview, with Watch (today's share view), Listen, Fullscreen and
+  Hide on hover or tap; Hide shows the circle and stops the download
+  until they share again (Show Share undoes it).
+- **VP8 always, with the small copy:** the share dialog's Advanced
+  codec and simulcast options go. Watching costs a little more CPU on
+  devices without VP8 hardware decoding (older iPhones mostly).
+  Exception: Safari and other WebKit sharers send one full H.264 copy
+  (Implementation notes, "Safari screen share layers").
+- **Clicks (Ryan, 2026-11-05):** one click on a tile opens the big view
+  (Watch); one click on a lone share there, or Esc, goes back (to the
+  tiles or to chat, wherever you came from). A double click anywhere
+  goes fullscreen; the single click waits 250 ms to tell them apart.
+- **Hide stops the sound too**; Show Share brings back the picture
+  only.
+- **Built 2026-11-05:** `CallView` / `PersonTile` in VoiceUI.tsx.
+  CV1-CV7, CV9-CV11, CK1-CK5 passed. CV8 (tiles really take the half
+  copy, checked with `openvoxaVoice.screenStats`) not run yet.
 
 ### Stay signed in
 
@@ -1814,6 +1833,16 @@ feature. Windows sends packets continuously while the target is silent
 (WH3), so the reader gets a steady 192,000 bytes a second. Electron's
 `desktopCapturer` window IDs are `window:<HWND as decimal>:0`.
 
+**Safari screen share layers (2026-11-05, CV5).** An iPad Pro in Safari
+sharing with VP8 simulcast sent only the small layer: tiles worked,
+but Watch (full layer) received 0x0, 0 kbps, a black view, and the
+tile stayed black after coming back until resubscribed. WebKit
+browsers therefore share one full H.264 copy (`#publishShare`).
+Two more from the same work: a share's subscription is let go 1.5 s
+after its last element detaches, so a tile handing over to the big view
+doesn't stop and restart the download; and TrackUnsubscribed must never
+remove the page's video elements (only our hidden audio ones).
+
 **Only a device removes its own duplicate leaves.** After rejoining from
 a GroupInfo a device can hold two leaves. Another member cannot tell
 which is live, and removing the wrong one would kick the device out, so
@@ -2569,6 +2598,8 @@ to pick their own colours later, so every colour stays a variable.
 - [ ] Bug reports from users (same section; where they go is open).
 - [ ] Right-click menus on text and voice channels (same section).
 - [ ] User avatars, uploaded in Settings, per server (same section).
+      They replace the letter circles in voice tiles ("Voice channel
+      view").
 
 - [x] Custom sounds, stage 1. Done 2026-11-04 (Feature decisions,
       "Custom sounds"; CS1-CS10).

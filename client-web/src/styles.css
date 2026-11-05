@@ -452,6 +452,9 @@ label input, label select { font-weight: 400; }
 :root {
   --speaking: #3ba55d;
   --live: #e0413a;
+  /* Call view tiles: behind a share's picture, and the name label. */
+  --video-bg: #000000;
+  --tile-label-bg: rgb(0 0 0 / 0.6);
 }
 .voice-item { display: flex; flex-direction: column; }
 .voice-item .channel:disabled { opacity: 1; }
@@ -495,8 +498,8 @@ label input, label select { font-weight: 400; }
   font-size: 14px;
 }
 .roster button.who:disabled { opacity: 1; cursor: default; }
-.roster .state { display: flex; color: var(--muted); }
-.roster .state.server-muted { color: var(--danger); }
+.roster .state, .person-tile .state { display: flex; color: var(--muted); }
+.roster .state.server-muted, .person-tile .state.server-muted { color: var(--danger); }
 .roster .warn { color: var(--danger); font-weight: 700; }
 .live {
   background: var(--live);
@@ -866,3 +869,90 @@ button.dot-host { position: relative; }
 .sound-cooldown select { flex: 1; min-width: 0; font-size: 14px; padding: 6px 8px; }
 .sound-cooldown select:disabled { opacity: 0.6; }
 .sound-cooldown > .block { padding-left: 23px; }
+
+/* ---- Call view: one tile per person (VoiceUI.tsx, CallView) ---- */
+.call-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.call-tiles {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  align-content: start;
+  gap: 12px;
+}
+.person-tile {
+  position: relative;
+  margin: 0;
+  aspect-ratio: 16 / 9;
+  display: grid;
+  place-items: center;
+  background: var(--panel);
+  border-radius: 8px;
+  overflow: hidden;
+}
+/* The speaking ring sits above the picture, so it shows on shares too. */
+.person-tile::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 3px transparent;
+  transition: box-shadow 0.1s;
+  pointer-events: none;
+}
+.person-tile.speaking::after { box-shadow: inset 0 0 0 3px var(--speaking); }
+.person-tile .avatar {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 30px;
+  font-weight: 700;
+  background: var(--sidebar-active);
+  color: var(--text);
+}
+.person-tile video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: var(--video-bg);
+}
+.person-tile figcaption {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  max-width: calc(100% - 16px);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: var(--radius);
+  background: var(--tile-label-bg);
+  font-size: 13px;
+}
+.person-tile figcaption .who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Share controls: on hover or keyboard focus; always on touchscreens. */
+.tile-actions {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s;
+}
+.person-tile:hover .tile-actions,
+.person-tile:focus-within .tile-actions,
+.tile-actions.always { opacity: 1; pointer-events: auto; }
+@media (hover: none) { .tile-actions { opacity: 1; pointer-events: auto; } }
+.tile-actions button { padding: 4px 8px; font-size: 13px; }
+.person-tile:fullscreen { aspect-ratio: auto; border-radius: 0; }
