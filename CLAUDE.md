@@ -51,7 +51,7 @@ server/            Go (module root; go.mod says go 1.26)
   Dockerfile          client-core -> client-web -> Go -> distroless
   internal/httpapi/   HTTP + WS, one file per feature; livekitapi.go = LiveKit
                       admin calls; webui/ = embedded client-web build
-  internal/db/        Postgres; migrations/00NN_*.sql embedded, ordered (latest 0028)
+  internal/db/        Postgres; migrations/00NN_*.sql embedded, ordered (latest 0029)
   internal/{auth,blob,config,gif,hub,keystore,password,perm,ratelimit,sealedfile,unfurl}
 client-core/       TypeScript protocol + crypto, no UI. src/: mls/ (ts-mls,
                    pinned 1.6.2), identity, groups (MLS lifecycle), chat
@@ -173,7 +173,9 @@ modes Voice Activity (default) / Push-to-Talk / Tap to Talk
 `micChain.ts` as a LiveKit track processor (read Implementation notes,
 LiveKit, "Mic processor" before touching it). Settings and Server
 settings are now 80% of the window. Channel create, rename and delete
-are in the moderation log (ML1-ML4). VA7c (forced PTT stuck on the other
+are in the moderation log (ML1-ML4). **Server password** (SP1-SP8;
+Feature decisions "Server password", `httpapi/signup.go`): sign-up
+Open / Server Password / Closed, rotation, per-address lockout. VA7c (forced PTT stuck on the other
 device) couldn't be reproduced: Open items, Untested. Ryan's desktop app
 is 0.1.8. Publish a patch: `cd client-desktop && npm run release:win`
 (commit the package.json bump).
