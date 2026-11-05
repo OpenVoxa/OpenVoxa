@@ -333,6 +333,8 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 		api.requirePerm(perm.Administrator, api.runUploadTest))
 	mux.HandleFunc("PATCH /api/v1/channels/{id}/force-ptt",
 		withUUIDPath(api.requirePerm(perm.ForcePTT, api.setForcePTT)))
+	mux.HandleFunc("PATCH /api/v1/channels/{id}/name",
+		withUUIDPath(api.requirePerm(perm.ManageChannels, api.renameChannel)))
 	mux.HandleFunc("PATCH /api/v1/channels/{id}/retention",
 		withUUIDPath(api.requirePerm(perm.ManageChannels, api.setChannelRetention)))
 	mux.HandleFunc("PATCH /api/v1/channels/{id}/history-sharing",

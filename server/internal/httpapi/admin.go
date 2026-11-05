@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 var channelNamePattern = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)
@@ -189,6 +191,50 @@ func (a *API) createChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	a.NotifyChannelChanged(c.ID)
 	writeJSON(w, http.StatusCreated, c)
+}
+
+// renameChannel changes a channel's name (needs manage_channels). Safe at
+// any time: messages, MLS groups, the LiveKit room, access and read
+// markers are all keyed by the channel's id, never its name. Same rules
+// as creation: 1-32 lowercase letters, digits or hyphens, unique.
+// Channel changes are not in the moderation log (modlog.go), so neither
+// is this.
+func (a *API) renameChannel(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	req.Name = strings.ToLower(strings.TrimSpace(req.Name))
+	if !channelNamePattern.MatchString(req.Name) {
+		writeError(w, http.StatusBadRequest,
+			"name must be 1-32 characters: lowercase letters, digits or hyphens")
+		return
+	}
+	var old string
+	err := a.pool.QueryRow(r.Context(),
+		`WITH o AS (SELECT name FROM channels WHERE id = $2)
+		 UPDATE channels SET name = $1 WHERE id = $2
+		 RETURNING (SELECT name FROM o)`,
+		req.Name, r.PathValue("id")).Scan(&old)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "channel not found")
+		return
+	}
+	if err != nil {
+		if isUniqueViolation(err) {
+			writeError(w, http.StatusConflict, "a channel with that name already exists")
+			return
+		}
+		slog.Error("renaming channel", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not rename channel")
+		return
+	}
+	slog.Info("channel renamed", "channel_id", r.PathValue("id"), "from", old, "to", req.Name,
+		"by", sessionFrom(r.Context()).Username)
+	a.NotifyChannelChanged(r.PathValue("id"))
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // deleteChannel removes a channel and, by cascade, every message in it.

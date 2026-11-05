@@ -20,11 +20,12 @@ import type { BackupManager } from "./backup";
 import { apiCall, cryptoSession, localStore, wsUrl } from "./core";
 import { BellIcon, ChannelPane } from "./ChannelPane";
 import { ChannelSettingsDialog, CreateChannelDialog } from "./ChannelDialogs";
+import { ChannelMenu, useMenuTrigger, type MenuItem } from "./ChannelMenu";
 import {
   CallView, PersonMenu, ShareDialog, Stage, VoiceBar, VoiceRoster,
   usePushToTalk, useVoiceSnapshot,
 } from "./VoiceUI";
-import { messageCooldown, mutedChannels, playSound, useMutedChannels, useVoiceSounds } from "./sounds";
+import { messageCooldown, mutedChannels, playSound, setChannelMuted, useMutedChannels, useVoiceSounds } from "./sounds";
 import { getToggle, MENTION_NOTIFY } from "./settings";
 import { SettingsDialog, type AccountActions, type SettingsTab } from "./SettingsDialog";
 import { ServerSettingsDialog } from "./ServerSettings";
@@ -91,12 +92,15 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   const [reportsTick, setReportsTick] = useState(0);
   const [dialog, setDialog] = useState<
     | { k: "create"; kind: "text" | "voice" }
-    | { k: "settings"; id: string }
+    | { k: "settings"; id: string; focus?: "name" | "delete" }
     | { k: "share" }
     | { k: "prefs"; tab: SettingsTab }
     | { k: "server" }
     | null
   >(null);
+  // The right-click (or long-press) menu on a channel in the sidebar.
+  const [chanMenu, setChanMenu] = useState<{ id: string; at: { x: number; y: number } } | null>(null);
+  const menuTrigger = useMenuTrigger((id, at) => setChanMenu({ id, at }));
   const [presence, setPresence] = useState<VoicePresence>({});
   // Created on first join: loading it pulls in LiveKit, which text-only
   // use never needs.
@@ -377,6 +381,41 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
       <GearIcon />
     </button>
   );
+  const NEEDS_MANAGE = "Needs the Manage channels permission";
+  const menuItems = (c: ChannelInfo): (MenuItem | "sep")[] => {
+    const manage: MenuItem[] = [
+      { label: "Rename Channel", onClick: () => setDialog({ k: "settings", id: c.id, focus: "name" }),
+        disabled: !canManage, reason: NEEDS_MANAGE },
+      { label: "Channel Settings", onClick: () => setDialog({ k: "settings", id: c.id }),
+        disabled: !settingsFor(c), reason: NEEDS_MANAGE },
+      { label: "Delete Channel", onClick: () => setDialog({ k: "settings", id: c.id, focus: "delete" }),
+        disabled: !canManage, reason: NEEDS_MANAGE, danger: true },
+    ];
+    if (c.kind === "voice") {
+      const here = !!vsnap && vsnap.state !== "idle" && vsnap.channelId === c.id;
+      return [
+        here
+          ? { label: "Leave Call", onClick: () => void voiceClient?.leave() }
+          : { label: "Join Call", onClick: () => {
+              setStage(null);
+              setCallView(true);
+              void joinVoice(c.id);
+            } },
+        "sep",
+        ...manage,
+      ];
+    }
+    const isMuted = muted.has(c.id);
+    return [
+      { label: "Mark as Read", onClick: () => chat.markRead(c.id, c.last_message_at ?? undefined),
+        disabled: !unread.has(c.id) && !mentions.has(c.id), reason: "Nothing unread" },
+      { label: isMuted ? "Unmute Sounds" : "Mute Sounds", onClick: () => setChannelMuted(c.id, !isMuted) },
+      "sep",
+      ...manage,
+    ];
+  };
+  const menuChannel = chanMenu ? channels.find((c) => c.id === chanMenu.id) : undefined;
+
   const heading = (label: string, kind: "text" | "voice") => (
     <div className="list-head">
       <h2>{label}</h2>
@@ -408,7 +447,9 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
               <li key={c.id} className="channel-row">
                 <button
                   className={`channel${c.id === openId ? " active" : ""}${unread.has(c.id) || mentions.has(c.id) ? " unread" : ""}`}
+                  {...menuTrigger.handlers(c.id)}
                   onClick={() => {
+                    if (menuTrigger.consumeLongPress()) return;
                     setOpenId(c.id);
                     setStage(null);
                     setCallView(false);
@@ -439,7 +480,9 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
                     <li key={c.id} className="voice-item">
                       <div className="channel-row">
                         <button className={`channel${here ? " active" : ""}`}
+                          {...menuTrigger.handlers(c.id)}
                           onClick={() => {
+                            if (menuTrigger.consumeLongPress()) return;
                             setStage(null);
                             setCallView(true);
                             void joinVoice(c.id);
@@ -538,9 +581,14 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           at={person.at} call={call} canServerMute={can("server_mute")}
           onClose={() => setPerson(null)} />
       )}
+      {chanMenu && menuChannel && (
+        <ChannelMenu title={`${menuChannel.kind === "text" ? "#" : ""}${menuChannel.name}`} at={chanMenu.at}
+          items={menuItems(menuChannel)} onClose={() => setChanMenu(null)} />
+      )}
       {dialogChannel && (
         <ChannelSettingsDialog
           key={dialogChannel.id}
+          focus={dialog?.k === "settings" ? dialog.focus : undefined}
           call={call}
           channel={dialogChannel}
           canManage={canManage}
