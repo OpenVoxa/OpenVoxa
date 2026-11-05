@@ -31,13 +31,16 @@ Fixed decisions (decisions.md "Blocking decisions"; don't reopen):
 
 `docs/decisions.md` is the record of every decision; search it by
 section name, not line number. Sections: Goals and scope, Threat model,
-Blocking decisions, **Feature decisions** (one subsection per feature:
-mentions, reactions, screen share limit ...), Architecture, Known
-tensions, **Encryption**, **Implementation notes** (hard-won gotchas:
-read before touching ts-mls or LiveKit), Permission groups, **Build
-order** (what was built when, with test IDs), **Open items** (backlog,
-`[x]` = done). `README.md` is public status; `deploy/README.md` covers
-compose, TLS, LiveKit, storage, key backups, share limit, troubleshooting.
+Blocking decisions, Architecture, **Feature decisions** (one #### per
+feature under Text and chat / Voice and screen share / Accounts and
+administration / Desktop app, then Planned), Permission groups,
+**Encryption**, Known tensions, **Implementation notes** (hard-won
+gotchas grouped MLS / LiveKit / Electron / server / web client / builds:
+read the group before touching that code), **Build order** (what was
+built when, with test IDs; new work goes in its dated list), **Open
+items** (Next up, not built, untested, security gaps, Closed).
+`README.md` is public status; `deploy/README.md` covers compose, TLS,
+LiveKit, storage, key backups, share limit, troubleshooting.
 Older full handoff: project doc claude/handoff-step-13.md.
 
 ## Layout
@@ -176,9 +179,8 @@ demand (silent until Listen). Ryan's desktop app runs build `-e`.
   `deploy_key-data`, wrapped under a KEK (Ryan holds the only copies),
   backed up daily 03:30 to `~/openvoxa-key-backups` (7 days). Closed off:
   Ryan is the only user.
-- Known gaps (decisions.md Open items): K1 recovery flows 2-5 deferred;
-  no @everyone/@group; no per-group share limits.
-- Untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI).
+- Known gaps and untested steps (K1 flows 2-5, G2-G4, P3, D1): decisions.md
+  Open items.
 - **Next:** Ryan picks from the backlog: touchscreen push-to-talk button,
   avatar uploads (replace the tiles' letter circles; Open items);
   Ryan's list (decisions.md "Planned: server icons, updates, bug
