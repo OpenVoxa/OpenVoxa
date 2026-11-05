@@ -159,7 +159,7 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
   exactly: sizes, spacing, Title Case tab names. Buttons must look like
   buttons; reuse `primary` (filled accent), `outline` (accent outline),
   `save` (green, grey when disabled, bottom left) and `Modal wide fixed`
-  (Settings and Server settings, both 600 x 680, footer `.modal-foot`).
+  (Settings and Server settings, both 80% of the window, footer `.modal-foot`).
   Grey out unavailable controls instead of hiding them. Check before
   showing him.
 
