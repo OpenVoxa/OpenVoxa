@@ -159,11 +159,13 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 
 ## Current state (rewrite every session)
 
-_2026-11-04._ **Per-app share sound done** (decisions.md "Per-app
-share sound", "Receiving shares on demand"; Implementation notes
-"Windows process loopback"). Rust helper in `client-desktop/audio-helper/`
-(`package:win` cross-builds it), fed to pages by `viewPreload.ts`. Shares
-arrive silent until Listen. Ryan's desktop app runs build `-e`.
+_2026-11-05._ **Voice channel view done** (`fd4fcde`; decisions.md
+"Voice channel view", Implementation notes "Safari screen share
+layers"): a tile per person while in a call, share previews from a
+half-size VP8 copy (WebKit sharers: one H.264 copy), Watch / Listen /
+Fullscreen / Hide. Before it: per-app share sound (desktop step 3,
+Rust helper `client-desktop/audio-helper/`) and shares received on
+demand (silent until Listen). Ryan's desktop app runs build `-e`.
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts: tuckilufigus (Ryan), staff, openvoxaadmin,
@@ -174,12 +176,13 @@ arrive silent until Listen. Ryan's desktop app runs build `-e`.
   `deploy_key-data`, wrapped under a KEK (Ryan holds the only copies),
   backed up daily 03:30 to `~/openvoxa-key-backups` (7 days). Closed off:
   Ryan is the only user.
-- Still untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI).
 - Known gaps (decisions.md Open items): K1 recovery flows 2-5 deferred;
   no @everyone/@group; no per-group share limits.
-- **Next: the voice channel view** (decisions.md "Voice channel view
-  (to design)"): settle its three open questions with Ryan first.
-- Backlog after that: touchscreen push-to-talk button (Open items);
+- Untested: G2-G4 (GIFs), P3 (password), D1 (delete-user CLI), CV8
+  (tiles take the half copy: `openvoxaVoice.screenStats(...)` in a
+  desktop viewer, tile vs Watch, non-Safari sharer).
+- **Next:** Ryan picks from the backlog: touchscreen push-to-talk button,
+  avatar uploads (replace the tiles' letter circles; Open items);
   Ryan's list (decisions.md "Planned: server icons, updates, bug
   reports, channel menus, avatars"): discuss each before building.
   Minimized windows probably missing from our picker (unchecked).
