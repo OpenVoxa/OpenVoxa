@@ -27,6 +27,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { startUpdates, updateState, installNow } from "./updater";
 
 // Width of the server pane, in CSS pixels. Must match --pane-width in
 // pane/pane.css.
@@ -530,6 +531,11 @@ function registerIpc() {
   ipcMain.handle("pane:ready", (e) => {
     if (!fromPane(e)) return;
     sendServers();
+    pane?.webContents.send("update", updateState());
+  });
+  ipcMain.handle("pane:install-update", (e) => {
+    if (!fromPane(e)) return;
+    installNow();
   });
   ipcMain.handle("pane:select", (e, origin: unknown) => {
     if (!fromPane(e) || typeof origin !== "string") return;
@@ -623,6 +629,7 @@ if (!app.requestSingleInstanceLock()) {
     state = loadState();
     registerIpc();
     createWindow();
+    startUpdates((s) => pane?.webContents.send("update", s));
   });
   app.on("window-all-closed", () => app.quit());
 }

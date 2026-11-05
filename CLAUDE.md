@@ -74,7 +74,10 @@ never in the media path) · Caddy optional for TLS · MLS ciphersuite 1.
 - `cd client-core && npm run build` (and `npx tsc --noEmit`: the build
   doesn't type-check)
 - `cd client-web && npm run build` (runs tsc)
-- `cd client-desktop && npm run package:win`: Windows zip in `release/`.
+- `cd client-desktop && npm run release:win`: bumps the patch version,
+  builds the NSIS installer (Wine container) and publishes it to
+  `deploy/desktop-updates` (served at `/desktop-updates/`); installed apps
+  update from there. `npm run package:win` alone: zip in `release/`.
   Smoke-test in a throwaway `node:22-bookworm` container with Xvfb
   (`--remote-debugging-port` to eval JS). For Ryan: `python3 -m
   http.server 8099 --bind 10.0.3.9`, new file name per build, check he fetched it.

@@ -28,6 +28,14 @@
 		reverse_proxy host.docker.internal:7880
 	}
 
+	# Desktop app updates (optional; deploy/README.md, "Desktop app
+	# updates"): installers and latest.yml from deploy/desktop-updates.
+	# Empty unless desktop releases are published from this host.
+	handle_path /desktop-updates/* {
+		root * /srv/desktop-updates
+		file_server
+	}
+
 	handle {
 		reverse_proxy server:8080
 	}

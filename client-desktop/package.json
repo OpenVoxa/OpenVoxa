@@ -1,20 +1,26 @@
 {
   "name": "@openvoxa/client-desktop",
   "productName": "OpenVoxa",
-  "version": "0.1.0",
+  "version": "0.1.5",
   "private": true,
   "license": "AGPL-3.0-or-later",
   "description": "OpenVoxa desktop app: an Electron shell with a server pane; each server's own web client runs in an isolated view.",
   "main": "out/main.js",
+  "openvoxaUpdateUrl": "https://openvoxa.ryanindustries.net/desktop-updates/",
   "scripts": {
     "build": "tsc -p . && node scripts/copy-pane.mjs",
     "start": "npm run build && electron .",
-    "package:win": "npm run build && sh audio-helper/build-windows.sh && node scripts/package.mjs win32"
+    "package:win": "npm run build && sh audio-helper/build-windows.sh && node scripts/package.mjs win32",
+    "release:win": "node scripts/release.mjs"
   },
   "devDependencies": {
     "@electron/packager": "20.3.0",
     "@types/node": "^22.0.0",
     "electron": "45.2.2",
+    "electron-builder": "26.18.0",
     "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.11"
   }
 }

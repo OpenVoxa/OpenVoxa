@@ -28,4 +28,6 @@ build/
 *.swp
 .DS_Store
 deploy/docker-compose.override.yml
+deploy/desktop-updates/
 deploy/docker-compose.override.yml
+deploy/desktop-updates/

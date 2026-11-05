@@ -17,6 +17,8 @@ const loadErrorText = document.getElementById("load-error-text");
 let servers = [];
 let selected = null;
 let adding = false;
+let updating = false; // the Update Ready card is open
+let update = null; // { current, ready }
 let picking = false;
 const errors = new Map(); // origin -> message, for servers that failed to load
 
@@ -44,6 +46,7 @@ function render() {
       b.addEventListener("click", () => {
         cancelPick();
         if (adding) closeForm();
+        if (updating) closeUpdate();
         window.shell.select(s.origin);
       });
       b.addEventListener("contextmenu", (e) => {
@@ -60,15 +63,19 @@ function render() {
   // server failed to load.
   // The screen share picker, while open, is the only thing shown.
   const failed = selected !== null && errors.has(selected);
-  const showForm = !picking && (adding || servers.length === 0);
+  const showUpdate = !picking && updating && !!update?.ready;
+  const showForm = !picking && !showUpdate && (adding || servers.length === 0);
   form.hidden = !showForm;
   addCancel.hidden = servers.length === 0;
-  loadError.hidden = picking || showForm || !failed;
+  updateCard.hidden = !showUpdate;
+  updateButton.hidden = !update?.ready;
+  if (update?.ready) updateText.textContent = `OpenVoxa ${update.ready} is ready to install. You have ${update.current}.`;
+  loadError.hidden = picking || showForm || showUpdate || !failed;
   if (failed) loadErrorText.textContent = `${host(selected)}: ${errors.get(selected)}`;
   shareCard.hidden = !picking;
-  content.hidden = !(picking || showForm || failed);
+  content.hidden = !(picking || showForm || showUpdate || failed);
   // The main process owns the overlay while the picker is open.
-  if (!picking) window.shell.setOverlay(showForm || failed);
+  if (!picking) window.shell.setOverlay(showForm || showUpdate || failed);
 }
 
 function openForm() {
@@ -86,12 +93,14 @@ function closeForm() {
 
 document.getElementById("add").addEventListener("click", () => {
   cancelPick();
+  updating = false;
   openForm();
 });
 addCancel.addEventListener("click", closeForm);
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   if (picking) cancelPick();
+  else if (updating) closeUpdate();
   else if (adding && servers.length > 0) closeForm();
 });
 
@@ -131,6 +140,37 @@ window.shell.onServers((s) => {
   }
   render();
   if (servers.length === 0) address.focus();
+});
+
+// ---- Update ready (sent by the main process, src/updater.ts) ----
+
+const updateButton = document.getElementById("update");
+const updateCard = document.getElementById("update-card");
+const updateText = document.getElementById("update-text");
+const updateGo = document.getElementById("update-go");
+
+function closeUpdate() {
+  updating = false;
+  render();
+}
+
+updateButton.addEventListener("click", () => {
+  cancelPick();
+  adding = false;
+  updating = !updating;
+  render();
+});
+document.getElementById("update-later").addEventListener("click", closeUpdate);
+updateGo.addEventListener("click", () => {
+  updateGo.disabled = true;
+  updateGo.textContent = "Restarting...";
+  window.shell.installUpdate();
+});
+
+window.shell.onUpdate((s) => {
+  update = s;
+  if (!s.ready) updating = false;
+  render();
 });
 
 window.shell.onServerError(({ origin, message }) => {

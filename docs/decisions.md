@@ -986,6 +986,51 @@ unchanged.
   (another app's sound stays out), WH3 (a silent window: silence, no
   error); the whole feature WS1-WS7.
 
+#### Desktop updates
+
+Ryan, 2026-11-04 (the user chooses when; one click; a note that features
+may not work until they update); design agreed 2026-11-05. The app is in
+development and patches will be frequent. Only the shell needs this:
+each server serves its own web client, so a refresh already updates
+that.
+
+- **Installer:** NSIS from electron-builder, per user and one click
+  (like Discord): no administrator prompt, installed in
+  `%LOCALAPPDATA%\Programs\OpenVoxa`. App data (bookmarks, server
+  sessions and keys) stays in `%APPDATA%\OpenVoxa`, as with the zip, so
+  moving from the zip keeps everything. Replaces the zip for Windows.
+- **Updater:** electron-updater (`src/updater.ts`). Checks 10 s after
+  start and every 4 hours, downloads in the background. Updates are
+  differential: the blockmap lets the app fetch only the changed parts
+  of the 120 MB installer.
+- **Where it looks: a folder on Ryan's server for now** (Ryan's pick over
+  GitHub Releases): Caddy serves `deploy/desktop-updates` at
+  `/desktop-updates/`. Fast for frequent patches, no GitHub token, and
+  update checks reach only a host we run, never a third party (GitHub
+  would see every installed app's IP). The address is a build setting,
+  `openvoxaUpdateUrl` in client-desktop's package.json, so it can move.
+- **Installing (Ryan's pick):** a green arrow at the bottom of the pane
+  opens "Update Ready" (the new and current version, "Some features may
+  not work properly, or at all, until you update.") with **Restart to
+  Update** (silent install, the app starts again) and Later. Closing the
+  app also installs it (`autoInstallOnAppQuit`). Nothing restarts by
+  surprise. Checks continue after a download, so a newer patch replaces
+  one still waiting. Errors (offline, server down) go only to
+  `%APPDATA%\OpenVoxa\updater.log`.
+- **Unsigned for now** (Ryan's pick): the first install shows Windows'
+  "Windows protected your PC" (More info > Run anyway); updates
+  downloaded by the app normally don't. Revisit before anyone else
+  installs it: SignPath (free for open-source projects) or Azure Trusted
+  Signing (about $10 a month).
+- **Releasing:** `npm run release:win` in client-desktop bumps the patch
+  version, packages, builds the installer, `latest.yml` and blockmap with
+  electron-builder in a throwaway container with Wine
+  (`scripts/builder.Dockerfile`), and copies them into the update folder,
+  `latest.yml` last. The newest 5 versions stay, since an updating app
+  fetches its own version's blockmap.
+- **Later:** a server saying "this server needs app version X or later"
+  (for features that need a newer shell, such as new preload calls).
+
 ### Planned: server icons, updates, bug reports, channel menus, avatars
 
 Ryan's list, 2026-11-04. Recorded, not designed in detail yet: each gets
@@ -1003,7 +1048,8 @@ at the end.
   the size, and hands the pane a `data:` URL, so the pane never loads
   anything from a server. Open: size limits; a square crop tool or
   centre crop.
-- **Updates.** Two parts update separately. The web client already
+- **Updates.** Built 2026-11-05: "Desktop updates" above. The original
+  notes: two parts update separately. The web client already
   updates itself: each server serves its own, so a refresh picks it up.
   Only the desktop shell needs an updater. Ryan: the user chooses when
   to update, with a note like "Some features may not work properly, or
@@ -1724,6 +1770,15 @@ for a few minutes. Mitigated by a short window, slow refill and an
 immediate reset on successful login. Every major service picks some
 version of this tradeoff; there is no clean answer.
 
+**Whoever hosts desktop updates can ship code to every installed app.**
+The app is unsigned, so the updater's only check is the SHA-512 in
+`latest.yml`, which comes over HTTPS from the same folder as the
+installer. Anyone who controls that folder (today, Ryan's server) can
+push native code that runs with the user's rights, far more than a
+server's page can do inside its sandboxed view. Signing would tie updates
+to a key held off the server; until then the folder is as sensitive as
+the build machine.
+
 **Live deletion reaches connected clients only.** An offline client keeps
 whatever it cached until it reconnects, and nothing prevents a screenshot.
 Deletion is enforced server-side and propagated live, which is the part
@@ -2138,6 +2193,18 @@ permission check handler gets `requestingOrigin` as
 the page is refused device names. Compare normalised origins. Found in
 desktop step 1 (ED7b).
 
+**electron-updater needs `resources/app-update.yml` to download.**
+Found 2026-11-05 (DU3). Setting the feed in code (`setFeedURL`) is enough
+to check for updates, but the download step reads `updaterCacheDirName`
+from `app-update.yml` and silently never starts without it (no request
+for the installer reached Caddy). electron-builder writes that file only
+when it packages the app itself; we package with @electron/packager and
+hand electron-builder the folder (`--prepackaged`), so
+`scripts/package.mjs` writes it (provider, url, cache name). Building
+the NSIS installer on Linux needs Wine (32-bit too): electron-builder
+makes the uninstaller by running the installer stub, hence the Wine
+container in `scripts/builder.Dockerfile`.
+
 **Windows process loopback (desktop step 3, found by experiment).**
 Chromium 156's `restrictOwnAudio` constraint works with Electron's
 `loopback`: the app's own sound is left out of a whole-screen share
@@ -2535,6 +2602,9 @@ verified; the section named holds the design.
   WS1-WS7.
 - 2026-11-04 Receiving shares on demand, LS1-LS7.
 - 2026-11-05 Voice channel view, CV1-CV11, CK1-CK5 (`fd4fcde`).
+- 2026-11-05 Desktop updates (installer, updater, release command):
+  DU1-DU6 (DU1b after the `app-update.yml` fix, DU3 failed before it);
+  DU7 (differential download) not yet.
 
 ## Open items
 
@@ -2549,13 +2619,18 @@ verified; the section named holds the design.
       letter circles in voice tiles. Feature decisions, "Planned".
 - [ ] Server icon and name in the pane, set in Server settings (same
       section).
-- [ ] Desktop updates: user-confirmed, one click, with a "may not work
-      until you update" note; installer and signing (same section).
 - [ ] Bug reports from users (same section; where they go is open).
 - [ ] Right-click menus on text and voice channels (same section).
 - [ ] Desktop app, later: badges via a preload, voice handoff between
       servers, global push-to-talk, tray, notifications, idle unload of
       background servers.
+- [ ] About tab in Settings (Ryan, 2026-11-05): GitHub repository,
+      server address, live kbps up and down, app version, server version,
+      other information about the program and the server. Design first.
+- [ ] Desktop updates: differential download (DU7) falls back to the
+      full 121 MB installer, even with the old blockmap cached; reason in
+      the app's updater.log. Later: code signing; "this server needs app
+      version X".
 - [ ] Minimized windows are probably missing from our share picker, as
       from Edge's (RS3; unchecked).
 

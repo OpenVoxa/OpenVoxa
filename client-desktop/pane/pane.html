@@ -12,6 +12,7 @@
   <nav class="pane" aria-label="Servers">
     <ul id="servers"></ul>
     <button id="add" class="server-icon add" title="Add a Server" aria-label="Add a Server">+</button>
+    <button id="update" class="server-icon update" title="Update Ready" aria-label="Update Ready" hidden>&#x2193;</button>
   </nav>
   <main id="content" hidden>
     <form id="add-form" class="card" hidden>
@@ -26,6 +27,16 @@
         <button type="button" id="add-cancel" class="outline">Cancel</button>
       </div>
     </form>
+    <div id="update-card" class="card" role="dialog" aria-labelledby="update-title" hidden>
+      <h1 id="update-title">Update Ready</h1>
+      <p id="update-text" class="muted"></p>
+      <p class="muted">Some features may not work properly, or at all, until you update.</p>
+      <div class="actions">
+        <button type="button" id="update-go" class="save">Restart to Update</button>
+        <button type="button" id="update-later" class="outline">Later</button>
+      </div>
+      <p class="muted small">If you close OpenVoxa instead, it updates then.</p>
+    </div>
     <div id="load-error" class="card" hidden>
       <h1>Couldn't Load Server</h1>
       <p id="load-error-text" class="muted"></p>

@@ -133,6 +133,9 @@ services:
       # Let's Encrypt rate limits repeated requests, so keep it.
       - caddy-data:/data
       - caddy-config:/config
+      # Desktop app installers and update files (scripts/release.mjs in
+      # client-desktop). Read-only; empty unless you publish desktop builds.
+      - ./desktop-updates:/srv/desktop-updates:ro
     depends_on:
       - server
       - livekit

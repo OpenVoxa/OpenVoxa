@@ -4,7 +4,7 @@ Everything here brings up four containers: PostgreSQL, a LiveKit SFU, the OpenVo
 
 **This is pre-alpha software whose encryption has never been reviewed. Do not expose it to the internet.** A LAN or a private network is the right place for it today.
 
-Contents: [Quick start](#quick-start) · [First account](#first-account-and-administrator-recovery) · [TLS](#choosing-a-tls-path) · [Own reverse proxy](#using-your-own-reverse-proxy) · [LIVEKIT_NODE_IP](#livekit_node_ip-is-the-setting-that-breaks-things) · [Storage](#attachments-and-storage) · [Account keys](#account-keys-and-backups) · [Screen share limit](#screen-share-limit) · [GIF search](#gif-search) · [Updating](#updating) · [Troubleshooting](#troubleshooting) · [Secrets](#secrets) · [Resetting](#resetting)
+Contents: [Quick start](#quick-start) · [First account](#first-account-and-administrator-recovery) · [TLS](#choosing-a-tls-path) · [Own reverse proxy](#using-your-own-reverse-proxy) · [LIVEKIT_NODE_IP](#livekit_node_ip-is-the-setting-that-breaks-things) · [Storage](#attachments-and-storage) · [Account keys](#account-keys-and-backups) · [Screen share limit](#screen-share-limit) · [GIF search](#gif-search) · [Desktop updates](#desktop-app-updates) · [Updating](#updating) · [Troubleshooting](#troubleshooting) · [Secrets](#secrets) · [Resetting](#resetting)
 
 ## Requirements
 
@@ -347,6 +347,20 @@ Keys come from [developers.giphy.com](https://developers.giphy.com) (instant, fr
 **Clients never contact the provider.** Thumbnails are proxied through your server, and a chosen GIF is downloaded once and stored as an ordinary attachment, so it obeys the channel's retention policy and lives on your own disk. Your server does send search queries to the provider, so they see what this instance searches for but not who searched. If that is not acceptable for your deployment, leave the feature off.
 
 GIFs count against `OPENVOXA_MAX_ATTACHMENT_MB` and against your storage. A couple of megabytes each is normal.
+
+## Desktop app updates
+
+Optional, and only for whoever publishes desktop builds. Caddy serves `deploy/desktop-updates/` at `/desktop-updates/` (read-only, no directory listing); an empty folder just answers 404. The desktop app checks the address built into it (`openvoxaUpdateUrl` in `client-desktop/package.json`).
+
+To publish a release from this host (needs Docker and Node 22):
+
+```bash
+cd OpenVoxa/client-desktop
+npm ci
+npm run release:win      # bumps the patch version, builds, publishes
+```
+
+It writes `OpenVoxa-Setup-<version>.exe`, its `.blockmap` and `latest.yml` into `deploy/desktop-updates` and keeps the newest five versions. Treat that folder like a build machine: anything placed there runs on every installed app (see "Known tensions" in `docs/decisions.md`).
 
 ## Updating
 
