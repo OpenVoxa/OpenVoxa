@@ -30,6 +30,7 @@ import type { ApiCall } from "@core/identity";
 import { Modal } from "./ChannelDialogs";
 import { StickerMessage, StickersTab } from "./stickers";
 import { VoiceTab } from "./shareLimit";
+import { SignupTab } from "./SignupTab";
 import { MUTE_DURATIONS } from "./VoiceUI";
 import { stickerIdOf } from "@core/stickers";
 import { ColouredName, MIN_NAME_CONTRAST, nameContrast, refreshNames, useServerNameColours } from "./names";
@@ -132,7 +133,7 @@ function useUserList(call: ApiCall, reload: number) {
 
 const when = (at: string) => new Date(at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
-export type ServerTab = "groups" | "members" | "reports" | "bans" | "log" | "stickers" | "voice";
+export type ServerTab = "groups" | "members" | "reports" | "bans" | "log" | "stickers" | "voice" | "signup";
 
 /**
  * reload changes whenever the server says permissions moved, so the lists
@@ -154,7 +155,7 @@ export function ServerSettingsDialog({ call, me, reload, openReports, onClose }:
   if (has("ban") || has("view_reports") || has("delete_messages") || has("server_mute")) tabs.push(["log", "Log"]);
   // Every staff member can see the set; managing it needs the switch.
   tabs.push(["stickers", "Stickers"]);
-  if (has("administrator")) tabs.push(["voice", "Voice and Video"]);
+  if (has("administrator")) tabs.push(["voice", "Voice and Video"], ["signup", "Sign-Up"]);
   return (
     <Modal title="Server settings" onClose={onClose} wide fixed>
       <div className="settings-tabs" role="tablist">
@@ -163,7 +164,8 @@ export function ServerSettingsDialog({ call, me, reload, openReports, onClose }:
             onClick={() => setTab(id)}>{label}</button>
         ))}
       </div>
-      {tab === "voice" ? <VoiceTab call={call} onClose={onClose} /> : (<>
+      {tab === "voice" ? <VoiceTab call={call} onClose={onClose} />
+        : tab === "signup" ? <SignupTab call={call} onClose={onClose} /> : (<>
       <div className="modal-body">
         {tab === "groups" && <GroupsTab call={call} me={me} reload={reload} />}
         {tab === "members" && <MembersTab call={call} me={me} reload={reload} />}
@@ -1319,6 +1321,14 @@ function describe(e: LogEntry): { text: string; note?: string } {
       };
     case "delete_user":
       return { text: `deleted the account ${e.detail || "(unknown)"}` };
+    case "set_signup_mode":
+      return { text: `set sign-up to ${e.detail === "password" ? "Server Password" : e.detail === "closed" ? "Closed" : "Open"}` };
+    case "set_signup_rotation":
+      return { text: e.detail === "never" ? "stopped changing the server password automatically" : `set the server password to change ${e.detail}` };
+    case "change_signup_password":
+      return { text: "changed the server password" };
+    case "rotate_signup_password":
+      return { text: "generated a new server password" };
     case "create_channel":
       return { text: `created the channel ${e.detail}` };
     case "rename_channel":

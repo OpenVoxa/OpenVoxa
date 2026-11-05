@@ -57,6 +57,11 @@ type API struct {
 	authIP   *ratelimit.Limiter
 	authUser *ratelimit.Limiter
 
+	// Sign-up (signup.go): wrong server password guesses per address, and
+	// at most three new accounts per address an hour in any mode.
+	signupLock *signupLockout
+	signupIP   *ratelimit.Limiter
+
 	// Link previews make the server fetch arbitrary remote pages, so they
 	// are limited per user: 20 up front, then one every 3 seconds.
 	unfurl      *unfurl.Fetcher
@@ -121,6 +126,9 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 		// 5 failures per account, refilling one every 2 minutes.
 		authUser: ratelimit.New(1.0/120.0, 5, 30*time.Minute),
 
+		signupLock: newSignupLockout(),
+		signupIP:   ratelimit.New(3.0/3600.0, 3, 2*time.Hour),
+
 		unfurl:      unfurl.New(),
 		unfurlLimit: ratelimit.New(1.0/3.0, 20, 15*time.Minute),
 
@@ -163,6 +171,11 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 
 	mux.HandleFunc("POST /api/v1/auth/register", api.limitByIP(api.register))
 	mux.HandleFunc("GET /api/v1/setup", api.setupStatus)
+	// Sign-up mode and server password (signup.go), administrators only.
+	mux.HandleFunc("GET /api/v1/signup-settings", api.requirePerm(perm.Administrator, api.getSignupSettings))
+	mux.HandleFunc("PUT /api/v1/signup-settings", api.requirePerm(perm.Administrator, api.putSignupSettings))
+	mux.HandleFunc("POST /api/v1/signup-settings/password",
+		api.requirePerm(perm.Administrator, api.setSignupPassword))
 	mux.HandleFunc("POST /api/v1/auth/password-check", api.checkPassword)
 	mux.HandleFunc("POST /api/v1/auth/login", api.limitByIP(api.login))
 	mux.HandleFunc("POST /api/v1/auth/logout", api.requireAuth(api.logout))

@@ -829,6 +829,38 @@ Moved forward from M5 at Ryan's request, 2026-11-01.
   dialog offers no switch for it.
 - Permissions refresh on perms_changed.
 
+#### Server password
+
+Agreed with Ryan 2026-11-05 (SP tests); `httpapi/signup.go`, migration
+0029, Server settings, **Sign-Up** tab (administrators). Ryan: stop
+anyone who reaches the login page from creating a billion accounts.
+
+- **Modes:** Open (anyone; the default, so existing servers change
+  nothing), Server Password (sign-up asks for it; logging in never does,
+  so changing it locks nobody out), Closed (no new accounts). The first
+  account on an empty server still uses the setup code, whatever the mode.
+- **The password** is stored readable (Ryan: admins view, copy and share
+  it; it only lets someone create an account), changeable at any time:
+  typed (account-password strength rules) or generated, `XXXX-XXXX-XXXX`
+  from an alphabet without look-alikes (about 58 bits; accepted in
+  lowercase or without dashes). Switching to Server Password with none
+  set generates one.
+- **Rotation** (Ryan: a leaked password must be lockable): Never, 24 h,
+  7 days, 30 days or custom hours. A sweep each minute rotates when due;
+  the previous one works for an hour more. Rotate Now and a manual change
+  end the old one at once (the leak case). Changing the mode or period
+  restarts the clock.
+- **Guessing:** checked before the account password is hashed (no argon2
+  time spent on wrong guesses); per address, 5 free wrong guesses, then
+  locked 1, 5, 15, 60 minutes, each wrong guess after a wait one step up;
+  a right guess or a quiet day clears it; wrong guesses are in the server
+  log. No server-wide lock: an attacker could lock real people out.
+  Rotation plus the per-address lockout make guessing pointless.
+- **New-account cap:** 3 per address an hour in every mode, counted only
+  when an account is actually made.
+- **Moderation log:** mode, period, manual change and Rotate Now.
+  Scheduled rotations are not logged (they would fill it).
+
 #### Password rules
 
 Decided with Ryan 2026-11-01, reworked 2026-11-04. Checked when a
@@ -2729,6 +2761,8 @@ verified; the section named holds the design.
   window.
 - 2026-11-05 Channel changes in the moderation log, ML1-ML4 (Feature
   decisions, "Channel menus").
+- 2026-11-05 Server password and sign-up modes, SP1-SP8 (Feature
+  decisions, "Server password").
 
 ## Open items
 
