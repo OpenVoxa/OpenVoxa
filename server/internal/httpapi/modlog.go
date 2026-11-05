@@ -31,9 +31,10 @@ type modLogEntry struct {
 
 const modLogPage = 100
 
-// canReadModLog: the people whose actions the log records. Holding only
-// Manage groups, Manage channels or Force PTT is not enough; those
-// actions are not in it.
+// canReadModLog: moderators. Channel changes (create, rename, delete)
+// are recorded too, but holding only Manage groups, Manage channels or
+// Force PTT is not enough to read the log: it is for reviewing staff,
+// and moderators do that.
 func canReadModLog(s perm.Set) bool {
 	return s.Has(perm.Ban) || s.Has(perm.ViewReports) || s.Has(perm.DeleteMessages) ||
 		s.Has(perm.ServerMute)

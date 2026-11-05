@@ -1319,6 +1319,12 @@ function describe(e: LogEntry): { text: string; note?: string } {
       };
     case "delete_user":
       return { text: `deleted the account ${e.detail || "(unknown)"}` };
+    case "create_channel":
+      return { text: `created the channel ${e.detail}` };
+    case "rename_channel":
+      return { text: `renamed the channel ${e.detail}` };
+    case "delete_channel":
+      return { text: `deleted the channel ${e.detail}` };
     case "add_sticker":
       return { text: `added the sticker :${e.detail}:` };
     case "delete_sticker":
