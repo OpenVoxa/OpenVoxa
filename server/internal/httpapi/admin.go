@@ -178,6 +178,12 @@ func (a *API) createChannel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not create channel")
 		return
 	}
+	if err := logChannelAction(r.Context(), tx, sessionFrom(r.Context()).UserID, "create_channel", c.ID,
+		channelLabel(c.Name, c.Kind, c.Encrypted)); err != nil {
+		slog.Error("recording channel creation", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not create channel")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		slog.Error("committing channel", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not create channel")
@@ -197,8 +203,7 @@ func (a *API) createChannel(w http.ResponseWriter, r *http.Request) {
 // any time: messages, MLS groups, the LiveKit room, access and read
 // markers are all keyed by the channel's id, never its name. Same rules
 // as creation: 1-32 lowercase letters, digits or hyphens, unique.
-// Channel changes are not in the moderation log (modlog.go), so neither
-// is this.
+// Logged in the moderation log, like creating and deleting.
 func (a *API) renameChannel(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name string `json:"name"`
@@ -212,12 +217,19 @@ func (a *API) renameChannel(w http.ResponseWriter, r *http.Request) {
 			"name must be 1-32 characters: lowercase letters, digits or hyphens")
 		return
 	}
-	var old string
-	err := a.pool.QueryRow(r.Context(),
+	tx, err := a.pool.Begin(r.Context())
+	if err != nil {
+		slog.Error("starting channel rename", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not rename channel")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	var old, kind string
+	err = tx.QueryRow(r.Context(),
 		`WITH o AS (SELECT name FROM channels WHERE id = $2)
 		 UPDATE channels SET name = $1 WHERE id = $2
-		 RETURNING (SELECT name FROM o)`,
-		req.Name, r.PathValue("id")).Scan(&old)
+		 RETURNING (SELECT name FROM o), kind`,
+		req.Name, r.PathValue("id")).Scan(&old, &kind)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "channel not found")
 		return
@@ -231,6 +243,25 @@ func (a *API) renameChannel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not rename channel")
 		return
 	}
+	if old == req.Name {
+		w.WriteHeader(http.StatusNoContent) // nothing changed, nothing to log
+		return
+	}
+	hash := ""
+	if kind == "text" {
+		hash = "#"
+	}
+	if err := logChannelAction(r.Context(), tx, sessionFrom(r.Context()).UserID, "rename_channel",
+		r.PathValue("id"), hash+old+" to "+hash+req.Name); err != nil {
+		slog.Error("recording channel rename", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not rename channel")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		slog.Error("committing channel rename", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not rename channel")
+		return
+	}
 	slog.Info("channel renamed", "channel_id", r.PathValue("id"), "from", old, "to", req.Name,
 		"by", sessionFrom(r.Context()).Username)
 	a.NotifyChannelChanged(r.PathValue("id"))
@@ -240,15 +271,36 @@ func (a *API) renameChannel(w http.ResponseWriter, r *http.Request) {
 // deleteChannel removes a channel and, by cascade, every message in it.
 // Needs manage_channels, and irreversible by design.
 func (a *API) deleteChannel(w http.ResponseWriter, r *http.Request) {
-	tag, err := a.pool.Exec(r.Context(),
-		`DELETE FROM channels WHERE id = $1`, r.PathValue("id"))
+	tx, err := a.pool.Begin(r.Context())
+	if err != nil {
+		slog.Error("starting channel deletion", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not delete channel")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	var name, kind string
+	var encrypted bool
+	err = tx.QueryRow(r.Context(),
+		`DELETE FROM channels WHERE id = $1 RETURNING name, kind, encrypted`,
+		r.PathValue("id")).Scan(&name, &kind, &encrypted)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "channel not found")
+		return
+	}
 	if err != nil {
 		slog.Error("deleting channel", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not delete channel")
 		return
 	}
-	if tag.RowsAffected() == 0 {
-		writeError(w, http.StatusNotFound, "channel not found")
+	if err := logChannelAction(r.Context(), tx, sessionFrom(r.Context()).UserID, "delete_channel",
+		r.PathValue("id"), channelLabel(name, kind, encrypted)); err != nil {
+		slog.Error("recording channel deletion", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not delete channel")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		slog.Error("committing channel deletion", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not delete channel")
 		return
 	}
 
@@ -277,4 +329,27 @@ func (a *API) closeLostChannels(ctx context.Context, userID string) {
 				"user_id", userID, "channel_id", channelID, "count", n)
 		}
 	}
+}
+
+// logChannelAction records creating, renaming or deleting a channel in the
+// moderation log, in the same transaction as the change: no change goes
+// unrecorded. detail is the readable description (the channel's row may
+// be gone by the time anyone reads it).
+func logChannelAction(ctx context.Context, tx pgx.Tx, actorID, action, channelID, detail string) error {
+	_, err := tx.Exec(ctx,
+		`INSERT INTO moderation_log (actor_id, action, subject_id, detail)
+		 VALUES ($1, $2, $3, $4)`, actorID, action, channelID, detail)
+	return err
+}
+
+// channelLabel describes a channel for the log: "#general (text,
+// encrypted)" or "lobby (voice)".
+func channelLabel(name, kind string, encrypted bool) string {
+	if kind == "voice" {
+		return name + " (voice)"
+	}
+	if encrypted {
+		return "#" + name + " (text, encrypted)"
+	}
+	return "#" + name + " (text)"
 }

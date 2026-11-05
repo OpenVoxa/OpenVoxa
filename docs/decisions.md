@@ -1125,8 +1125,15 @@ at the end.
     manage_channels, same rules as creation, 409 when taken, then
     `channel_changed` so every list and open header updates. Safe any
     time: messages, MLS groups, the LiveKit room, access and read
-    markers are keyed by id. Not in the moderation log, like the other
-    channel changes (modlog.go); the server log records who renamed.
+    markers are keyed by id.
+  - **Moderation log** (Ryan, 2026-11-05, ML tests): creating, renaming
+    and deleting a channel are logged (`create_channel`,
+    `rename_channel`, `delete_channel`), in the same transaction as the
+    change, with a readable detail ("#general (text, encrypted)",
+    "#old to #new") because the row may be gone later. Who may read the
+    log is unchanged: moderators (ban, view reports, delete messages or
+    server mute), not Manage channels alone. Settings changes (access,
+    retention, history sharing, forced push-to-talk) are not logged.
 - **User avatars.** In voice (and messages, member lists) everyone shows
   a generic letter. Users upload their own picture in Settings
   (crop to a circle, same footprint as the letter), per server (islands:
@@ -2720,6 +2727,8 @@ verified; the section named holds the design.
 - 2026-11-05 Voice activation, Tap to Talk and audio settings, VA1-VA13
   (VA7c open: Open items, Untested); Settings dialogs at 80% of the
   window.
+- 2026-11-05 Channel changes in the moderation log, ML1-ML4 (Feature
+  decisions, "Channel menus").
 
 ## Open items
 
