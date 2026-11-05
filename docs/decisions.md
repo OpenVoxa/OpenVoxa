@@ -466,8 +466,10 @@ with Hide (stop showing it), Listen and Fullscreen. Decided the same day:
 - **Hide stops the sound too**; Show Share brings back the picture
   only.
 - **Built 2026-11-05:** `CallView` / `PersonTile` in VoiceUI.tsx.
-  CV1-CV7, CV9-CV11, CK1-CK5 passed. CV8 (tiles really take the half
-  copy, checked with `openvoxaVoice.screenStats`) not run yet.
+  CV1-CV11, CK1-CK5 passed. CV8 (an Edge sharer at 1080p, desktop
+  viewer, `openvoxaVoice.screenStats`): tile 911 kbps at 14 fps, Watch
+  3974 kbps at 27 fps, so tiles take the small copy. Its width reads 0
+  without the video element passed in.
 
 ### Stay signed in
 
