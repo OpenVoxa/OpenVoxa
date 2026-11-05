@@ -520,7 +520,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
         <ShareDialog voice={voiceClient} onClose={() => setDialog(null)} />
       )}
       {dialog?.k === "prefs" && (
-        <SettingsDialog tab={dialog.tab} session={session} call={call} deviceId={chat.session.status.deviceId}
+        <SettingsDialog tab={dialog.tab} session={session} call={call} chat={chat} deviceId={chat.session.status.deviceId}
           backup={backup} busy={busy} actions={accountActions}
           voice={voiceClient} snap={vsnap} loadVoice={ensureVoice} onClose={() => setDialog(null)} />
       )}

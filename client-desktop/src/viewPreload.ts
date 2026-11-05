@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Preload for server views: the only thing a server's page gets from the
-// desktop app. It offers one call, the sound for the window share the user
-// just picked (decisions.md, "Per-app share sound"). The page can't choose
+// desktop app. It offers two calls: the app's versions, for the About tab,
+// and the sound for the window share the user just picked (decisions.md, "Per-app share sound"). The page can't choose
 // what is recorded, nor start a recording without the user's pick: the
 // main process only answers within a few seconds of a pick in our own
 // picker, once, and only to that server's own page. No raw ipcRenderer.
@@ -24,6 +24,9 @@ ipcRenderer.on("share-sound:end", (_e, reason: string) => {
 });
 
 contextBridge.exposeInMainWorld("openvoxaDesktop", {
+  /** App, Electron and Chromium versions and the OS, for the About tab. */
+  appInfo: (): Promise<{ app: string; electron: string; chromium: string; os: string } | null> =>
+    ipcRenderer.invoke("view:app-info"),
   /**
    * Starts the sound for the window share just picked. Resolves false when
    * there is none (a screen share, Share Sound unticked, or too late).

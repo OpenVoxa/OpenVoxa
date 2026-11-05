@@ -55,6 +55,11 @@ services:
       # the Go server.
       context: ..
       dockerfile: server/Dockerfile
+      # The git history, only to stamp the server's version (the
+      # Dockerfile's version stage). Building from a copy without .git
+      # fails here: clone the repository instead of downloading a zip.
+      additional_contexts:
+        gitdir: ../.git
     environment:
       OPENVOXA_LISTEN_ADDR: ":8080"
       OPENVOXA_DATABASE_URL: "postgres://openvoxa:${POSTGRES_PASSWORD:-devpassword}@postgres:5432/openvoxa?sslmode=disable"

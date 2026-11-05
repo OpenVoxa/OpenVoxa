@@ -1246,6 +1246,38 @@ export class VoiceClient {
   }
 
   /**
+   * Bytes the call has sent and received so far, all media and control
+   * traffic, from WebRTC's transport statistics (what actually went over
+   * the network, encryption and packet headers included). Null when not
+   * in a call. The totals restart with each call; callers measure rates
+   * between calls to this, about once a second.
+   */
+  async trafficBytes(): Promise<{ sent: number; received: number } | null> {
+    const pcs = (this.#room as unknown as { engine?: { pcManager?: { publisher?: Stats; subscriber?: Stats } } } | null)
+      ?.engine?.pcManager;
+    if (!pcs) return null;
+    let sent = 0;
+    let received = 0;
+    // One peer connection or two, depending on LiveKit's mode.
+    const seen = new Set<Stats>();
+    for (const pc of [pcs.publisher, pcs.subscriber]) {
+      if (!pc || seen.has(pc)) continue;
+      seen.add(pc);
+      try {
+        const report = await pc.getStats();
+        report?.forEach((r: { type: string; bytesSent?: number; bytesReceived?: number }) => {
+          if (r.type !== "transport") return;
+          sent += r.bytesSent ?? 0;
+          received += r.bytesReceived ?? 0;
+        });
+      } catch {
+        /* closed mid-read */
+      }
+    }
+    return { sent, received };
+  }
+
+  /**
    * What a share is actually doing, for the stats line: frame size, frame
    * rate and bitrate, sent (your own) or received. Call about once a
    * second; rates are measured between calls.
@@ -1289,3 +1321,5 @@ export class VoiceClient {
     return out;
   }
 }
+
+type Stats = { getStats(): Promise<RTCStatsReport> | undefined };
