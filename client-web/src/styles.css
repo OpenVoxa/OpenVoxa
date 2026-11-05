@@ -538,8 +538,10 @@ button.live { cursor: pointer; }
   background: var(--panel);
   color: var(--text);
 }
-.vbtn:hover:not(:disabled) { background: var(--sidebar-active); }
-.vbtn.on { background: var(--accent); color: var(--on-accent); }
+/* Hover only where there is a mouse: a tablet keeps the last tapped button
+   "hovered", which hid the orange of a muted mic. On stays orange anyway. */
+@media (hover: hover) { .vbtn:hover:not(:disabled) { background: var(--sidebar-active); } }
+.vbtn.on, .vbtn.on:hover:not(:disabled) { background: var(--accent); color: var(--on-accent); }
 /* Server mute: not the user's choice and not changeable, so full colour, not greyed. */
 .vbtn.locked, .vbtn.locked:disabled {
   opacity: 1;
@@ -586,9 +588,29 @@ button.live { cursor: pointer; }
 .menu-sep { height: 1px; margin: 4px 2px; background: var(--line); }
 .menu-section { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
 input[type="range"] { accent-color: var(--accent); width: 100%; }
+.radio-list { display: flex; flex-direction: column; gap: 6px; }
+.slider-row { display: flex; flex-direction: column; gap: 4px; }
+.slider-head { display: flex; justify-content: space-between; }
+.level-meter-wrap { position: relative; padding: 4px 0; }
+.level-meter { position: relative; height: 10px; border-radius: 5px; background: var(--input); overflow: hidden; }
+.level-meter.idle { opacity: 0.5; }
+.level-fill { height: 100%; background: var(--muted); transition: width 60ms linear; }
+.level-fill.voice { background: var(--speaking); }
+.level-mark { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--text); }
+.level-range { margin: 4px 0 0; }
+.level-range:disabled { opacity: 0.4; }
+.voice-text .warn { color: var(--danger); }
 .key-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .key-row button { min-width: 120px; }
 .key-row button.binding { outline: 2px solid var(--accent); }
+/* The push-to-talk key: an outlined field right after its label. */
+.key-field-row { display: flex; align-items: center; gap: 12px; }
+.key-field {
+  min-width: 160px; text-align: left; font-size: 14px; padding: 7px 12px;
+  background: var(--input); color: var(--text); border: 1px solid var(--muted); border-radius: var(--radius);
+}
+.key-field:hover { border-color: var(--text); }
+.key-field.binding { border-color: var(--accent); outline: 2px solid var(--accent); }
 details summary { cursor: pointer; color: var(--muted); }
 .advanced { display: flex; flex-direction: column; gap: 12px; margin-top: 10px; }
 
@@ -918,6 +940,13 @@ button.dot-host { position: relative; }
   pointer-events: none;
 }
 .person-tile.speaking::after { box-shadow: inset 0 0 0 3px var(--speaking); }
+.tile-banner {
+  position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 2;
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: var(--radius);
+  background: var(--alert); color: var(--on-accent); font-size: 14px; font-weight: 700; white-space: nowrap;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.4);
+}
+.tile-banner .outline { border-color: var(--on-accent); color: var(--on-accent); padding: 2px 10px; font-size: 13px; font-weight: 400; }
 .person-tile .avatar {
   width: 72px;
   height: 72px;

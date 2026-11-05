@@ -499,6 +499,45 @@ Decided with Ryan 2026-11-01 (step 13, M3). Discord-like.
   `channel_activity`), who ask again; kicks send it too. Clients also poll
   every 20 s for people who vanish silently.
 
+#### Voice activation and audio settings
+
+Agreed with Ryan 2026-11-05 (VA tests). Four input modes, picked in
+Settings, Voice: **Voice Activity** (the default; before, the mic was
+either open or push-to-talk), **Push-to-Talk**, **Tap to Talk
+(Experimental)** (Ryan's idea: one press opens, it stays open while you
+talk and closes after a quiet stretch, slider 0.5-5 s, default 1.5 s; 3 s
+if you never start; a second press closes at once; holding the key keeps
+it open) and **Open Mic**. A channel that forces push-to-talk allows only
+Push-to-Talk: Tap to Talk counts as an open mic there (Ryan).
+
+- **Sensitivity:** a live level meter with a threshold marker; "Set
+  Automatically" (on by default) puts the threshold 15 dB over a noise
+  floor that follows quiet stretches (clamped to -65..-30 dBFS), else a
+  manual slider (-80..0 dBFS). 300 ms hold after the voice stops; sent
+  audio runs 40 ms behind the measurement so first syllables get through.
+- **Also built:** input volume (0-200%), output volume (0-100%, on top
+  of per-person volume), mic test ("Let's Check", plays the processed mic
+  back, not during a call), "You're muted" when you talk while muted (in
+  the voice bar, and a red banner with Unmute on your own tile in the
+  call view, after VA4: the bar alone was easy to miss), push-to-talk release delay (0-1000 ms, default 200), and
+  switches for the browser's noise suppression, echo cancellation and
+  automatic gain (all on by default; changing one recaptures the mic).
+- **How:** `client-core/src/micWorklet.ts` (AudioWorklet: the audio
+  thread, so background tabs, whose timers browsers slow to 1 s, still
+  gate on time) inside `micChain.ts`, attached as a LiveKit track
+  processor on our own AudioContext (`webAudioMix` stays off). The
+  worklet gets the mic twice: LiveKit's track, which mute silences, is
+  the only thing sent; a clone is only measured (meter and muted hint).
+  Voice activation gates with gain, not LiveKit mute, so others see no
+  mute icon flicker; Push-to-Talk and Tap to Talk use LiveKit mute as
+  before. All on the device, before encryption: the server learns
+  nothing new.
+- **Key field** (after VA5/VA6): the push-to-talk key is an outlined
+  field right after its label; a bare "`" on a 1440p screen was invisible.
+  One key, shared by Push-to-Talk and Tap to Talk.
+- **Later:** stronger noise suppression (RNNoise), per-channel audio
+  quality, ducking share sound while people talk.
+
 #### Screen share quality limit
 
 Decided with Ryan, 2026-11-04. One limit for the whole server
@@ -2216,6 +2255,20 @@ container's. Caddy and the server reach LiveKit at
 2.23 client connected but publishing timed out in negotiation; 1.10.1
 works. The compose file pins v1.13.11 (see the note above).
 
+**Mic processor: mediaStreamTrack changes meaning (2026-11-05).** Once a
+processor is set, LiveKit's `LocalTrack.mediaStreamTrack` returns the
+*processed* track, while `mute()`/`unmute()` toggle the *raw* one
+(`_mediaStreamTrack`). So `mic.mediaStreamTrack.enabled = true` after
+`setProcessor` enables the wrong track and the mic stays silent. And
+`unmute()` returns early unless LiveKit itself marked the track muted
+(VA2: a hand-disabled raw track stayed off; the meter, fed by the clone,
+showed voice while others heard nothing). So the mic is `mute()`d,
+published, the processor goes on, then `unmute()`. A clone of a disabled track starts
+disabled: micChain sets `clone.enabled = true`. LiveKit stops
+`processedTrack` when the processor stops, so a chain lives exactly as
+long as its mic. Audio processors need `track.setAudioContext()` first
+when `webAudioMix` is off.
+
 ### Electron and Windows
 
 **Electron screen share (desktop step 2, found by experiment).**
@@ -2664,15 +2717,18 @@ verified; the section named holds the design.
   0.1.8 fetched 0.8 MB and installed on quit).
 - 2026-11-05 Channel menus and channel rename, CM1-CM9 (Feature
   decisions, "Channel menus").
+- 2026-11-05 Voice activation, Tap to Talk and audio settings, VA1-VA13
+  (VA7c open: Open items, Untested); Settings dialogs at 80% of the
+  window.
 
 ## Open items
 
 ### Next up (Ryan picks; each gets a design talk first)
 
 - [ ] On-screen push-to-talk button for touchscreens (Ryan, 2026-11-04).
-      Push-to-talk is keyboard-only today, so a phone or tablet in
-      push-to-talk mode (or in a channel that requires it) can't talk at
-      all. Open: where the button sits, hold vs tap, when it shows (touch
+      Push-to-talk and Tap to Talk are keyboard-only today, so a phone or
+      tablet in those modes (or in a channel that requires push-to-talk)
+      can't talk at all. Open: where the button sits, hold vs tap, when it shows (touch
       devices only, or always in PTT mode).
 - [ ] User avatars, uploaded in Settings, per server. They replace the
       letter circles in voice tiles. Feature decisions, "Planned".
@@ -2681,6 +2737,9 @@ verified; the section named holds the design.
 - [ ] Bug reports from users (same section; where they go is open).
 - [ ] Channel links (an address per channel, Copy Link in the channel
       menu); Ryan: later.
+- [ ] Audio, second batch: stronger noise suppression (RNNoise), audio
+      quality per voice channel, ducking share sound while people talk
+      (Feature decisions, "Voice activation and audio settings").
 - [ ] Desktop app, later: badges via a preload, voice handoff between
       servers, global push-to-talk, tray, notifications, idle unload of
       background servers.
@@ -2711,6 +2770,12 @@ verified; the section named holds the design.
 - [ ] K1 flows 2-5 (recovery screens other than sign-up; deferred by
       Ryan), G2-G4 (GIFs), P3 (password), D1 (`delete-user` host
       command).
+- [ ] VA7c: lifting a channel's forced push-to-talk sometimes left the
+      *other* device stuck in it (crossed-out mic, not orange, can't
+      unmute; seen twice, staff on the iPad, tuckilufigus in the desktop
+      app). `#applyMic` now redraws before and after the mute switch and
+      reports failures; Ryan couldn't reproduce afterwards. Possibly
+      Safari. If it returns: what the voice bar says, and any notice.
 
 ### Security and protocol gaps
 

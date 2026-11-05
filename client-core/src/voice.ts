@@ -38,6 +38,7 @@ import {
   type RemoteTrack,
   type RemoteTrackPublication,
 } from "livekit-client";
+import { MicChain, type MicLevel } from "./micChain.js";
 import type { ApiCall } from "./identity.js";
 import type { Session } from "./index.js";
 import type { KeyValueStore } from "./chat.js";
@@ -75,6 +76,36 @@ export interface ScreenShare {
   readonly listening: boolean;
 }
 
+/**
+ * How the microphone opens (decisions.md Feature decisions, "Voice
+ * activation and audio settings"): when you talk (the default), while a
+ * key is held, from one tap of the key until you stop talking
+ * (experimental), or always.
+ */
+export type MicMode = "voice" | "ptt" | "tap" | "open";
+
+/** Remembered audio choices, for the Voice tab. */
+export interface AudioSettings {
+  mode: MicMode;
+  /** Input volume, 0..2. */
+  inputGain: number;
+  /** Voice activation picks its own threshold. */
+  vadAuto: boolean;
+  /** The manual threshold, dBFS (-80..0). */
+  vadThresholdDb: number;
+  /** Tap to Talk closes after this long without voice. */
+  tapSilenceMs: number;
+  /** Push-to-talk stays open this long after the key is let go. */
+  pttReleaseMs: number;
+  /** Everyone's volume on this device, 0..1, on top of each person's own. */
+  outputVolume: number;
+  echoCancellation: boolean;
+  noiseSuppression: boolean;
+  autoGainControl: boolean;
+}
+
+export type { MicLevel } from "./micChain.js";
+
 export interface VoiceSnapshot {
   readonly state: "idle" | "connecting" | "connected";
   readonly channelId: string | null;
@@ -87,10 +118,17 @@ export interface VoiceSnapshot {
   /** The mute button (ignored in push-to-talk mode). */
   readonly muted: boolean;
   readonly deafened: boolean;
+  /** A key opens the mic (push-to-talk or Tap to Talk, or the channel forces it). */
   readonly pttMode: boolean;
+  /** The mode in effect: push-to-talk when the channel forces it. */
+  readonly micMode: MicMode;
+  /** Voice activation (or Tap to Talk) is letting sound through right now. */
+  readonly transmitting: boolean;
+  /** Talking while muted: show a "you're muted" hint. */
+  readonly mutedTalking: boolean;
   /** The channel requires push-to-talk. */
   readonly forcePTT: boolean;
-  /** Push-to-talk key held right now. */
+  /** Push-to-talk key held right now (Tap to Talk: the mic is open). */
   readonly pttHeld: boolean;
   /** This device is sending audio right now. */
   readonly micOpen: boolean;
@@ -177,6 +215,8 @@ export interface VoiceOptions {
    * sound stopping on its own mid-share.
    */
   windowShareSound?: (onFail: (reason: string) => void) => Promise<ShareSound | null>;
+  /** The mic AudioWorklet (micWorklet.ts), built by the app. Without it the mic is sent as captured. */
+  micWorkletUrl?: string;
 }
 
 /** A share's sound from outside getDisplayMedia (the desktop app). */
@@ -319,9 +359,21 @@ export class VoiceClient {
   #canPublish = false;
   #muted = false;
   #deafened = false;
-  #pttMode: boolean;
+  #mode: MicMode;
   #forcePTT = false;
   #pttHeld = false;
+  #pttRelease: ReturnType<typeof setTimeout> | undefined;
+  /** Tap to Talk: open between a tap and the end of talking. */
+  #tapOpen = false;
+  /** The mic's processing (micChain.ts), one per published mic. */
+  #proc: MicChain | null = null;
+  #ctx: AudioContext | null = null;
+  #gateOpen = false;
+  #mutedTalking = false;
+  #voiceSince: number | null = null;
+  #quietSince: number | null = null;
+  #levelListeners = new Set<(l: MicLevel | null) => void>();
+  #test: { stream: MediaStream; chain: MicChain; el: HTMLAudioElement } | null = null;
   #audioBlocked = false;
   #endReason: string | null = null;
   #lastEnd: string | null = null;
@@ -343,7 +395,10 @@ export class VoiceClient {
   constructor(session: Session, opts: VoiceOptions) {
     this.#session = session;
     this.#opts = opts;
-    this.#pttMode = opts.store.get("voice.ptt") === "1";
+    const saved = opts.store.get("voice.mode");
+    this.#mode = saved === "voice" || saved === "ptt" || saved === "tap" || saved === "open" ? saved
+      // Before voice activation there were two: push-to-talk or an open mic.
+      : opts.store.get("voice.ptt") === "1" ? "ptt" : "voice";
   }
 
   // ---------------------------------------------------------- snapshots
@@ -398,9 +453,12 @@ export class VoiceClient {
         serverMuted: this.#serverMuted(),
         muted: this.#muted,
         deafened: this.#deafened,
-        pttMode: this.#pttMode || this.#forcePTT,
+        pttMode: this.#keyMode(),
+        micMode: this.#effectiveMode(),
+        transmitting: this.#micOpen() && (this.#effectiveMode() !== "voice" || !this.#proc || this.#gateOpen),
+        mutedTalking: this.#mutedTalking,
         forcePTT: this.#forcePTT,
-        pttHeld: this.#pttHeld,
+        pttHeld: this.#effectiveMode() === "tap" ? this.#tapOpen : this.#pttHeld,
         micOpen: this.#micOpen(),
         sharing: this.#screenTracks.length > 0,
         epoch: this.#epoch,
@@ -484,6 +542,7 @@ export class VoiceClient {
    */
   async join(channelId: string): Promise<void> {
     if (this.#state !== "idle") await this.leave();
+    await this.stopMicTest(); // the call's mic takes over
     this.#lastEnd = null;
     this.#endReason = null;
     this.#notices = [];
@@ -609,25 +668,22 @@ export class VoiceClient {
           /* LiveKit already took it down */
         }
         mic.stop();
+        this.#dropProc();
       } else if (allowed && !this.#mic) {
-        const input = this.#opts.store.get("voice.input") ?? undefined;
-        const mic = await createLocalAudioTrack({
-          deviceId: input,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        });
+        const mic = await createLocalAudioTrack(this.#captureOptions());
         if (this.#room !== room) {
           mic.stop(); // left meanwhile
           return;
         }
         this.#mic = mic;
-        // Silent while publishing, so push-to-talk never leaks a moment of
-        // audio; then muted properly (which also tells the others) or opened.
-        mic.mediaStreamTrack.enabled = false;
+        // Muted while publishing, so push-to-talk never leaks a moment of
+        // audio; opened once the processor is on. Muted through LiveKit,
+        // not by disabling the track by hand: unmute() does nothing to a
+        // track LiveKit doesn't think is muted, and the mic stayed silent.
+        await mic.mute();
         await room.localParticipant.publishTrack(mic);
-        if (this.#micOpen()) mic.mediaStreamTrack.enabled = true;
-        else await mic.mute();
+        await this.#attachProc(mic);
+        if (this.#micOpen()) await mic.unmute();
       }
       this.#changed();
     });
@@ -686,6 +742,7 @@ export class VoiceClient {
     this.#stopWindowSound = null;
     this.#mic?.stop();
     this.#mic = null;
+    this.#dropProc();
     for (const el of this.#audioEls.values()) el.remove();
     this.#audioEls.clear();
     this.#screenEls.clear();
@@ -705,6 +762,8 @@ export class VoiceClient {
     this.#canPublish = false;
     this.#forcePTT = false;
     this.#pttHeld = false;
+    clearTimeout(this.#pttRelease);
+    this.#tapOpen = false;
     this.#audioBlocked = false;
   }
 
@@ -890,18 +949,45 @@ export class VoiceClient {
 
   // ---------------------------------------------- mic, PTT and deafen
 
-  #micOpen(): boolean {
-    if (!this.#mic || !this.#canPublish || this.#deafened) return false;
-    return this.#pttMode || this.#forcePTT ? this.#pttHeld : !this.#muted;
+  /** The mode in effect: the channel forcing push-to-talk rules out the others (Tap to Talk too). */
+  #effectiveMode(): MicMode {
+    return this.#forcePTT ? "ptt" : this.#mode;
   }
 
+  #keyMode(): boolean {
+    const m = this.#effectiveMode();
+    return m === "ptt" || m === "tap";
+  }
+
+  /** Whether LiveKit's mic is unmuted. In voice activation the gate still decides what is sent. */
+  #micOpen(): boolean {
+    if (!this.#mic || !this.#canPublish || this.#deafened) return false;
+    switch (this.#effectiveMode()) {
+      case "ptt": return this.#pttHeld;
+      case "tap": return this.#tapOpen;
+      default: return !this.#muted;
+    }
+  }
+
+  /**
+   * Bring LiveKit's mute in line with the mode. The screen updates first
+   * and again afterwards, whatever happens: a mute or unmute that stalls
+   * or fails (a background window) must not leave the old state showing,
+   * such as a channel's forced push-to-talk after it was lifted.
+   */
   async #applyMic(): Promise<void> {
+    this.#changed();
     const mic = this.#mic;
     if (!mic) return;
-    const open = this.#micOpen();
-    if (open && mic.isMuted) await mic.unmute();
-    else if (!open && !mic.isMuted) await mic.mute();
-    this.#changed();
+    try {
+      const open = this.#micOpen();
+      if (open && mic.isMuted) await mic.unmute();
+      else if (!open && !mic.isMuted) await mic.mute();
+    } catch (err) {
+      this.#notice(`Couldn't switch the microphone: ${errorText(err)}`);
+    } finally {
+      this.#changed();
+    }
   }
 
   setMuted(muted: boolean): Promise<void> {
@@ -918,19 +1004,46 @@ export class VoiceClient {
     return this.#applyMic();
   }
 
-  /** Switch push-to-talk on or off (stays on when the channel forces it). */
-  setPTTMode(on: boolean): Promise<void> {
-    this.#pttMode = on;
-    this.#opts.store.set("voice.ptt", on ? "1" : "0");
+  /** Pick how the mic opens. Remembered; a channel that forces push-to-talk overrides it. */
+  setMicMode(mode: MicMode): Promise<void> {
+    this.#mode = mode;
+    this.#opts.store.set("voice.mode", mode);
     this.#pttHeld = false;
+    clearTimeout(this.#pttRelease);
+    this.#tapOpen = false;
+    this.#configureChains();
     return this.#applyMic();
   }
 
-  /** The push-to-talk key went down (true) or up (false). */
+  /** The push-to-talk key went down (true) or up (false). In Tap to Talk a press opens or closes. */
   setPTTHeld(held: boolean): void {
-    if (held === this.#pttHeld) return;
-    this.#pttHeld = held;
-    void this.#applyMic();
+    const mode = this.#effectiveMode();
+    if (mode === "tap") {
+      if (held === this.#pttHeld) return;
+      this.#pttHeld = held;
+      if (this.#proc) this.#proc.tap(held ? "down" : "up");
+      else if (held) {
+        // No processing to hear the silence: a plain toggle.
+        this.#tapOpen = !this.#tapOpen;
+        void this.#applyMic();
+      }
+      return;
+    }
+    clearTimeout(this.#pttRelease);
+    if (held) {
+      if (this.#pttHeld) return;
+      this.#pttHeld = true;
+      void this.#applyMic();
+      return;
+    }
+    if (!this.#pttHeld) return;
+    const release = () => {
+      this.#pttHeld = false;
+      void this.#applyMic();
+    };
+    const ms = this.audioSettings.pttReleaseMs;
+    if (ms > 0) this.#pttRelease = setTimeout(release, ms);
+    else release();
   }
 
   /** The channel's settings changed (force push-to-talk). */
@@ -938,7 +1051,222 @@ export class VoiceClient {
     if (this.#state === "idle" || force === this.#forcePTT) return;
     this.#forcePTT = force;
     this.#pttHeld = false;
+    this.#tapOpen = false;
+    this.#proc?.tap("close");
+    this.#configureChains();
     void this.#applyMic();
+  }
+
+  // ---------------------------------------------- audio settings
+
+  #num(key: string, fallback: number, min: number, max: number): number {
+    const raw = this.#opts.store.get(key);
+    const v = raw === null ? NaN : Number(raw);
+    return Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback;
+  }
+
+  #flag(key: string, fallback: boolean): boolean {
+    const raw = this.#opts.store.get(key);
+    return raw === null ? fallback : raw === "1";
+  }
+
+  get audioSettings(): AudioSettings {
+    return {
+      mode: this.#mode,
+      inputGain: this.#num("voice.inputGain", 1, 0, 2),
+      vadAuto: this.#flag("voice.vadAuto", true),
+      vadThresholdDb: this.#num("voice.vadThreshold", -50, -80, 0),
+      tapSilenceMs: this.#num("voice.tapSilence", 1500, 500, 5000),
+      pttReleaseMs: this.#num("voice.pttRelease", 200, 0, 1000),
+      outputVolume: this.#num("voice.outputVolume", 1, 0, 1),
+      echoCancellation: this.#flag("voice.echoCancellation", true),
+      noiseSuppression: this.#flag("voice.noiseSuppression", true),
+      autoGainControl: this.#flag("voice.autoGainControl", true),
+    };
+  }
+
+  /** Change remembered audio settings; applies at once, in a call and in the mic test. */
+  async setAudioSettings(change: Partial<Omit<AudioSettings, "mode">>): Promise<void> {
+    const str = (v: number | boolean) => typeof v === "boolean" ? (v ? "1" : "0") : String(v);
+    const keys: Record<string, string> = {
+      inputGain: "voice.inputGain", vadAuto: "voice.vadAuto", vadThresholdDb: "voice.vadThreshold",
+      tapSilenceMs: "voice.tapSilence", pttReleaseMs: "voice.pttRelease", outputVolume: "voice.outputVolume",
+      echoCancellation: "voice.echoCancellation", noiseSuppression: "voice.noiseSuppression",
+      autoGainControl: "voice.autoGainControl",
+    };
+    for (const [k, v] of Object.entries(change)) {
+      if (v !== undefined && keys[k]) this.#opts.store.set(keys[k], str(v));
+    }
+    this.#configureChains();
+    if ("outputVolume" in change) {
+      for (const p of this.#room?.remoteParticipants.values() ?? []) this.#applyVolume(p);
+    }
+    if ("echoCancellation" in change || "noiseSuppression" in change || "autoGainControl" in change) {
+      // The browser applies these when capturing: capture again.
+      if (this.#mic) await this.#mic.restartTrack(this.#captureOptions());
+      if (this.#test) {
+        await this.stopMicTest();
+        await this.startMicTest();
+      }
+    }
+    this.#changed();
+  }
+
+  #captureOptions() {
+    const a = this.audioSettings;
+    return {
+      deviceId: this.#opts.store.get("voice.input") ?? undefined,
+      echoCancellation: a.echoCancellation,
+      noiseSuppression: a.noiseSuppression,
+      autoGainControl: a.autoGainControl,
+    };
+  }
+
+  #chainConfig() {
+    const a = this.audioSettings;
+    const m = this.#effectiveMode();
+    return {
+      mode: m === "voice" ? "gate" as const : m === "tap" ? "tap" as const : "open" as const,
+      gain: a.inputGain,
+      auto: a.vadAuto,
+      thresholdDb: a.vadThresholdDb,
+      tapSilenceMs: a.tapSilenceMs,
+    };
+  }
+
+  #configureChains(): void {
+    const c = this.#chainConfig();
+    this.#proc?.configure(c);
+    // The mic test previews voice activation, whatever key mode is picked.
+    this.#test?.chain.configure({ ...c, mode: c.mode === "gate" ? "gate" : "open" });
+  }
+
+  #audioContext(): AudioContext {
+    if (!this.#ctx || this.#ctx.state === "closed") this.#ctx = new AudioContext({ latencyHint: "interactive" });
+    return this.#ctx;
+  }
+
+  /** Puts the processing between the mic and LiveKit. Without it the mic goes out as captured. */
+  async #attachProc(mic: LocalAudioTrack): Promise<void> {
+    const url = this.#opts.micWorkletUrl;
+    if (!url) return;
+    try {
+      const ctx = this.#audioContext();
+      const chain = await MicChain.create(ctx, url, this.#chainConfig());
+      chain.onLevel((l) => this.#onLevel(l));
+      chain.onTap((open) => {
+        if (this.#effectiveMode() !== "tap") return;
+        this.#tapOpen = open;
+        void this.#applyMic();
+      });
+      await mic.setAudioContext(ctx);
+      await mic.setProcessor(chain.processor());
+      this.#proc = chain;
+    } catch (err) {
+      this.#notice(`Voice activation isn't available in this browser (${errorText(err)}). Your mic is open while unmuted.`);
+    }
+  }
+
+  #dropProc(): void {
+    this.#proc?.destroy();
+    this.#proc = null;
+    this.#gateOpen = false;
+    this.#tapOpen = false;
+    this.#mutedTalking = false;
+    this.#voiceSince = this.#quietSince = null;
+    if (!this.#test) for (const cb of this.#levelListeners) cb(null);
+  }
+
+  #onLevel(l: MicLevel): void {
+    if (!this.#test) for (const cb of this.#levelListeners) cb(l);
+    let changed = false;
+    if (l.gateOpen !== this.#gateOpen) {
+      this.#gateOpen = l.gateOpen;
+      changed = this.#effectiveMode() === "voice";
+    }
+    // "You're muted": voice for a moment while the mute button is on.
+    const m = this.#effectiveMode();
+    const muted = (m === "voice" || m === "open") && this.#muted && !this.#deafened && this.#canPublish;
+    const now = performance.now();
+    if (muted && l.voice) {
+      this.#quietSince = null;
+      this.#voiceSince ??= now;
+      if (!this.#mutedTalking && now - this.#voiceSince > 300) {
+        this.#mutedTalking = true;
+        changed = true;
+      }
+    } else {
+      this.#voiceSince = null;
+      this.#quietSince ??= now;
+      if (this.#mutedTalking && (!muted || now - this.#quietSince > 2000)) {
+        this.#mutedTalking = false;
+        changed = true;
+      }
+    }
+    if (changed) this.#changed();
+  }
+
+  /** The mic level as voice activation sees it, about 30 times a second, from the call or the mic test; null when neither runs. */
+  onMicLevel(cb: (l: MicLevel | null) => void): () => void {
+    this.#levelListeners.add(cb);
+    return () => this.#levelListeners.delete(cb);
+  }
+
+  get micTesting(): boolean {
+    return !!this.#test;
+  }
+
+  /**
+   * Mic test: plays the processed mic back on the chosen speakers, so you
+   * hear what others would. Not during a call (the meter shows the call's
+   * mic there).
+   */
+  async startMicTest(): Promise<void> {
+    if (this.#test || this.#state !== "idle") return;
+    const url = this.#opts.micWorkletUrl;
+    const o = this.#captureOptions();
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        deviceId: o.deviceId && o.deviceId !== "default" ? { exact: o.deviceId } : undefined,
+        echoCancellation: o.echoCancellation,
+        noiseSuppression: o.noiseSuppression,
+        autoGainControl: o.autoGainControl,
+      },
+    });
+    const ctx = this.#audioContext();
+    let chain: MicChain;
+    try {
+      if (!url) throw new Error("no mic worklet");
+      chain = await MicChain.create(ctx, url, {});
+    } catch (err) {
+      stream.getTracks().forEach((t) => t.stop());
+      throw err;
+    }
+    chain.connect(stream.getAudioTracks()[0]!);
+    chain.onLevel((l) => {
+      for (const cb of this.#levelListeners) cb(l);
+    });
+    const el = new Audio();
+    el.srcObject = new MediaStream([chain.output]);
+    el.volume = this.audioSettings.outputVolume;
+    const out = this.#opts.store.get("voice.output");
+    if (out && "setSinkId" in el) await (el as HTMLAudioElement & { setSinkId(id: string): Promise<void> }).setSinkId(out).catch(() => {});
+    this.#test = { stream, chain, el };
+    this.#configureChains();
+    await el.play().catch(() => {});
+    this.#changed();
+  }
+
+  async stopMicTest(): Promise<void> {
+    const t = this.#test;
+    if (!t) return;
+    this.#test = null;
+    t.el.pause();
+    t.el.srcObject = null;
+    t.chain.destroy();
+    t.stream.getTracks().forEach((x) => x.stop());
+    for (const cb of this.#levelListeners) cb(null);
+    this.#changed();
   }
 
   // ---------------------------------------------- per-person playback
@@ -953,7 +1281,8 @@ export class VoiceClient {
   }
 
   #applyVolume(p: RemoteParticipant): void {
-    const v = this.#deafened || this.#localMutedOf(p.identity) ? 0 : this.#volumeOf(p.identity);
+    const v = this.#deafened || this.#localMutedOf(p.identity) ? 0
+      : this.#volumeOf(p.identity) * this.audioSettings.outputVolume;
     p.setVolume(v, Track.Source.Microphone);
     p.setVolume(v, Track.Source.ScreenShareAudio);
   }
@@ -1005,6 +1334,10 @@ export class VoiceClient {
   async setInputDevice(id: string): Promise<void> {
     this.#opts.store.set("voice.input", id);
     if (this.#room && this.#mic) await this.#room.switchActiveDevice("audioinput", id);
+    if (this.#test) {
+      await this.stopMicTest();
+      await this.startMicTest();
+    }
   }
 
   async setOutputDevice(id: string): Promise<void> {
