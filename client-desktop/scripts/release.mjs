@@ -39,7 +39,8 @@ const config = {
   appId: "net.openvoxa.desktop",
   productName: "OpenVoxa",
   copyright: "The OpenVoxa Authors, AGPL-3.0-or-later",
-  directories: { output: "release/installer" },
+  electronVersion: pkg.devDependencies.electron,
+  directories: { output: "/w/release/installer" },
   // The packager already set the exe's details; editing it again needs Wine for rcedit.
   win: { target: "nsis", signAndEditExecutable: false },
   // Per user, one click, like Discord: no administrator prompt, installed
@@ -54,8 +55,26 @@ const config = {
   publish: { provider: "generic", url: pkg.openvoxaUpdateUrl },
 };
 rmSync("release/installer", { recursive: true, force: true });
-mkdirSync("release", { recursive: true });
-writeFileSync("release/electron-builder.json", JSON.stringify(config, null, 2));
+// electron-builder names things after the package name: the install folder
+// (%LOCALAPPDATA%\Programs\<name>) and the folder where the installer
+// keeps a copy of itself for the next differential update
+// (%LOCALAPPDATA%\<name>-updater\installer.exe). Ours is
+// "@openvoxa/client-desktop", which gave "@openvoxaclient-desktop" for both,
+// while the app looks in "openvoxa-updater" (app-update.yml,
+// scripts/package.mjs), so every update downloaded the whole installer
+// (DU7). So electron-builder gets a small project folder of its own whose
+// package.json says "openvoxa".
+rmSync("release/eb", { recursive: true, force: true });
+mkdirSync("release/eb", { recursive: true });
+writeFileSync("release/eb/package.json", JSON.stringify({
+  name: "openvoxa",
+  productName: "OpenVoxa",
+  version,
+  description: pkg.description,
+  author: "The OpenVoxa Authors",
+  license: pkg.license,
+}, null, 2));
+writeFileSync("release/eb/electron-builder.json", JSON.stringify(config, null, 2));
 
 run("docker", ["build", "-q", "-t", IMAGE, "-f", "scripts/builder.Dockerfile", "scripts"]);
 const { uid, gid } = os.userInfo();
@@ -63,8 +82,8 @@ run("docker", [
   "run", "--rm", "-v", `${process.cwd()}:/w`, "-w", "/w",
   "-v", "ovx-ebcache:/cache", "-e", "ELECTRON_BUILDER_CACHE=/cache", "-e", "HOME=/tmp",
   IMAGE, "sh", "-c",
-  "npx electron-builder --win nsis --x64 --prepackaged release/OpenVoxa-win32-x64 " +
-    `--config release/electron-builder.json --publish never && chown -R ${uid}:${gid} release/installer`,
+  "npx electron-builder --projectDir /w/release/eb --win nsis --x64 --prepackaged /w/release/OpenVoxa-win32-x64 " +
+    `--config /w/release/eb/electron-builder.json --publish never && chown -R ${uid}:${gid} release/installer`,
 ]);
 
 const setup = `OpenVoxa-Setup-${version}.exe`;
