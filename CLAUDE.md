@@ -165,16 +165,15 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 
 ## Current state (rewrite every session)
 
-_2026-11-05._ **Desktop updates done** (`87a434a`, `c20c0e6`; decisions.md
-"Desktop updates", Implementation notes Electron): per-user NSIS
-installer, in-app updates from `deploy/desktop-updates` (Caddy,
-`/desktop-updates/`), green arrow + "Restart to Update" in the pane,
-installs on quit too, differential (~1 MB a patch). DU1-DU7 passed.
-Ryan's app is 0.1.7 (installed in the old `Programs\@openvoxaclient-desktop`
-folder; harmless). Publish a patch: `cd client-desktop && npm run
-release:win` (bumps version; commit the package.json bump). Also this
-session: README, deploy/README.md and decisions.md reorganised
-(`81ee474`).
+_2026-11-05._ **About tab** (AB1-AB8) and **channel menus with rename**
+(CM1-CM9) done; decisions.md Feature decisions "About tab in Settings"
+and "Channel menus". About: `AboutSettings.tsx`, bandwidth from
+`client-core/src/traffic.ts` + `VoiceClient.trafficBytes()`, staff-only
+`GET /api/v1/version` stamped by the Dockerfile's `version` stage (compose
+passes `.git` as the `gitdir` build context). Menus: `ChannelMenu.tsx`
+(right-click or long-press), `PATCH /api/v1/channels/{id}/name`. Ryan's
+desktop app is 0.1.8. Publish a patch: `cd client-desktop && npm run
+release:win` (commit the package.json bump).
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts: tuckilufigus (Ryan), staff, openvoxaadmin,
@@ -187,9 +186,8 @@ session: README, deploy/README.md and decisions.md reorganised
   Ryan is the only user. Disk is at 86% (17 GB of Docker build cache).
 - Known gaps and untested steps (K1 flows 2-5, G2-G4, P3, D1): decisions.md
   Open items.
-- **Next:** the About tab in Settings: proposal and three open questions
-  in decisions.md Feature decisions, "Planned" (Ryan paused it
-  mid-discussion; start by asking him those questions). Then the
-  backlog: touchscreen push-to-talk button, avatars, server icons, bug
-  reports, channel menus (discuss each before building). Desktop
-  updates later: code signing, "server needs app version X".
+- **Next:** the backlog, discuss each with Ryan before building: touchscreen
+  push-to-talk button, avatars, server icons, bug reports (then enable the
+  About tab's Report a Bug), channel links (Copy Link), maybe channel
+  actions in the moderation log (Ryan undecided). Desktop updates later:
+  code signing, "server needs app version X".
