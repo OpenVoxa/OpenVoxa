@@ -2205,6 +2205,17 @@ the NSIS installer on Linux needs Wine (32-bit too): electron-builder
 makes the uninstaller by running the installer stub, hence the Wine
 container in `scripts/builder.Dockerfile`.
 
+**Differential updates need the package name to match the cache folder.**
+Found 2026-11-05 (DU7, from the app's updater.log). A differential
+download compares against `%LOCALAPPDATA%\<cache>\installer.exe`, a copy
+the NSIS installer makes of itself at install time. The installer names
+that folder (and the install folder) after the npm package name, so
+"@openvoxa/client-desktop" gave `@openvoxaclient-desktop-updater`, while
+the app looked in `openvoxa-updater`: every update fell back to the full
+installer. `release.mjs` now runs electron-builder from a small project
+folder whose package.json says "openvoxa". The first update after an
+install made by hand is always full (no copy yet).
+
 **Windows process loopback (desktop step 3, found by experiment).**
 Chromium 156's `restrictOwnAudio` constraint works with Electron's
 `loopback`: the app's own sound is left out of a whole-screen share
@@ -2604,7 +2615,8 @@ verified; the section named holds the design.
 - 2026-11-05 Voice channel view, CV1-CV11, CK1-CK5 (`fd4fcde`).
 - 2026-11-05 Desktop updates (installer, updater, release command):
   DU1-DU6 (DU1b after the `app-update.yml` fix, DU3 failed before it);
-  DU7 (differential download) not yet.
+  DU7 after the package name fix (0.1.6 to 0.1.7 fetched 0.8 MB, not
+  121 MB).
 
 ## Open items
 
@@ -2627,9 +2639,7 @@ verified; the section named holds the design.
 - [ ] About tab in Settings (Ryan, 2026-11-05): GitHub repository,
       server address, live kbps up and down, app version, server version,
       other information about the program and the server. Design first.
-- [ ] Desktop updates: differential download (DU7) falls back to the
-      full 121 MB installer, even with the old blockmap cached; reason in
-      the app's updater.log. Later: code signing; "this server needs app
+- [ ] Desktop updates, later: code signing; "this server needs app
       version X".
 - [ ] Minimized windows are probably missing from our share picker, as
       from Edge's (RS3; unchecked).
