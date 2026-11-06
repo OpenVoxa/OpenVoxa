@@ -34,6 +34,7 @@ const usage = `usage:
   openvoxa-server grant-admin <username>   make an account a top-rank administrator
   openvoxa-server list-admins              show who holds the administrator switch
   openvoxa-server list-users               show every account
+  openvoxa-server reset-two-factor <username>  remove an account's two-factor (lost phone)
   openvoxa-server delete-user <username>...  delete accounts for good (no undo)
       --force   allow going below two administrators`
 
@@ -82,6 +83,11 @@ func runCommand(args []string) (ok bool, err error) {
 			}
 			return deleteUsers(ctx, conn, keys, names, force)
 		})
+	case "reset-two-factor":
+		if len(args) != 2 {
+			return true, errors.New(usage)
+		}
+		return true, withDB(ctx, func(conn *pgx.Conn) error { return resetTwoFactor(ctx, conn, args[1]) })
 	case "-h", "--help", "help":
 		fmt.Println(usage)
 		return true, nil
@@ -348,4 +354,45 @@ func deleteUser(ctx context.Context, conn *pgx.Conn, name string, force bool) (s
 func exitWith(err error) {
 	fmt.Fprintln(os.Stderr, err)
 	os.Exit(1)
+}
+
+// resetTwoFactor removes an account's two-factor, for an administrator
+// who lost their phone and backup codes (nobody outranks them to do it
+// in Server settings). Logged in the moderation log with no actor.
+func resetTwoFactor(ctx context.Context, conn *pgx.Conn, username string) error {
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var id string
+	var on bool
+	err = tx.QueryRow(ctx,
+		`SELECT id, totp_enabled_at IS NOT NULL FROM users
+		  WHERE username = $1 AND deleted_at IS NULL`, username).Scan(&id, &on)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("no account named %q", username)
+	}
+	if err != nil {
+		return err
+	}
+	if !on {
+		fmt.Printf("%s has no two-factor; nothing to do.\n", username)
+		return nil
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE users SET totp_secret = NULL, totp_pending = NULL, totp_enabled_at = NULL,
+		        totp_last_step = 0, totp_backup = NULL WHERE id = $1`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO moderation_log (actor_id, action, subject_id, detail)
+		 VALUES (NULL, 'two_factor_reset', $1, 'host command')`, id); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	fmt.Printf("Removed two-factor from %s. They sign in with their password and can set it up again.\n", username)
+	return nil
 }

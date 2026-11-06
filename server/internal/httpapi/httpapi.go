@@ -101,6 +101,11 @@ type API struct {
 	voicePresence  voicePresenceCache
 	voiceHintLimit *ratelimit.Limiter
 	pwCheckLimit   *ratelimit.Limiter
+
+	// Two-factor (twofactor.go): sign-ins waiting for their code, and
+	// wrong codes per account.
+	pendingLogins *pendingLogins
+	twoFactorUser *ratelimit.Limiter
 }
 
 // ServeHTTP lets API be used directly as an http.Handler.
@@ -127,6 +132,11 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 		authUser: ratelimit.New(1.0/120.0, 5, 30*time.Minute),
 
 		signupLock: newSignupLockout(),
+
+		// Two-factor codes: 5 wrong per account, then one every 5
+		// minutes, whatever the address and however many sign-ins.
+		pendingLogins: newPendingLogins(),
+		twoFactorUser: ratelimit.New(1.0/300.0, 5, time.Hour),
 		signupIP:   ratelimit.New(3.0/3600.0, 3, 2*time.Hour),
 
 		unfurl:      unfurl.New(),
@@ -178,7 +188,20 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 		api.requirePerm(perm.Administrator, api.setSignupPassword))
 	mux.HandleFunc("POST /api/v1/auth/password-check", api.checkPassword)
 	mux.HandleFunc("POST /api/v1/auth/login", api.limitByIP(api.login))
+	mux.HandleFunc("POST /api/v1/auth/login/two-factor", api.limitByIP(api.loginTwoFactor))
 	mux.HandleFunc("POST /api/v1/auth/logout", api.requireAuth(api.logout))
+
+	// Two-factor (twofactor.go): your own in Settings, Account; the
+	// requirement in Server settings, Security; removal for a lost phone.
+	mux.HandleFunc("GET /api/v1/me/two-factor", api.requireAuth(api.getTwoFactor))
+	mux.HandleFunc("POST /api/v1/me/two-factor/setup", api.requireAuth(api.startTwoFactorSetup))
+	mux.HandleFunc("POST /api/v1/me/two-factor/enable", api.requireAuth(api.enableTwoFactor))
+	mux.HandleFunc("POST /api/v1/me/two-factor/backup-codes", api.requireAuth(api.renewBackupCodes))
+	mux.HandleFunc("DELETE /api/v1/me/two-factor", api.requireAuth(api.disableTwoFactor))
+	mux.HandleFunc("GET /api/v1/security-settings", api.requirePerm(perm.Administrator, api.getSecuritySettings))
+	mux.HandleFunc("PUT /api/v1/security-settings", api.requirePerm(perm.Administrator, api.putSecuritySettings))
+	mux.HandleFunc("DELETE /api/v1/users/{id}/two-factor",
+		withUUIDPath(api.requirePerm(perm.Administrator, api.resetTwoFactor)))
 
 	mux.HandleFunc("GET /api/v1/me", api.requireAuth(api.me))
 	mux.HandleFunc("GET /api/v1/channels", api.requireAuth(api.listChannels))

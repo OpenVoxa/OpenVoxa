@@ -27,6 +27,7 @@ import { VoiceSettings } from "./VoiceUI";
 import { SoundSettings } from "./SoundSettings";
 import { AboutSettings } from "./AboutSettings";
 import { COLOURS, getColour, setColour, useColour, type ColourSetting } from "./appearance";
+import { TwoFactorSection } from "./TwoFactor";
 
 export type SettingsTab = "account" | "voice" | "chat" | "sounds" | "appearance" | "about";
 
@@ -224,6 +225,8 @@ function AccountSettings({ session, call, deviceId, backup, busy, actions, onClo
       </section>
 
       <PasswordSection session={session} />
+
+      <TwoFactorSection session={session} />
 
       <section className="settings-section">
         <h3 className="settings-head">Recovery key</h3>

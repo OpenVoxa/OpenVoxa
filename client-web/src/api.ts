@@ -17,6 +17,21 @@ export interface Session {
   permissions: string[];
   rank: number;
   groups: { id: string; name: string }[];
+  /** The server requires two-factor and this account has none (TwoFactor.tsx). */
+  two_factor_setup_required?: boolean;
+}
+
+/**
+ * The server refused a request because this account must set up
+ * two-factor first (Server settings, Security). Reload: the app then
+ * starts at the setup screen (App.tsx). Once per page.
+ */
+let gateHit = false;
+export function twoFactorGate(status: number, data: any): void {
+  if (status === 403 && data?.code === "two_factor_setup_required" && !gateHit) {
+    gateHit = true;
+    location.reload();
+  }
 }
 
 /** An error the server explained, with its HTTP status. */
@@ -50,6 +65,7 @@ export async function call<T>(
     /* not JSON */
   }
   if (!res.ok) {
+    twoFactorGate(res.status, data);
     throw new ApiError(res.status, data?.error ?? `request failed (${res.status})`);
   }
   return data as T;

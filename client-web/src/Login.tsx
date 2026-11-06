@@ -38,6 +38,9 @@ export function Login({ onSession, notice }: {
   const [signupMode, setSignupMode] = useState<"open" | "password" | "closed">("open");
   const [serverPassword, setServerPassword] = useState("");
   const [stay, setStay] = useState(staySignedInChoice);
+  // Two-factor: the password was right; the code finishes signing in.
+  const [ticket, setTicket] = useState<string | null>(null);
+  const [code, setCode] = useState("");
 
   const registering = mode === "register";
   const pw = usePasswordCheck(password, username, registering);
@@ -74,7 +77,7 @@ export function Login({ onSession, notice }: {
     // the session will (session.ts).
     setStaySignedIn(stay);
     try {
-      const s = await call<Session>(`/api/v1/auth/${mode}`, {
+      const r = await call<Session | { two_factor_ticket: string }>(`/api/v1/auth/${mode}`, {
         method: "POST",
         body: {
           username, password, device_name: guessDeviceName(),
@@ -82,6 +85,22 @@ export function Login({ onSession, notice }: {
           ...(askServerPassword ? { server_password: serverPassword } : {}),
         },
       });
+      if ("two_factor_ticket" in r) {
+        setTicket(r.two_factor_ticket);
+        setCode("");
+        return;
+      }
+      await finish(r);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Signed in: open this browser's storage and go in. */
+  async function finish(s: Session) {
+    {
       // The password unlocks this browser's encrypted storage too; this
       // is the only moment it is at hand (unlock.ts).
       let how: PasswordUnlock;
@@ -92,8 +111,26 @@ export function Login({ onSession, notice }: {
         throw new Error(`Signed in, but this browser's encrypted storage could not be opened: ${why}`);
       }
       onSession(s, registering, unlockNote(how));
+    }
+  }
+
+  async function submitCode(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      const s = await call<Session>("/api/v1/auth/login/two-factor", {
+        method: "POST", body: { ticket, code },
+      });
+      await finish(s);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      // Timed out, or too many wrong codes: back to the password.
+      if (msg.includes("password again")) {
+        setTicket(null);
+        setPassword("");
+      }
+      setError(msg);
     } finally {
       setBusy(false);
     }
@@ -103,6 +140,30 @@ export function Login({ onSession, notice }: {
     setMode(registering ? "login" : "register");
     setError(null);
     setConfirm("");
+  }
+
+  if (ticket) {
+    return (
+      <div className="auth-page">
+        <form className="auth-card" onSubmit={submitCode}>
+          <h1>OpenVoxa</h1>
+          <p className="muted">Two-factor sign-in</p>
+          <label>
+            Code from your authenticator app
+            <input value={code} onChange={(e) => { setCode(e.target.value); setError(null); }}
+              autoComplete="one-time-code" inputMode="text" spellCheck={false} autoCapitalize="none"
+              placeholder="123456" maxLength={12} autoFocus required />
+            <span className="muted">Lost your phone? Enter one of your backup codes instead.</span>
+          </label>
+          {error && <p className="error" role="alert">{error}</p>}
+          <button type="submit" className="primary" disabled={busy || !code.trim()}>{busy ? "…" : "Log in"}</button>
+          <button type="button" className="link" disabled={busy}
+            onClick={() => { setTicket(null); setPassword(""); setError(null); }}>
+            Back
+          </button>
+        </form>
+      </div>
+    );
   }
 
   return (

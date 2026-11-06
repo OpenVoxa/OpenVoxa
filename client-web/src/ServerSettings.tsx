@@ -31,6 +31,7 @@ import { Modal } from "./ChannelDialogs";
 import { StickerMessage, StickersTab } from "./stickers";
 import { VoiceTab } from "./shareLimit";
 import { SignupTab } from "./SignupTab";
+import { SecurityTab } from "./SecurityTab";
 import { MUTE_DURATIONS } from "./VoiceUI";
 import { stickerIdOf } from "@core/stickers";
 import { ColouredName, MIN_NAME_CONTRAST, nameContrast, refreshNames, useServerNameColours } from "./names";
@@ -67,6 +68,8 @@ interface UserSummary {
   voice_muted: boolean;
   /** null with voice_muted: until unmuted. */
   voice_muted_until: string | null;
+  /** Two-factor sign-in is on. */
+  two_factor: boolean;
 }
 
 /** Every switch, in the server's display order (perm.All). */
@@ -133,7 +136,7 @@ function useUserList(call: ApiCall, reload: number) {
 
 const when = (at: string) => new Date(at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
-export type ServerTab = "groups" | "members" | "reports" | "bans" | "log" | "stickers" | "voice" | "signup";
+export type ServerTab = "groups" | "members" | "reports" | "bans" | "log" | "stickers" | "voice" | "signup" | "security";
 
 /**
  * reload changes whenever the server says permissions moved, so the lists
@@ -155,7 +158,7 @@ export function ServerSettingsDialog({ call, me, reload, openReports, onClose }:
   if (has("ban") || has("view_reports") || has("delete_messages") || has("server_mute")) tabs.push(["log", "Log"]);
   // Every staff member can see the set; managing it needs the switch.
   tabs.push(["stickers", "Stickers"]);
-  if (has("administrator")) tabs.push(["voice", "Voice and Video"], ["signup", "Sign-Up"]);
+  if (has("administrator")) tabs.push(["voice", "Voice and Video"], ["signup", "Sign-Up"], ["security", "Security"]);
   return (
     <Modal title="Server settings" onClose={onClose} wide fixed>
       <div className="settings-tabs" role="tablist">
@@ -165,7 +168,8 @@ export function ServerSettingsDialog({ call, me, reload, openReports, onClose }:
         ))}
       </div>
       {tab === "voice" ? <VoiceTab call={call} onClose={onClose} />
-        : tab === "signup" ? <SignupTab call={call} onClose={onClose} /> : (<>
+        : tab === "signup" ? <SignupTab call={call} onClose={onClose} />
+        : tab === "security" ? <SecurityTab call={call} onClose={onClose} /> : (<>
       <div className="modal-body">
         {tab === "groups" && <GroupsTab call={call} me={me} reload={reload} />}
         {tab === "members" && <MembersTab call={call} me={me} reload={reload} />}
@@ -586,7 +590,7 @@ function MembersTab({ call, me, reload }: { call: ApiCall; me: Me; reload: numbe
   const { users, error, refresh: refreshUsers } = useUserList(call, reload);
   const [filter, setFilter] = useState("");
   // Which row is open, and on what.
-  const [open, setOpen] = useState<{ id: string; mode: "groups" | "ban" | "mute" | "delete" } | null>(null);
+  const [open, setOpen] = useState<{ id: string; mode: "groups" | "ban" | "mute" | "delete" | "twofactor" } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [rowError, setRowError] = useState<{ id: string; msg: string } | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
@@ -669,7 +673,7 @@ function MembersTab({ call, me, reload }: { call: ApiCall; me: Me; reload: numbe
           const self = u.id === me.userId;
           const lock = self ? "That's you." : u.rank >= me.rank ? "Ranked at or above you." : null;
           const mode = open?.id === u.id ? open.mode : null;
-          const toggle = (m: "groups" | "ban" | "mute" | "delete") => {
+          const toggle = (m: "groups" | "ban" | "mute" | "delete" | "twofactor") => {
             setRowError(null);
             setFlash(null);
             setOpen(mode === m ? null : { id: u.id, mode: m });
@@ -681,6 +685,7 @@ function MembersTab({ call, me, reload }: { call: ApiCall; me: Me; reload: numbe
                 <span className="device-name">
                   <strong><ColouredName userId={u.id}>{u.username}</ColouredName></strong>
                   {self && <span className="tag small">You</span>}
+                  {u.two_factor && <span className="tag small" title="Two-factor sign-in is on">2FA</span>}
                   {u.banned && (
                     <span className="tag small danger-tag"
                       title={u.banned_until ? `Until ${when(u.banned_until)}` : "Permanent"}>Banned</span>
@@ -721,6 +726,11 @@ function MembersTab({ call, me, reload }: { call: ApiCall; me: Me; reload: numbe
                     {mode === "ban" ? "Close" : "Ban"}
                   </button>
                 )}
+                {actions && isAdmin && u.two_factor && (
+                  <button className="secondary" onClick={() => toggle("twofactor")} aria-expanded={mode === "twofactor"}>
+                    {mode === "twofactor" ? "Close" : "Remove 2FA"}
+                  </button>
+                )}
                 {actions && isAdmin && (
                   <button className="danger" onClick={() => toggle("delete")} aria-expanded={mode === "delete"}>
                     {mode === "delete" ? "Close" : "Delete"}
@@ -746,6 +756,17 @@ function MembersTab({ call, me, reload }: { call: ApiCall; me: Me; reload: numbe
                     onDone={(msg) => {
                       setOpen(null);
                       setFlash(msg);
+                      refreshUsers();
+                    }} />
+                </div>
+              )}
+              {mode === "twofactor" && !lock && (
+                <div className="member-groups">
+                  <RemoveTwoFactor call={call} user={u}
+                    onCancel={() => setOpen(null)}
+                    onDone={() => {
+                      setOpen(null);
+                      setFlash(`${u.username}'s two-factor is removed. They sign in with their password alone and can set it up again.`);
                       refreshUsers();
                     }} />
                 </div>
@@ -922,6 +943,47 @@ function MuteForm({ call, user, onDone, onCancel }: {
         <button type="button" className="secondary" onClick={onCancel} disabled={busy}>Cancel</button>
         <button type="submit" className="danger solid" disabled={busy}>
           {busy ? "Muting…" : `Mute ${user.username}`}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/** Administrator only: remove someone's two-factor (lost phone and backup codes). */
+function RemoveTwoFactor({ call, user, onDone, onCancel }: {
+  call: ApiCall;
+  user: { id: string; username: string };
+  onDone: () => void;
+  onCancel: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function remove(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await call(`/api/v1/users/${user.id}/two-factor`, { method: "DELETE" });
+      onDone();
+    } catch (err) {
+      setError(errText(err));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="settings-form" onSubmit={remove}>
+      <p className="muted small">
+        For when {user.username} has lost their phone and their backup codes. Their password alone then signs them
+        in, so make sure it's really them asking. This is recorded in the log. If the server requires two-factor
+        for them, they set it up again at their next sign-in.
+      </p>
+      {error && <p className="error" role="alert">{error}</p>}
+      <div className="row-actions">
+        <button type="button" className="secondary" onClick={onCancel} disabled={busy}>Cancel</button>
+        <button type="submit" className="danger solid" disabled={busy}>
+          {busy ? "Removing…" : `Remove ${user.username}'s two-factor`}
         </button>
       </div>
     </form>
@@ -1329,6 +1391,13 @@ function describe(e: LogEntry): { text: string; note?: string } {
       return { text: "changed the server password" };
     case "rotate_signup_password":
       return { text: "generated a new server password" };
+    case "two_factor_reset":
+      return { text: `removed two-factor sign-in from ${who}` };
+    case "two_factor_policy":
+      return {
+        text: e.detail === "off" ? "stopped requiring two-factor sign-in"
+          : `required two-factor sign-in for ${e.detail === "everyone" ? "everyone" : "staff"}`,
+      };
     case "create_channel":
       return { text: `created the channel ${e.detail}` };
     case "rename_channel":

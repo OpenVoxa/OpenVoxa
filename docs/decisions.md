@@ -1309,8 +1309,23 @@ at the end.
     new one needs nothing typed (like Discord). The QR lasts about 2
     minutes and works once, and it also hands over the recovery key, so
     history comes along.
-  - Still to settle when designing: "remember this device", backup code
-    count, where the admin switch lives, the desktop app's part.
+  - **Details settled with Ryan, 2026-11-06:**
+    - No "remember this device": every password sign-in asks for the
+      code. "Stay signed in" (30 days) already makes that rare.
+    - 10 backup codes (like `4f9k-27xm`), each single use; making new
+      ones cancels the old. Turning two-factor off or making new codes
+      asks for a current code.
+    - The "Require two-factor: Off / Staff / Everyone" switch lives in a
+      new Server settings tab, Security (administrators only). Staff =
+      holds any permission switch.
+    - People it covers who are already signed in set it up **right
+      away**: their app shows the setup screen on its next load and
+      nothing else works until it's done.
+    - The desktop app needs nothing of its own (the web client runs in
+      its server view).
+    - Setup: QR of the `otpauth://` address plus the secret as text,
+      confirmed with one code before it is switched on. A code works
+      once (no replay within its 30 s window).
 
 ## Permission groups
 
@@ -2756,6 +2771,23 @@ database over NFS is a well-documented way to corrupt things. The blob
 directory is a single path in config precisely so it can be a bind mount
 to whatever an operator wants.
 
+**Two-factor (`twofactor.go`).** The TOTP secret must be readable to
+check codes, so it is sealed under the account's keystore key (context
+`openvoxa/totp/v1`), not hashed; backup codes are one sealed JSON list.
+A password sign-in on a two-factor account returns `two_factor_ticket`
+(in memory, 5 minutes, 5 wrong codes) instead of a session. Wrong codes
+are also limited per account (`twoFactorUser`, 5 then one per 5
+minutes), because a right password resets the per-username login
+limiter and would otherwise buy fresh guesses. `totp_last_step` refuses
+a code's reuse. The "required" gate is in `requireAuth` itself (403,
+`code: "two_factor_setup_required"`, only `/me`, unlock-secret, logout
+and `/me/two-factor*` pass), so every route and the websocket ticket
+are covered; the client's `call`/`apiCall` reload on that code and
+`App.tsx` checks `/me` before starting the device. Turning the
+requirement on disconnects covered accounts' sockets so their apps hit
+the gate at once. Host-command log entries have no actor and detail
+`host command`; the log shows them as "The server host".
+
 **`go mod tidy` silently raises the `go` directive.** Running it with a
 newer local toolchain than the Dockerfile's base image rewrites `go.mod`
 and the container build then fails with a confusing version error. Keep
@@ -2929,14 +2961,19 @@ verified; the section named holds the design.
 - 2026-11-06 Switch stream and live share quality, SW1-SW9, SW7b (the
   "You're muted" banner moved to the tile's bottom right, clear of the
   share buttons) (Feature decisions, "Switch stream").
+- 2026-11-06 Two-factor sign-in (TOTP + 10 backup codes, Settings,
+  Account; Server settings, Security; Members, Remove 2FA; host command
+  `reset-two-factor`), TF1-TF11 (Feature decisions, "Planned",
+  two-factor; Implementation notes, Server, "Two-factor").
 
 ## Open items
 
 ### Next up (Ryan picks; each gets a design talk first)
 
-- [ ] **Two-factor sign-in, then QR login** (Ryan, 2026-11-06: next;
-      choices made, Feature decisions, "Planned", end). Two-factor's
-      detailed design is the next session's first job.
+- [ ] **QR login** (Ryan, 2026-11-06: next; choices made, Feature
+      decisions, "Planned", end: skips password and code after a
+      confirm on the signed-in device, hands over the recovery key).
+      Detailed design is the next session's first job.
 
 - [ ] User avatars, uploaded in Settings, per server. They replace the
       letter circles in voice tiles. Feature decisions, "Planned".
@@ -2989,7 +3026,7 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
 
 ### Features not built yet
 
-- [ ] Device linking by QR, two-factor sign-in: now Next up.
+- [ ] Device linking by QR: now Next up.
 - [ ] Guest accounts: the Everyone group exists, but there is no
       anonymous or invite flow to create one.
 - [ ] `@everyone` / `@group` mentions, mention counts, notifications
@@ -3067,6 +3104,8 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
 
 One line each; the section named has the detail.
 
+- [x] Two-factor sign-in: built 2026-11-06 (Feature decisions,
+      "Planned", two-factor; Build order).
 - [x] On-screen push-to-talk button for touchscreens: built 2026-11-06
       ("Voice activation and audio settings").
 - [x] Server browser (Ryan, 2026-11-03): built as the desktop app's

@@ -13,6 +13,7 @@ import type { Chat } from "@core/chat";
 import { eraseIdentity, forgetIdentity } from "@core/index";
 import { apiCall, cryptoSession, dropCryptoSession } from "./core";
 import { lockStorage, unlockOnRefresh } from "./unlock";
+import { TwoFactorRequired } from "./TwoFactor";
 
 export function App() {
   const [session, setSession] = useState<Session | null>(loadSession);
@@ -47,6 +48,7 @@ export function App() {
 type Phase =
   | { k: "loading" }
   | { k: "failed"; error: string }
+  | { k: "twofactor" }
   | { k: "setup"; skippable: boolean; replacing: boolean; rotating?: boolean }
   | { k: "restore" }
   | { k: "ready" };
@@ -65,6 +67,8 @@ function Home({ session, justRegistered, initialNotice, onLoggedOut, onLocked }:
   // Shown on the recovery-key screen instead of its usual text.
   const [restoreReason, setRestoreReason] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  // Bumped when two-factor setup finishes, to carry on loading.
+  const [gatePassed, setGatePassed] = useState(0);
 
   // Decide which recovery screen, if any, this sign-in needs.
   useEffect(() => {
@@ -74,6 +78,13 @@ function Home({ session, justRegistered, initialNotice, onLoggedOut, onLocked }:
       // the tab's session copy, or sign in again.
       if (!(await unlockOnRefresh(session))) {
         if (live) onLocked();
+        return;
+      }
+      // The server requires two-factor and this account has none: set it
+      // up before anything else (the server refuses the rest until then).
+      const me = await call<{ two_factor_setup_required?: boolean }>("/api/v1/me", { token: session.token });
+      if (me.two_factor_setup_required) {
+        if (live) setPhase({ k: "twofactor" });
         return;
       }
       // Start this browser's device before choosing a recovery screen. A
@@ -111,7 +122,7 @@ function Home({ session, justRegistered, initialNotice, onLoggedOut, onLocked }:
     return () => {
       live = false;
     };
-  }, [session.user_id, session.token, justRegistered]);
+  }, [session.user_id, session.token, justRegistered, gatePassed]);
 
   async function refresh(note?: string) {
     if (note !== undefined) setNotice(note);
@@ -239,6 +250,14 @@ function Home({ session, justRegistered, initialNotice, onLoggedOut, onLocked }:
 
   if (phase.k === "loading") {
     return <div className="auth-page"><p className="muted">Loading…</p></div>;
+  }
+  if (phase.k === "twofactor") {
+    return <TwoFactorRequired session={session}
+      onDone={() => { setPhase({ k: "loading" }); setGatePassed((n) => n + 1); }}
+      onSignOut={() => {
+        void call("/api/v1/auth/logout", { method: "POST", token: session.token }).catch(() => {});
+        onLoggedOut();
+      }} />;
   }
   if (phase.k === "failed") {
     return (

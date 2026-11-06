@@ -66,7 +66,10 @@ func (a *API) listModerationLog(w http.ResponseWriter, r *http.Request) {
 	// UUIDs are random, so subject_id matches at most one of the three
 	// joins; whichever matches names the subject.
 	rows, err := a.pool.Query(r.Context(),
-		`SELECT l.id, COALESCE(au.username, '[deleted]'), l.action, l.subject_id,
+		`SELECT l.id,
+		        CASE WHEN l.actor_id IS NULL AND l.detail = 'host command' THEN 'The server host'
+		             ELSE COALESCE(au.username, '[deleted]') END,
+		        l.action, l.subject_id,
 		        COALESCE(su.username, mu.username, ru.username, ''),
 		        COALESCE(mc.name, rc.name, ''),
 		        l.detail, l.created_at

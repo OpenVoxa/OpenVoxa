@@ -416,6 +416,7 @@ label.check {
 }
 label.check input { margin-top: 3px; accent-color: var(--accent); }
 label.check.locked { cursor: not-allowed; }
+label.check.disabled { cursor: not-allowed; opacity: 0.6; }
 label.check.locked .label-text { text-decoration: line-through; color: var(--muted); }
 label.check.locked .lock-reason { color: var(--danger); }
 .block { display: block; margin-top: 2px; }
