@@ -31,6 +31,7 @@ import { SettingsDialog, type AccountActions, type SettingsTab } from "./Setting
 import { ServerSettingsDialog } from "./ServerSettings";
 import { configureStickers, refreshStickers } from "./stickers";
 import { configureNames, refreshNames } from "./names";
+import { channelLink, LinksContext, onAddressTarget, takePendingTarget, type LinkTarget, type Links } from "./links";
 
 const LAST_CHANNEL = (userId: string) => `lastChannel.${userId}`;
 
@@ -327,10 +328,38 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
     else if (stage?.focus && !screens.some((s) => s.id === stage.focus)) setStage({ focus: null });
   }, [stage, screens]);
 
-  // Pick a channel: the open one if it still exists, else the last one
-  // used, else the first.
+  // Following a channel or message link (links.ts): the message to
+  // scroll to once its channel is open, and a "can't go there" note for
+  // a view that isn't open yet (a link the page was opened with).
+  const [jump, setJump] = useState<{ channelId: string; messageId: string } | null>(null);
+  const noteLater = useRef<string | null>(null);
+  /** Go to a link's channel (and message); false if you can't see it. */
+  const go = (t: LinkTarget): boolean => {
+    const c = channelsRef.current.find((x) => x.id === t.channelId && x.kind === "text");
+    if (!c) {
+      const note = "That link goes to a channel you can't see, or one that was deleted.";
+      if (chat?.view) chat.view.notice(note);
+      else noteLater.current = note;
+      return false;
+    }
+    setOpenId(c.id);
+    setStage(null);
+    setCallView(false);
+    setJump(t.messageId ? { channelId: c.id, messageId: t.messageId } : null);
+    return true;
+  };
+  const goRef = useRef(go);
+  goRef.current = go;
+  // A link pasted into this tab's address bar.
+  useEffect(() => onAddressTarget((t) => void goRef.current(t)), []);
+  const links = useMemo<Links>(() => ({ channels, go: (t) => void goRef.current(t) }), [channels]);
+
+  // Pick a channel: the one a link the page was opened with goes to, the
+  // open one if it still exists, else the last one used, else the first.
   useEffect(() => {
     if (!chat || !text.length) return;
+    const opened = takePendingTarget();
+    if (opened && goRef.current(opened)) return;
     if (openId && text.some((c) => c.id === openId)) return;
     const last = localStore.get(LAST_CHANNEL(session.user_id));
     setOpenId(text.find((c) => c.id === last)?.id ?? text[0].id);
@@ -340,8 +369,13 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
     if (!chat || !openId) return;
     if (chat.view?.channel.id === openId) return;
     try {
-      setView(chat.open(openId));
+      const v = chat.open(openId);
+      setView(v);
       localStore.set(LAST_CHANNEL(session.user_id), openId);
+      if (noteLater.current) {
+        v.notice(noteLater.current);
+        noteLater.current = null;
+      }
     } catch {
       /* gone from the list meanwhile; the effect above picks another */
     }
@@ -447,6 +481,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
       { label: "Mark as Read", onClick: () => chat.markRead(c.id, c.last_message_at ?? undefined),
         disabled: !unread.has(c.id) && !mentions.has(c.id), reason: "Nothing unread" },
       { label: isMuted ? "Unmute Sounds" : "Mute Sounds", onClick: () => setChannelMuted(c.id, !isMuted) },
+      { label: "Copy Channel Link", onClick: () => void navigator.clipboard.writeText(channelLink(c.id)).catch(() => {}) },
       "sep",
       ...manage,
     ];
@@ -464,6 +499,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   );
 
   return (
+    <LinksContext value={links}>
     <div className="app">
       <nav className="sidebar" aria-label="Channels">
         <header className="sidebar-head">
@@ -575,7 +611,9 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
             onWatch={(id) => setStage({ focus: id })} />
         ) : view ? (
           <ChannelPane key={view.channel.id} view={view} call={call} userId={session.user_id} username={session.username} canDeleteAny={canDeleteAny}
-            canManageStickers={can("manage_stickers")} />
+            canManageStickers={can("manage_stickers")}
+            jumpTo={jump?.channelId === view.channel.id ? jump.messageId : null}
+            onJumped={() => setJump(null)} />
         ) : (
           <div className="pane-empty muted">{text.length ? "Opening…" : "Nothing to show yet."}</div>
         )}
@@ -642,6 +680,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
         />
       )}
     </div>
+    </LinksContext>
   );
 }
 

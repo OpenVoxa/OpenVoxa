@@ -15,6 +15,7 @@ import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { matchMember, MENTION_RE, type Mention } from "@core/chat";
 import { useNameColour } from "./names";
 import type { CodeNode } from "./codeHighlight";
+import { linkChannel, parseTarget, useLinks, type LinkTarget } from "./links";
 
 /** Who a message mentions, and who is reading. */
 interface MentionCtx {
@@ -25,10 +26,11 @@ interface MentionCtx {
 /** http(s) links, without trailing punctuation. */
 export const URL_RE = /\bhttps?:\/\/[^\s<>"'`]+[^\s<>"'`.,;:!?)\]}*_~]/g;
 
-/** The first link in some text, for a preview. Code is skipped. */
+/** The first link in some text, for a preview. Code is skipped, and so
+ * are channel and message links to this server (they draw as chips). */
 export function firstLink(text: string): string | null {
   const plain = text.replace(/```[\s\S]*?```/g, " ").replace(/`[^`\n]+`/g, " ");
-  return plain.match(URL_RE)?.[0] ?? null;
+  return plain.match(URL_RE)?.find((u) => !parseTarget(u)) ?? null;
 }
 
 export function Markdown({ text, mentions, me }: {
@@ -172,11 +174,36 @@ function inline(s: string, key: string, ctx: MentionCtx | null): ReactNode[] {
       const who = ctx ? matchMember(m[6], ctx.mentions) : undefined;
       out.push(who ? <MentionChip key={k} who={who} me={who.user_id === ctx!.me} /> : m[0]);
     }
-    else out.push(<a key={k} href={m[0]} target="_blank" rel="noopener noreferrer nofollow">{m[0]}</a>);
+    else {
+      const target = parseTarget(m[0]);
+      out.push(target
+        ? <ChannelChip key={k} href={m[0]} target={target} />
+        : <a key={k} href={m[0]} target="_blank" rel="noopener noreferrer nofollow">{m[0]}</a>);
+    }
     last = i + m[0].length;
   }
   if (last < s.length) out.push(s.slice(last));
   return out;
+}
+
+/** A channel or message link to this server: "#general" or "#general ›
+ * message", going there in-app. A channel you can't see (or that was
+ * deleted) shows greyed as "#unknown-channel" and goes nowhere. */
+function ChannelChip({ href, target }: { href: string; target: LinkTarget }) {
+  const links = useLinks();
+  const c = linkChannel(links, target);
+  if (!links || !c) {
+    return <span className="channel-chip unknown" title="A channel you can't see, or one that was deleted">#unknown-channel</span>;
+  }
+  return (
+    <a className="channel-chip" href={href} title={target.messageId ? `A message in #${c.name}` : `#${c.name}`}
+      onClick={(e) => {
+        e.preventDefault();
+        links.go(target);
+      }}>
+      #{c.name}{target.messageId && <span className="chip-sep"> › </span>}{target.messageId && "message"}
+    </a>
+  );
 }
 
 /** An @mention, in the person's name colour (names.tsx). */
