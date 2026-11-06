@@ -535,6 +535,19 @@ Push-to-Talk: Tap to Talk counts as an open mic there (Ryan).
 - **Key field** (after VA5/VA6): the push-to-talk key is an outlined
   field right after its label; a bare "`" on a 1440p screen was invisible.
   One key, shared by Push-to-Talk and Tap to Talk.
+- **On-screen talk button** (Ryan, 2026-11-06; TB1-TB8): Push-to-Talk
+  and Tap to Talk were keyboard-only, so a tablet couldn't talk in those
+  modes (or in a channel forcing push-to-talk). A wide button in the
+  voice bar, above Mute, presses the same "key": hold to talk, or in Tap
+  to Talk tap to open and tap again to close. Green "Talking" while open;
+  greyed out while deafened, server-muted or listen-only. Setting under
+  the key field, "On-screen button": Touch screens only (default; any
+  touch pointer, so touchscreen laptops too), Always, Never. Release
+  delay and silence timer apply as for the key. Pointer capture keeps a
+  press held when the finger slides off; a cancelled touch lets go.
+  After TB7: a press is ignored unless the mic can open, and server mute
+  or deafen closes an open Tap to Talk or held push-to-talk, so the mic
+  doesn't come back open on unmute (Web client notes, "Disabled buttons").
 - **Later:** stronger noise suppression (RNNoise), per-channel audio
   quality, ducking share sound while people talk.
 
@@ -2576,6 +2589,13 @@ one's text. A send frame now carries an optional client-chosen `ref` (up
 to 64 chars), echoed on the resulting message and on an error about that
 frame; client-core pairs by it.
 
+**Disabled buttons still get pointer events in Safari.** Found in TB7
+(2026-11-06): the greyed-out talk button still answered taps on the
+iPad, and with no mic behind it (server-muted) Tap to Talk flipped its
+flag and showed "Talking". `disabled` stops clicks, not `pointerdown`.
+Check the condition in the handler too, and have the model refuse
+(`VoiceClient.setPTTHeld` ignores a press while the mic can't open).
+
 **Uploads must leave Content-Type alone.** A FormData body needs the
 browser's own multipart boundary header; the upload `ApiCall` in
 client-web `core.ts` must not set Content-Type.
@@ -2763,16 +2783,13 @@ verified; the section named holds the design.
   decisions, "Channel menus").
 - 2026-11-05 Server password and sign-up modes, SP1-SP8 (Feature
   decisions, "Server password").
+- 2026-11-06 On-screen talk button for touchscreens, TB1-TB8, TB7b-TB7c
+  (Feature decisions, "Voice activation and audio settings").
 
 ## Open items
 
 ### Next up (Ryan picks; each gets a design talk first)
 
-- [ ] On-screen push-to-talk button for touchscreens (Ryan, 2026-11-04).
-      Push-to-talk and Tap to Talk are keyboard-only today, so a phone or
-      tablet in those modes (or in a channel that requires push-to-talk)
-      can't talk at all. Open: where the button sits, hold vs tap, when it shows (touch
-      devices only, or always in PTT mode).
 - [ ] User avatars, uploaded in Settings, per server. They replace the
       letter circles in voice tiles. Feature decisions, "Planned".
 - [ ] Server icon and name in the pane, set in Server settings (same
@@ -2869,6 +2886,8 @@ verified; the section named holds the design.
 
 One line each; the section named has the detail.
 
+- [x] On-screen push-to-talk button for touchscreens: built 2026-11-06
+      ("Voice activation and audio settings").
 - [x] Server browser (Ryan, 2026-11-03): built as the desktop app's
       server pane (Feature decisions, "Server browser and desktop
       shell").
