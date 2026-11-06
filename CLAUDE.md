@@ -155,29 +155,26 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 
 ## Current state (rewrite every session)
 
-_2026-11-06._ Done: stages 1 and 2 of replies, links and code blocks:
-**code blocks** (CB1-CB8; lowlight in a lazy chunk, `codeHighlight.ts`)
-and **channel and message links** (LK1-LK9; `client-web/src/links.ts`:
-`#/c/<channel>[/<message>]` fragment addresses, #channel chips, # list,
-jump-to-message in MessageList that stage 3 reuses). Earlier today: bug
-reports, QR login, two-factor, ducking share sound (DK1-DK9
-**untested**). Desktop app 0.1.8.
+_2026-11-06._ Done: all three stages of replies, links and code blocks.
+Last: **replies** (RP1-RP11; `client-core/src/replies.ts`: a first-line
+token `[reply:<msg>:<author>:<name>] <preview>` split off into
+`ChatMessage.reply`; Reply button, reply bar with @ toggle and reply
+line in `ChannelPane.tsx`). Before that: **code blocks** (CB1-CB8;
+`codeHighlight.ts`) and **channel and message links** (LK1-LK9;
+`links.ts`). Earlier today: bug reports, QR login, two-factor, ducking
+share sound (DK1-DK9 **untested**). Desktop app 0.1.8.
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts (kept until a sweep before beta):
-  quillbrook (Ryan), staff, secondadmin, testuser. Voice channels:
-  voice-general, vip-voice (admins only).
+  quillbrook (Ryan), staff, secondadmin, testuser. Text channels:
+  general (plain), secret (encrypted) and some test ones. Voice
+  channels: voice-general, vip-voice (admins only).
 - Docker deploy: LiveKit v1.13.11, host networking, `update-node-ip.sh`
   on cron. Blobs on `/mnt/openvoxa-blobs`. Account keys (also sealing
   TOTP secrets) in volume `deploy_key-data` under a KEK only Ryan holds,
   backed up daily 03:30 to `~/openvoxa-key-backups`. Ryan is the only
   user. `docker builder prune` when disk passes ~80%.
 - Untested and gaps: decisions.md Open items.
-- **Next: stage 3, replies** (decisions.md, Feature decisions,
-  "Planned: replies, links and code blocks"; designed; settle the body
-  format and what older clients show). Jumping to the original reuses
-  MessageList's `jumpTo` (load older until found, bounded, notice if
-  gone).
-- **After that** (Ryan picks; discuss first; Open items, Next up):
-  avatars, server icons, channel groups, DMs, desktop status icon.
-  Later: code signing, "needs app version X".
+- **Next** (Ryan picks; discuss first; Open items, Next up): avatars,
+  server icons, channel groups, DMs, desktop status icon. Later: code
+  signing, "needs app version X".
