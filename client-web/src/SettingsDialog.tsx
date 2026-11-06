@@ -28,6 +28,7 @@ import { SoundSettings } from "./SoundSettings";
 import { AboutSettings } from "./AboutSettings";
 import { COLOURS, getColour, setColour, useColour, type ColourSetting } from "./appearance";
 import { TwoFactorSection } from "./TwoFactor";
+import { SignInOtherDevice } from "./SignInLink";
 
 export type SettingsTab = "account" | "voice" | "chat" | "sounds" | "appearance" | "about";
 
@@ -227,6 +228,8 @@ function AccountSettings({ session, call, deviceId, backup, busy, actions, onClo
       <PasswordSection session={session} />
 
       <TwoFactorSection session={session} />
+
+      <SignInOtherDevice session={session} />
 
       <section className="settings-section">
         <h3 className="settings-head">Recovery key</h3>

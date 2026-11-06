@@ -25,7 +25,10 @@
  */
 
 import { decodeTagged, encodeTagged } from "./codec.js";
-import { DataKey, isKeyring, seal, unseal, type Keyring } from "./localkey.js";
+import {
+  DataKey, isDeviceKeyring, isKeyring, seal, unseal,
+  type DeviceKeyring, type Keyring, type PasswordKeyring,
+} from "./localkey.js";
 
 /**
  * One database per account, named after the account.
@@ -49,10 +52,27 @@ const STORE_KEYPAIRS = "keypairs";
 const STORE_GROUPS = "groups";
 const STORE_SENT = "sent";
 
-/** Device-store record keys. KEYRING is the only unencrypted value. */
+/**
+ * Device-store record keys. The two keyrings are the only unencrypted
+ * values: KEYRING holds the data key under the password, DEVICE_KEYRING
+ * under a server-held device secret (QR login). A browser has either or
+ * both; both open the same data key.
+ */
 const SELF = "self";
 const BACKUP = "backup";
 const KEYRING = "keyring";
+const DEVICE_KEYRING = "deviceKeyring";
+const RINGS: readonly IDBValidKey[] = [KEYRING, DEVICE_KEYRING];
+
+/** The server side of device keyrings; client-web supplies it. */
+export interface DeviceSecrets {
+  create(): Promise<{ id: string; secret: Uint8Array }>;
+  /** Null when the server no longer has it. Throws on network errors. */
+  get(id: string): Promise<Uint8Array | null>;
+}
+
+/** How a QR login unlocked this browser. */
+export type LinkUnlockResult = "unlocked" | "created" | "replaced";
 
 /** The unlocked data key for the current account database, if any. */
 let dataKey: DataKey | null = null;
@@ -356,9 +376,27 @@ function txDone(tx: IDBTransaction, what: string): Promise<void> {
   });
 }
 
-async function readKeyring(): Promise<Keyring | undefined> {
+async function readKeyring(): Promise<PasswordKeyring | undefined> {
   const v = await run<unknown>(STORE_DEVICE, "readonly", (s) => s.get(KEYRING));
-  return isKeyring(v) ? v : undefined;
+  return isKeyring(v) && !isDeviceKeyring(v) ? v : undefined;
+}
+
+async function readDeviceKeyring(): Promise<DeviceKeyring | undefined> {
+  const v = await run<unknown>(STORE_DEVICE, "readonly", (s) => s.get(DEVICE_KEYRING));
+  return isKeyring(v) && isDeviceKeyring(v) ? v : undefined;
+}
+
+async function putRing(ring: Keyring): Promise<void> {
+  const key = isDeviceKeyring(ring) ? DEVICE_KEYRING : KEYRING;
+  await run(STORE_DEVICE, "readwrite", (s) => s.put(ring, key));
+}
+
+/** The data key from the device keyring, or null when there is none or it no longer opens. */
+async function openDeviceKeyring(devices: DeviceSecrets): Promise<DataKey | null> {
+  const ring = await readDeviceKeyring();
+  if (!ring) return null;
+  const secret = await devices.get(ring.kdf.id);
+  return secret ? DataKey.unwrapForDevice(ring, secret) : null;
 }
 
 async function hasDevice(): Promise<boolean> {
@@ -393,7 +431,7 @@ async function encryptInPlace(dk: DataKey, ring: Keyring): Promise<boolean> {
     for (const name of ALL_STORES) {
       const out: Array<[IDBValidKey, Sealed]> = [];
       for (const [k, v] of plain.get(name)!) {
-        if (name === STORE_DEVICE && (k === KEYRING || k === BACKUP)) continue;
+        if (name === STORE_DEVICE && (RINGS.includes(k) || k === BACKUP)) continue;
         if (isSealed(v)) continue;
         found = true;
         out.push([k, await sealValue(dk, name, k, v)]);
@@ -410,7 +448,7 @@ async function encryptInPlace(dk: DataKey, ring: Keyring): Promise<boolean> {
         else s.put(v);
       }
     }
-    write.objectStore(STORE_DEVICE).put(ring, KEYRING);
+    write.objectStore(STORE_DEVICE).put(ring, isDeviceKeyring(ring) ? DEVICE_KEYRING : KEYRING);
     await txDone(write, "encrypting local storage");
     return found;
   } finally {
@@ -418,7 +456,7 @@ async function encryptInPlace(dk: DataKey, ring: Keyring): Promise<boolean> {
   }
 }
 
-/** Clear every store; keep the keyring unless told otherwise. */
+/** Clear every store; keep the keyrings unless told otherwise. */
 async function clearAll(keepKeyring: boolean): Promise<void> {
   const db = await open();
   try {
@@ -431,7 +469,7 @@ async function clearAll(keepKeyring: boolean): Promise<void> {
       const s = tx.objectStore(name);
       s.getAllKeys().onsuccess = (e) => {
         for (const k of (e.target as IDBRequest<IDBValidKey[]>).result) {
-          if (k !== KEYRING) s.delete(k);
+          if (!RINGS.includes(k)) s.delete(k);
         }
       };
     }
@@ -482,9 +520,14 @@ export const storage = {
    *   browser. Storage stays locked; the caller decides, normally with
    *   discardAndUnlock() and a recovery-key restore.
    *
+   * A browser signed in by QR login has a device keyring (`devices`
+   * opens it): the password keyring is then added (or, after a password
+   * change elsewhere, replaced) beside it, so either way of signing in
+   * works here from now on.
+   *
    * Argon2id makes this take a noticeable fraction of a second.
    */
-  async unlock(password: string): Promise<UnlockResult> {
+  async unlock(password: string, devices?: DeviceSecrets): Promise<UnlockResult> {
     const ring = await readKeyring();
     if (ring) {
       const dk = await DataKey.unwrap(ring, password);
@@ -492,6 +535,14 @@ export const storage = {
         dataKey = dk;
         return "unlocked";
       }
+    }
+    const fromDevice = devices ? await openDeviceKeyring(devices) : null;
+    if (fromDevice) {
+      await putRing(await fromDevice.wrap(password));
+      dataKey = fromDevice;
+      return "unlocked";
+    }
+    if (ring || await readDeviceKeyring()) {
       if (await hasDevice()) return "mismatch";
       // A keyring over an empty database (after sign-out, say) protects
       // nothing; replace it rather than refuse.
@@ -515,12 +566,49 @@ export const storage = {
   },
 
   /**
+   * Unlock at a QR login, where there is no password. Results:
+   *
+   * - "unlocked": this browser's device keyring opened (signed in here
+   *   by QR before).
+   * - "created": nothing usable was stored; a new data key now exists
+   *   under a new device secret.
+   * - "replaced": this browser held the account under the password only
+   *   (or under a device secret the server no longer has). That cannot
+   *   be opened without the password, so it is discarded and the browser
+   *   starts over as a new device; history comes from the backup.
+   */
+  async unlockForLink(devices: DeviceSecrets): Promise<LinkUnlockResult> {
+    const dk = await openDeviceKeyring(devices);
+    if (dk) {
+      dataKey = dk;
+      return "unlocked";
+    }
+    dataKey = null;
+    let replaced = false;
+    if ((await readKeyring()) || (await readDeviceKeyring())) {
+      replaced = await hasDevice();
+      await clearAll(false);
+    }
+    const fresh = await DataKey.generate();
+    const { id, secret } = await devices.create();
+    // Data from before local encryption (no keyring at all) is kept and
+    // encrypted, as at a password sign-in.
+    await encryptInPlace(fresh, await fresh.wrapForDevice(id, secret));
+    dataKey = fresh;
+    return replaced ? "replaced" : "created";
+  },
+
+  /** The device secret's id when this browser has a device keyring, for erasing it on the server. */
+  async deviceSecretId(): Promise<string | undefined> {
+    return (await readDeviceKeyring())?.kdf.id;
+  },
+
+  /**
    * Re-encrypt the data key under a new password, after a password
    * change. Only the keyring changes; the data is untouched.
    */
   async rewrap(newPassword: string): Promise<void> {
-    const ring = await requireKey().wrap(newPassword);
-    await run(STORE_DEVICE, "readwrite", (s) => s.put(ring, KEYRING));
+    await putRing(await requireKey().wrap(newPassword));
   },
 
   /**
@@ -538,7 +626,7 @@ export const storage = {
    */
   async unlockFromSession(copy: string, secret: Uint8Array): Promise<boolean> {
     const dk = await DataKey.unwrapForSession(copy, secret);
-    const ring = await readKeyring();
+    const ring = (await readKeyring()) ?? (await readDeviceKeyring());
     if (!dk || !ring || !(await dk.opens(ring))) return false;
     dataKey = dk;
     return true;
@@ -720,6 +808,13 @@ export const storage = {
       "raw", new Uint8Array(v.raw), "AES-GCM", false, ["encrypt", "decrypt"],
     );
     return { backupId: v.backupId, key };
+  },
+
+  /** The remembered backup key's raw bytes, for the QR login handover. */
+  async exportBackupKey(): Promise<{ backupId: string; raw: Uint8Array } | undefined> {
+    const v = await getValue<{ backupId: string; raw: Uint8Array }>(STORE_DEVICE, BACKUP);
+    if (!v || typeof v.backupId !== "string" || !(v.raw instanceof Uint8Array)) return undefined;
+    return { backupId: v.backupId, raw: v.raw };
   },
 
   /** The key must be extractable (recovery.ts derive() makes it so). */

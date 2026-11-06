@@ -14,6 +14,12 @@ import { eraseIdentity, forgetIdentity } from "@core/index";
 import { apiCall, cryptoSession, dropCryptoSession } from "./core";
 import { lockStorage, unlockOnRefresh } from "./unlock";
 import { TwoFactorRequired } from "./TwoFactor";
+import { takeHandover, takeLinkFromLocation } from "./SignInLink";
+import { handoverBytes } from "@core/signinlink";
+import { storage } from "@core/storage";
+
+// A QR login link this page was opened with, taken out of the address bar.
+const openedLink = takeLinkFromLocation();
 
 export function App() {
   const [session, setSession] = useState<Session | null>(loadSession);
@@ -22,7 +28,10 @@ export function App() {
   const [justRegistered, setJustRegistered] = useState(false);
   // A note for the next screen: after sign-in for Home, after a forced
   // sign-out for the login page.
-  const [note, setNote] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(() => openedLink && loadSession()
+    ? "You're already signed in on this browser, so the sign-in link wasn't used." : null);
+  // Used once: after that the login page is the plain one.
+  const [link, setLink] = useState(openedLink);
 
   function update(s: Session | null, registered = false, message?: string) {
     // Signed out for any reason: the unlocked storage key goes too.
@@ -31,9 +40,10 @@ export function App() {
     setSession(s);
     setJustRegistered(registered);
     setNote(message ?? null);
+    setLink(null);
   }
 
-  if (!session) return <Login onSession={update} notice={note} />;
+  if (!session) return <Login onSession={update} notice={note} link={link} />;
   return <Home key={session.user_id} session={session} justRegistered={justRegistered}
     initialNotice={note}
     onLoggedOut={(message) => update(null, false, message)}
@@ -98,7 +108,24 @@ function Home({ session, justRegistered, initialNotice, onLoggedOut, onLocked }:
       m.onUploaded = () => {
         m.status().then((s) => live && setStatus(s), () => {});
       };
-      const s = await m.status();
+      let s = await m.status();
+      // Just signed in by QR login: restore history with the key the
+      // other device handed over (SignInLink.tsx), instead of asking for
+      // the 12 words.
+      const handover = takeHandover(session.user_id);
+      if (handover?.backup && s && !s.unlocked) {
+        try {
+          const r = await m.backup.restoreWithKey(handover.backup.id, handoverBytes.decode(handover.backup.key));
+          s = await m.status();
+          if (live) setNotice(`Signed in. Message history restored (${r.added} message${r.added === 1 ? "" : "s"}).`);
+        } catch (err) {
+          console.warn("restoring with the handed-over key failed:", err);
+        }
+      }
+      if (handover && s && !s.unlocked) {
+        setRestoreReason("Signed in. Your other device couldn't send your message history (it doesn't have " +
+          "your recovery key either). Enter your 12 words to bring it back.");
+      }
       if (!live) return;
       if (crypto.status.replaced) {
         if (s) {
@@ -210,6 +237,12 @@ function Home({ session, justRegistered, initialNotice, onLoggedOut, onLocked }:
       console.warn("removing this device failed:", err);
       problems.push("this browser is still listed in your devices (remove it in Settings from another device, " +
         "or it expires after 30 days unused)");
+    }
+    // A browser signed in by QR login: its device secret on the server
+    // goes too (nothing could use it once the keyring is erased).
+    const secretId = await storage.deviceSecretId().catch(() => undefined);
+    if (secretId) {
+      await call(`/api/v1/me/device-secrets/${secretId}`, { method: "DELETE", token: session.token }).catch(() => {});
     }
     try {
       await eraseIdentity();

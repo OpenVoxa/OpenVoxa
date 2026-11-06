@@ -105,6 +105,8 @@ type API struct {
 	// Two-factor (twofactor.go): sign-ins waiting for their code, and
 	// wrong codes per account.
 	pendingLogins *pendingLogins
+	// QR login links in flight (signinlinks.go).
+	signInLinks   *signInLinks
 	twoFactorUser *ratelimit.Limiter
 }
 
@@ -133,11 +135,13 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 
 		signupLock: newSignupLockout(),
 
+		signInLinks: newSignInLinks(),
+
 		// Two-factor codes: 5 wrong per account, then one every 5
 		// minutes, whatever the address and however many sign-ins.
 		pendingLogins: newPendingLogins(),
 		twoFactorUser: ratelimit.New(1.0/300.0, 5, time.Hour),
-		signupIP:   ratelimit.New(3.0/3600.0, 3, 2*time.Hour),
+		signupIP:      ratelimit.New(3.0/3600.0, 3, 2*time.Hour),
 
 		unfurl:      unfurl.New(),
 		unfurlLimit: ratelimit.New(1.0/3.0, 20, 15*time.Minute),
@@ -247,6 +251,18 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 	// This session's half of unlocking local storage on refresh
 	// (sessionsecret.go, migration 0019).
 	mux.HandleFunc("GET /api/v1/me/unlock-secret", api.requireAuth(api.getUnlockSecret))
+	mux.HandleFunc("POST /api/v1/me/device-secrets", api.requireAuth(api.createDeviceSecret))
+	mux.HandleFunc("GET /api/v1/me/device-secrets/{id}", api.requireAuth(api.getDeviceSecret))
+	mux.HandleFunc("DELETE /api/v1/me/device-secrets/{id}", api.requireAuth(api.deleteDeviceSecret))
+
+	// QR login (signinlinks.go): the signed-in device's side, then the
+	// new device's (no session yet).
+	mux.HandleFunc("POST /api/v1/me/sign-in-links", api.requireAuth(api.createSignInLink))
+	mux.HandleFunc("GET /api/v1/me/sign-in-links/{id}", api.requireAuth(api.getSignInLink))
+	mux.HandleFunc("POST /api/v1/me/sign-in-links/{id}/approve", api.requireAuth(api.approveSignInLink))
+	mux.HandleFunc("DELETE /api/v1/me/sign-in-links/{id}", api.requireAuth(api.deleteSignInLink))
+	mux.HandleFunc("POST /api/v1/sign-in-links/{id}/claim", api.limitByIP(api.claimSignInLink))
+	mux.HandleFunc("POST /api/v1/sign-in-links/{id}/status", api.signInLinkStatus)
 
 	// Recovery backups: the caller's own, opaque, encrypted client-side
 	// (recovery.go, migration 0015).

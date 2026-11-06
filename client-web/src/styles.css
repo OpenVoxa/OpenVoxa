@@ -1045,3 +1045,7 @@ button.dot-host { position: relative; }
 @media (hover: none) { .tile-actions { opacity: 1; pointer-events: auto; } }
 .tile-actions button { padding: 4px 8px; font-size: 13px; }
 .person-tile:fullscreen { aspect-ratio: auto; border-radius: 0; }
+
+/* QR login (SignInLink.tsx): the code above its explanation and buttons. */
+.signin-link { display: flex; flex-direction: column; gap: 8px; }
+.signin-link .qr { align-self: flex-start; }

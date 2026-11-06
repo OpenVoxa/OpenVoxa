@@ -1333,6 +1333,39 @@ at the end.
     - Setup: QR of the `otpauth://` address plus the secret as text,
       confirmed with one code before it is switched on. A code works
       once (no replay within its 30 s window).
+  - **QR login settled with Ryan, 2026-11-06** (all three as
+    recommended):
+    - **The signed-in device shows the QR.** Settings > Account, "Sign
+      In on Another Device": a QR of a one-time link
+      `https://<server>/#signin=<id>.<secret>`, 2 minutes, single use.
+      The phone's own camera app opens it in the browser; no camera code.
+      The signed-in device then asks "Sign in as <name> on <device>?"
+      (Approve / Deny). Not the Discord way round (login screen shows
+      the QR): that needs a phone already signed in and is the
+      well-known QR phishing route (a scammer sends you their QR).
+    - **No camera: Copy Link + paste box.** Copy Link sits by the QR;
+      the login page has "Sign in with a link" to paste it into. The
+      desktop app needs nothing of its own (its server view is the web
+      client).
+    - **The new device's storage is locked by a server-held device
+      secret**, since it never gets the password: a random secret per
+      device keyring, released only to a signed-in session of the same
+      account. Anyone with the files still has to sign in (two-factor
+      included); the server holds half of the lock, as it already does
+      while you're signed in. Sign-out keeps the device as usual. A
+      later password sign-in there adds a password keyring **beside**
+      the device one (both open the same data key), so alternating
+      password and QR sign-ins never sets the browser up again. A QR
+      sign-in on a browser that holds the account under the password
+      only cannot open it: that browser starts over as a new device
+      (history from the handover). "Sign out and erase" deletes the
+      server's secret too.
+    - **The secret in the link never reaches the server** (it is in the
+      `#` part). The recovery handover (backup id and backup key, not
+      the 12 words: a signed-in device only keeps the key) is encrypted
+      under a key derived from it, so the server relays it blind. The
+      server makes the session; the QR stands in for both the password
+      and the two-factor code, since the approving device passed both.
 
 ## Permission groups
 
@@ -2795,6 +2828,22 @@ requirement on disconnects covered accounts' sockets so their apps hit
 the gate at once. Host-command log entries have no actor and detail
 `host command`; the log shows them as "The server host".
 
+**QR login (`signinlinks.go`, client-core `signinlink.ts`, client-web
+`SignInLink.tsx`).** Links live in server memory (a restart cancels the
+ones in flight); one per account at a time. States: waiting (2 min to
+be opened) -> claimed (2 more min to approve) -> approved (1 min to
+collect) -> done, or denied. The claim token (256 bits, only its hash
+kept) is what the new device polls `/status` with, so that endpoint has
+no rate limit; `/claim` shares the login IP limiter. Approval creates
+the session with `createSession` (split out of `issueSession`); if the
+link died meanwhile the fresh session is deleted again. The handover is
+HKDF(link secret, salt = id) AES-GCM with the id in the AAD; the server
+stores and returns it as opaque base64. Device keyrings are a second
+record (`deviceKeyring`) beside `keyring` in the device store; the
+session copy's check works with either. `/me/device-secrets*` passes
+the two-factor setup gate, like `unlock-secret`. Max 20 secrets per
+account, oldest dropped.
+
 **`go mod tidy` silently raises the `go` directive.** Running it with a
 newer local toolchain than the Dockerfile's base image rewrites `go.mod`
 and the container build then fails with a confusing version error. Keep
@@ -2972,15 +3021,14 @@ verified; the section named holds the design.
   Account; Server settings, Security; Members, Remove 2FA; host command
   `reset-two-factor`), TF1-TF11 (Feature decisions, "Planned",
   two-factor; Implementation notes, Server, "Two-factor").
+- 2026-11-06 QR login (Settings, Account, Sign In on Another Device;
+  login page "Sign in with a link"; device keyrings, migration 0031),
+  QR1-QR9 (Feature decisions, "Planned", "QR login settled";
+  Implementation notes, Server, "QR login").
 
 ## Open items
 
 ### Next up (Ryan picks; each gets a design talk first)
-
-- [ ] **QR login** (Ryan, 2026-11-06: next; choices made, Feature
-      decisions, "Planned", end: skips password and code after a
-      confirm on the signed-in device, hands over the recovery key).
-      Detailed design is the next session's first job.
 
 - [ ] User avatars, uploaded in Settings, per server. They replace the
       letter circles in voice tiles. Feature decisions, "Planned".
@@ -3034,7 +3082,6 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
 
 ### Features not built yet
 
-- [ ] Device linking by QR: now Next up.
 - [ ] Guest accounts: the Everyone group exists, but there is no
       anonymous or invite flow to create one.
 - [ ] `@everyone` / `@group` mentions, mention counts, notifications
@@ -3112,6 +3159,8 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
 
 One line each; the section named has the detail.
 
+- [x] QR login (device linking by QR): built 2026-11-06, QR1-QR9
+      pass (Feature decisions, "Planned", "QR login settled").
 - [x] Two-factor sign-in: built 2026-11-06 (Feature decisions,
       "Planned", two-factor; Build order).
 - [x] On-screen push-to-talk button for touchscreens: built 2026-11-06

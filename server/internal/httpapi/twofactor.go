@@ -262,6 +262,7 @@ func twoFactorSetupAllowed(r *http.Request) bool {
 	p := r.URL.Path
 	return (r.Method == http.MethodGet && p == "/api/v1/me") ||
 		p == "/api/v1/me/unlock-secret" ||
+		strings.HasPrefix(p, "/api/v1/me/device-secrets") ||
 		p == "/api/v1/auth/logout" ||
 		strings.HasPrefix(p, "/api/v1/me/two-factor")
 }
