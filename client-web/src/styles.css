@@ -662,7 +662,14 @@ details summary { cursor: pointer; color: var(--muted); }
 .strip { display: flex; gap: 8px; padding: 0 12px 12px; }
 
 /* ------------------------------------------------------ M4 session A */
-.settings-head { margin: 4px 0 0; font-size: 12px; text-transform: uppercase; color: var(--muted); }
+/* Section headers in Settings and Server settings: accent colour, and a
+   line above each one but the first in a tab, so sections are easy to tell apart. */
+.settings-head {
+  margin: 4px 0 0; padding-top: 14px; border-top: 1px solid var(--line);
+  font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; color: var(--accent);
+}
+.modal-body > .settings-head:first-child,
+.modal-body > .settings-section:first-child > .settings-head:first-child { margin-top: 0; padding-top: 0; border-top: none; }
 .notice time { margin-right: 6px; }
 .notice.membership { border-left-color: var(--line); background: none; padding: 2px 10px; }
 

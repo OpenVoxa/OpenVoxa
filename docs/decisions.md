@@ -2804,6 +2804,8 @@ verified; the section named holds the design.
 - 2026-11-06 Ducking share sound while others talk, DK1-DK9 (untested:
   Open items, Untested; Feature decisions, "Voice activation and audio
   settings").
+- 2026-11-06 Settings section headers in the accent colour with a line
+  between sections (SH1-SH4; Ryan: the lines are subtle, fine for now).
 
 ## Open items
 
