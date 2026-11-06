@@ -23,36 +23,31 @@ Fixed decisions (decisions.md "Blocking decisions"; don't reopen):
 - **Per-channel E2EE, admin-controlled.** Text channels: encrypted or not,
   chosen at creation (`manage_channels`), fixed after. Voice/screen share
   always E2EE; DMs will be too.
-- **Account deletion = crypto-shredding** (built). Encrypted channels
-  need nothing (MLS forward secrecy); plaintext bodies are sealed under a
-  per-account key file (`internal/keystore`), destroyed after `purgeUser`.
+- **Account deletion = crypto-shredding** (built): plaintext is sealed
+  under a per-account key file (`internal/keystore`), destroyed on delete.
 
 ## Where things are written down
 
-`docs/decisions.md` is the record of every decision; search it by
-section name, not line number. Sections: Goals and scope, Threat model,
-Blocking decisions, Architecture, **Feature decisions** (one #### per
-feature under Text and chat / Voice and screen share / Accounts and
-administration / Desktop app, then Planned), Permission groups,
-**Encryption**, Known tensions, **Implementation notes** (hard-won
-gotchas grouped MLS / LiveKit / Electron / server / web client / builds:
-read the group before touching that code), **Build order** (what was
-built when, with test IDs; new work goes in its dated list), **Open
+`docs/decisions.md` records every decision; search by section name.
+Key sections: **Feature decisions** (one #### per feature, then
+Planned), **Encryption**, **Implementation notes** (gotchas grouped MLS /
+LiveKit / Electron / server / web client / builds: read the group before
+touching that code), **Build order** (dated, with test IDs), **Open
 items** (Next up, not built, untested, security gaps, Closed).
-`README.md` is public status; `deploy/README.md` covers compose, TLS,
-LiveKit, storage, key backups, share limit, troubleshooting.
-Older full handoff: project doc claude/handoff-step-13.md.
+`README.md` is public status; `deploy/README.md` is operations. Older
+full handoff: project doc claude/handoff-step-13.md.
 
 ## Layout
 
 ```
 server/            Go (module root; go.mod says go 1.26)
-  main.go, cli.go     host commands: grant-admin, list-admins, list-users, delete-user
+  main.go, cli.go     host commands: grant-admin, list-admins, list-users,
+                      delete-user, reset-two-factor
   Dockerfile          client-core -> client-web -> Go -> distroless
   internal/httpapi/   HTTP + WS, one file per feature; livekitapi.go = LiveKit
                       admin calls; webui/ = embedded client-web build
-  internal/db/        Postgres; migrations/00NN_*.sql embedded, ordered (latest 0029)
-  internal/{auth,blob,config,gif,hub,keystore,password,perm,ratelimit,sealedfile,unfurl}
+  internal/db/        Postgres; migrations/00NN_*.sql embedded, ordered (latest 0030)
+  internal/{auth,blob,config,gif,hub,keystore,password,perm,ratelimit,sealedfile,totp,unfurl}
 client-core/       TypeScript protocol + crypto, no UI. src/: mls/ (ts-mls,
                    pinned 1.6.2), identity, groups (MLS lifecycle), chat
                    (Chat + ChannelView), voice (VoiceClient, lazy), attachments,
@@ -85,10 +80,9 @@ never in the media path) · Caddy optional for TLS · MLS ciphersuite 1.
   `server/`:
   `docker run --rm -v "$PWD":/src -v ovx-gomod:/go/pkg/mod -w /src golang:1.26 sh -c 'go vet ./internal/httpapi/ && go test ./internal/<pkg>/ && go build ./...'`
   (`ovx-gomod` caches modules). The image build is the final check.
-- Cloud container: go1.24, no proxy; needs a temporary go.mod (handoff
-  doc, "Working notes"). Never commit it.
-- client-web dist is copied into `webui/` before `go build` (embed). Don't let `go mod tidy` raise the `go` directive
-  above golang:1.26.
+- Cloud container: go1.24; needs a temporary go.mod (handoff doc,
+  "Working notes"), never committed. Don't let `go mod tidy` raise the
+  `go` directive above golang:1.26.
 
 Docker stack (from `~/OpenVoxa/deploy`):
 
@@ -120,14 +114,13 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 - **On Docker, rebuild without asking as soon as builds pass** (Ryan is
   the only user). Order: build, rebuild, check `ps` + `logs server --tail
   15`, Ryan hard-refreshes (Ctrl+Shift+R) and tests, then commit + push.
-- Give Ryan numbered test steps with IDs (e.g. SL1-SL5); he reports them
-  back as passed or failed.
+- Give Ryan numbered test steps with IDs (e.g. SL1-SL5) to report back.
 - Discuss designs with Ryan before building anything with a real choice
   in it. Verify LiveKit/ts-mls behaviour by experiment, not docs.
 - Commits: only when asked. `git commit -s`, author `rynd-automation
-  <rynd_automation@outlook.com>`, short imperative subject, one logical
-  change per commit. Never commit `.env`, keys or
-  `docker-compose.override.yml`.
+  <rynd_automation@outlook.com>` (not in git config: pass `-c user.name=
+  -c user.email=`), short imperative subject, one logical change per
+  commit. Never commit `.env`, keys or `docker-compose.override.yml`.
 - Push token: fine-grained, stored via `credential.helper store
   --file=.git/push-credentials` (never print or commit it). A username
   prompt means it expired: Ryan makes a new one.
@@ -141,8 +134,7 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 - A **device** is the crypto identity, not an account. Schema is
   multi-device; only single-device is implemented.
 - Key packages are single-use (`FOR UPDATE SKIP LOCKED`) plus one
-  reusable last resort.
-- Encrypted channels show no history from before you joined. By design.
+  reusable last resort. Encrypted channels show no earlier history.
 - Ratchet trees travel as tagged JSON (our codec): watch `Uint8Array`,
   `BigInt`, and `undefined`-vs-`null` blank nodes.
 - ts-mls docs describe intent, not return shapes: verify by experiment.
@@ -152,50 +144,37 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
   it must be same-origin, same build.
 - Permission changes must explicitly reach live WebSockets and live
   voice calls (`kickFromLostVoice`).
-- Defaults: visual pop-ups off, in-page sounds on; least friction for
-  end users.
+- Defaults: visual pop-ups off, in-page sounds on; least friction.
 - **UI:** colours only as variables in `client-web/src/styles.css`
   (users override them via `appearance.ts`). Ryan wants things to match
   exactly: sizes, spacing, Title Case tab names. Buttons must look like
   buttons; reuse `primary` (filled accent), `outline` (accent outline),
   `save` (green, grey when disabled, bottom left) and `Modal wide fixed`
   (Settings and Server settings, both 80% of the window, footer `.modal-foot`).
-  Grey out unavailable controls instead of hiding them. Check before
-  showing him.
+  Grey out unavailable controls instead of hiding them.
 
 ## Current state (rewrite every session)
 
 _2026-11-06._ Done this session: **two-factor sign-in** (TF1-TF11
-pass). TOTP + 10 backup codes in Settings, Account; Server settings,
-Security (Off / Staff / Everyone, held at the setup screen at once);
-Members, Remove 2FA (logged); host command `reset-two-factor`. Read
-Implementation notes, Server, "Two-factor" before touching sign-in
-(ticket after the password, gate in `requireAuth`, secrets sealed in
-the keystore). Migration 0030. Also earlier the same day: switch
-stream, ducking share sound (DK1-DK9 **untested**), RNNoise. Desktop
-app 0.1.8 (patch: `npm run release:win`, commit the package.json bump).
+pass): Settings, Account; Server settings, Security; Members, Remove
+2FA; `reset-two-factor`. Read Implementation notes, Server, "Two-factor"
+before touching sign-in. Earlier the same day: switch stream, ducking
+share sound (DK1-DK9 **untested**), RNNoise. Desktop app 0.1.8.
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts (kept until a sweep before beta):
   tuckilufigus (Ryan), staff, openvoxaadmin, test0user. Voice channels:
   voice-general, vip-voice (admins only).
-- Docker deploy: LiveKit v1.13.11, host networking
-  (`host.docker.internal:7880`), `update-node-ip.sh` on cron. Blobs on
-  `/mnt/openvoxa-blobs`. Account keys in volume `deploy_key-data` under
-  a KEK (Ryan holds the only copies), backed up daily 03:30 to
-  `~/openvoxa-key-backups` (7 days); TOTP secrets live under those keys
-  too. Closed off: Ryan is the only user. Disk was 62% (`docker builder
-  prune` past ~80%).
-- Untested and gaps: decisions.md Open items (K1 flows 2-5, G2-G4, P3,
-  D1, VA7c, DK1-DK9).
-- **Next session: QR login.** Ryan's choices are made (decisions.md,
-  Feature decisions, "Planned", end: the signed-in device confirms
-  "Sign in as <name> on this device?", the new one types nothing, QR
-  lasts ~2 minutes, single use, hands over the recovery key). Settle
-  the open details with him (who shows the QR, desktop app's part,
-  how it relates to two-factor's ticket), then build.
-- **After that** (Ryan picks; discuss each first; decisions.md Open
-  items, Next up): avatars, server icons, bug reports (then enable About's Report a
-  Bug), channel links, quoting, code blocks with a language, channel
-  groups and ordering, DMs and whispers, desktop status icon. Later:
-  code signing, "server needs app version X".
+- Docker deploy: LiveKit v1.13.11, host networking, `update-node-ip.sh`
+  on cron. Blobs on `/mnt/openvoxa-blobs`. Account keys (also sealing
+  TOTP secrets) in volume `deploy_key-data` under a KEK only Ryan holds,
+  backed up daily 03:30 to `~/openvoxa-key-backups`. Ryan is the only
+  user. `docker builder prune` when disk passes ~80%.
+- Untested and gaps: decisions.md Open items.
+- **Next session: QR login.** Choices made (decisions.md, Feature
+  decisions, "Planned", end); settle the open details with Ryan (who
+  shows the QR, the desktop app's part, fit with two-factor), then build.
+- **After that** (Ryan picks; discuss each first; Open items, Next up):
+  avatars, server icons, bug reports, channel links, quoting, code block
+  languages, channel groups, DMs, desktop status icon. Later: code
+  signing, "server needs app version X".
