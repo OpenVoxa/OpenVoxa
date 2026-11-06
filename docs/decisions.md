@@ -1292,8 +1292,25 @@ at the end.
   relays encrypted messages; the old device approves the login and hands
   over the backup key. The typed recovery key is the fallback.
 - **Two-factor sign-in:** TOTP only (authenticator apps, RFC 6238) plus
-  one-time backup codes. No SMS, email or third-party service. After
-  device linking.
+  one-time backup codes. No SMS, email or third-party service.
+- **Decided with Ryan, 2026-11-06** (both "huge, we'll want those"):
+  - **Two-factor first**, then QR linking (reversing the step 13
+    order), so linking knows from the start that it stands in for the
+    code.
+  - **Optional, and an administrator can require it:** anyone can turn
+    it on in Settings; a Server settings switch requires it for staff
+    or for everyone, and those people set it up at their next sign-in.
+  - **Lost phone and backup codes:** an administrator removes the
+    person's two-factor in Server settings > Members (logged in the
+    moderation log); a host command covers an administrator locked out
+    themselves.
+  - **QR login skips the password and the code, after a confirm:** the
+    signed-in device asks "Sign in as <name> on this device?" and the
+    new one needs nothing typed (like Discord). The QR lasts about 2
+    minutes and works once, and it also hands over the recovery key, so
+    history comes along.
+  - Still to settle when designing: "remember this device", backup code
+    count, where the admin switch lives, the desktop app's part.
 
 ## Permission groups
 
@@ -2917,6 +2934,10 @@ verified; the section named holds the design.
 
 ### Next up (Ryan picks; each gets a design talk first)
 
+- [ ] **Two-factor sign-in, then QR login** (Ryan, 2026-11-06: next;
+      choices made, Feature decisions, "Planned", end). Two-factor's
+      detailed design is the next session's first job.
+
 - [ ] User avatars, uploaded in Settings, per server. They replace the
       letter circles in voice tiles. Feature decisions, "Planned".
 - [ ] Server icon and name in the pane, set in Server settings (same
@@ -2968,8 +2989,7 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
 
 ### Features not built yet
 
-- [ ] Device linking by QR, two-factor sign-in (Feature decisions,
-      "Planned"); several devices per account at once (schema ready).
+- [ ] Device linking by QR, two-factor sign-in: now Next up.
 - [ ] Guest accounts: the Everyone group exists, but there is no
       anonymous or invite flow to create one.
 - [ ] `@everyone` / `@group` mentions, mention counts, notifications

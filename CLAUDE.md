@@ -188,11 +188,17 @@ Per-channel audio quality is shelved (Ryan: rarely used). Desktop app
   `/mnt/openvoxa-blobs`. Account keys in volume `deploy_key-data` under
   a KEK (Ryan holds the only copies), backed up daily 03:30 to
   `~/openvoxa-key-backups` (7 days). Closed off: Ryan is the only user.
-  Disk 85%.
+  Disk 62% (build cache cleared 2026-11-06; `docker builder prune` again
+  past ~80%).
 - Untested and gaps: decisions.md Open items (K1 flows 2-5, G2-G4, P3,
   D1, VA7c, DK1-DK9).
-- **Next** (Ryan picks; discuss each first; decisions.md Open items, Next
-  up): avatars, server icons, bug reports (then enable About's Report a
+- **Next session: two-factor sign-in (TOTP + backup codes), then QR
+  login.** Ryan's choices are made (decisions.md, Feature decisions,
+  "Planned", end: optional + admin can require, admin reset, QR skips
+  password and code after a confirm); settle the open details with him,
+  then build.
+- **After that** (Ryan picks; discuss each first; decisions.md Open
+  items, Next up): avatars, server icons, bug reports (then enable About's Report a
   Bug), channel links, quoting, code blocks with a language, channel
   groups and ordering, DMs and whispers, desktop status icon. Later:
   code signing, "server needs app version X".
