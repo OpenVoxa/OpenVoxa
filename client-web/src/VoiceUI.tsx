@@ -652,6 +652,7 @@ export function VoiceSettings({ voice, snap }: {
             <span className="muted small block">Otherwise quality follows the size of the video on screen. Applies next time you join.</span>
           </span>
         </label>
+        <ShareDucking voice={voice} />
 
         {error && <p className="error" role="alert">{error}</p>}
     </>
@@ -814,18 +815,45 @@ function MicSettings({ voice, snap, keyName, bindKey, binding }: {
   );
 }
 
+/** Ducking: share sound goes down while other people talk. */
+function ShareDucking({ voice }: { voice: VoiceClient }) {
+  const [on, setOn] = useState(voice.audioSettings.duckShare);
+  const [level, setLevel] = useState(Math.round(voice.audioSettings.duckLevel * 100));
+  return (
+    <>
+      <label className="check">
+        <input type="checkbox" checked={on} onChange={(e) => {
+          setOn(e.target.checked);
+          void voice.setAudioSettings({ duckShare: e.target.checked });
+        }} />
+        <span>
+          Lower screen share sound while others talk
+          <span className="muted small block">So a shared video doesn't drown out the people in the call. Your own voice doesn't count.</span>
+        </span>
+      </label>
+      <Slider disabled={!on} label="Share sound while others talk" value={level} min={0} max={90} step={5}
+        text={level === 0 ? "Silent" : `${level}%`} onChange={(v) => {
+          setLevel(v);
+          void voice.setAudioSettings({ duckLevel: v / 100 });
+        }}
+        help="How loud share sound stays while someone talks. Lower is a stronger effect." />
+    </>
+  );
+}
+
 function LevelMeterHint() {
   return <p className="muted small">Voice activation applies in the test too: you only hear yourself when the bar is green.</p>;
 }
 
-function Slider({ label, value, min, max, step, text, help, onChange }: {
+function Slider({ label, value, min, max, step, text, help, disabled, onChange }: {
   label: string; value: number; min: number; max: number; step: number; text: string; help?: string;
-  onChange: (v: number) => void;
+  disabled?: boolean; onChange: (v: number) => void;
 }) {
   return (
-    <label className="slider-row">
+    <label className={`slider-row${disabled ? " disabled" : ""}`}>
       <span className="slider-head"><span className="small">{label}</span><span className="muted small">{text}</span></span>
-      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} />
+      <input type="range" min={min} max={max} step={step} value={value} disabled={disabled}
+        onChange={(e) => onChange(Number(e.target.value))} />
       {help && <span className="muted small">{help}</span>}
     </label>
   );
