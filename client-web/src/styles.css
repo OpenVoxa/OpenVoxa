@@ -858,6 +858,14 @@ button.dot-host { position: relative; }
 .mention.me { background: var(--mention-me-bg); color: var(--text); }
 .msg.mentions-me { background: var(--mention-row); box-shadow: inset 2px 0 0 var(--accent); }
 .msg.mentions-me:hover { background: var(--mention-me-bg); }
+/* Channel and message links to this server: the mention pill, clickable. */
+.channel-chip { padding: 0 3px; border-radius: 3px; background: var(--mention-bg);
+  color: var(--mention-text); font-weight: 600; text-decoration: none; }
+a.channel-chip:hover { background: var(--mention-me-bg); color: var(--text); }
+.channel-chip .chip-sep { font-weight: 400; }
+.channel-chip.unknown { background: var(--input); color: var(--muted); font-weight: 400; cursor: default; }
+/* The message a link (or, later, a reply) jumped to, for a moment. */
+.msg.jumped, .msg.jumped:hover { background: var(--mention-me-bg); transition: background 0.4s; }
 .channel .mention-badge {
   min-width: 18px;
   height: 18px;

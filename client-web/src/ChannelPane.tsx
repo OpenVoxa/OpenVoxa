@@ -16,6 +16,7 @@ import { MAX_REACTION_KINDS } from "@core/chat";
 import type { ApiCall } from "@core/identity";
 import { describeRetention, Modal } from "./ChannelDialogs";
 import { firstLink, Markdown } from "./markdown";
+import { channelLink, useLinks } from "./links";
 import { LinkPreview } from "./previews";
 import { GifPicker, useGifsEnabled } from "./gifs";
 import { EmojiPicker, useEmojiShortcodes } from "./emoji";
@@ -35,7 +36,7 @@ function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export function ChannelPane({ view, call, userId, username, canDeleteAny, canManageStickers }: {
+export function ChannelPane({ view, call, userId, username, canDeleteAny, canManageStickers, jumpTo, onJumped }: {
   view: ChannelView;
   call: ApiCall;
   userId: string;
@@ -43,6 +44,9 @@ export function ChannelPane({ view, call, userId, username, canDeleteAny, canMan
   canDeleteAny: boolean;
   /** Holds manage_stickers: the empty sticker picker says where to add some. */
   canManageStickers: boolean;
+  /** A message to scroll to (a message link), until onJumped. */
+  jumpTo: string | null;
+  onJumped: () => void;
 }) {
   const snap = useSnapshot(view);
   const previewsEncrypted = useToggle(PREVIEWS_ENCRYPTED);
@@ -126,6 +130,8 @@ export function ChannelPane({ view, call, userId, username, canDeleteAny, canMan
         editing={editing}
         setEditing={setEditing}
         onError={setError}
+        jumpTo={jumpTo}
+        onJumped={onJumped}
       />
 
       {error && (
@@ -178,8 +184,13 @@ function CryptoBanner({ crypto }: { crypto: CryptoState }) {
 const STICK_PX = 80;
 /** Start loading older history this close to the top. */
 const OLDER_PX = 300;
+/** How many older pages (50 messages each) a jump to a message that
+ * isn't loaded will fetch before giving up. */
+const JUMP_PAGES = 20;
+/** How long the message jumped to stays highlighted. */
+const JUMP_FLASH_MS = 2000;
 
-function MessageList({ view, snap, call, previews, userId, username, canDeleteAny, editing, setEditing, onError }: {
+function MessageList({ view, snap, call, previews, userId, username, canDeleteAny, editing, setEditing, onError, jumpTo, onJumped }: {
   view: ChannelView;
   snap: ChannelSnapshot;
   call: ApiCall;
@@ -190,6 +201,8 @@ function MessageList({ view, snap, call, previews, userId, username, canDeleteAn
   editing: string | null;
   setEditing: (id: string | null) => void;
   onError: (e: string) => void;
+  jumpTo: string | null;
+  onJumped: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -241,6 +254,43 @@ function MessageList({ view, snap, call, previews, userId, username, canDeleteAn
     }
     remember(el);
   });
+
+  // Jumping to a message (a message link; replies later): scroll to it
+  // if it's loaded, else load older pages until it is, up to JUMP_PAGES.
+  // After the effect above, so following the bottom doesn't undo it.
+  const jumpState = useRef<{ id: string | null; pages: number; done: boolean }>({ id: null, pages: 0, done: false });
+  const [flash, setFlash] = useState<string | null>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (jumpState.current.id !== jumpTo) jumpState.current = { id: jumpTo, pages: 0, done: false };
+    const j = jumpState.current;
+    if (!jumpTo || j.done || !el || !snap.loaded || snap.loadingOlder) return;
+    const node = el.querySelector<HTMLElement>(`.msg[data-id="${CSS.escape(jumpTo)}"]`);
+    if (node) {
+      j.done = true;
+      stick.current = false;
+      node.scrollIntoView({ block: "center" });
+      remember(el);
+      setFlash(jumpTo);
+      onJumped();
+    } else if (snap.hasMore && j.pages < JUMP_PAGES) {
+      j.pages++;
+      void view.loadOlder();
+    } else {
+      j.done = true;
+      view.notice(snap.hasMore
+        ? "That message is too far back to find. Scroll up to load older messages."
+        : snap.channel.encrypted
+          ? "That message isn't here: it was deleted, or it's from before this device could read the channel."
+          : "That message isn't here: it was deleted, or it's older than this channel keeps.");
+      onJumped();
+    }
+  });
+  useEffect(() => {
+    if (!flash) return;
+    const t = setTimeout(() => setFlash(null), JUMP_FLASH_MS);
+    return () => clearTimeout(t);
+  }, [flash]);
 
   const onScroll = () => {
     const el = ref.current;
@@ -300,6 +350,8 @@ function MessageList({ view, snap, call, previews, userId, username, canDeleteAn
       <Message
         key={m.id}
         m={m}
+        link={m.pending ? null : channelLink(snap.channel.id, m.id)}
+        jumped={flash === m.id}
         call={call}
         encrypted={snap.channel.encrypted}
         previews={previews}
@@ -548,8 +600,12 @@ function Reactions({ m, userId, canReact, onReact, onOpenReact }: {
   );
 }
 
-function Message({ m, call, encrypted, previews, compact, userId, username, members, canDelete, canEdit, canReport, canReact, editing, onEdit, onCancelEdit, onSaveEdit, onDelete, onReport, onReact, onOpenReact, onDismiss }: {
+function Message({ m, link: address, jumped, call, encrypted, previews, compact, userId, username, members, canDelete, canEdit, canReport, canReact, editing, onEdit, onCancelEdit, onSaveEdit, onDelete, onReport, onReact, onOpenReact, onDismiss }: {
   m: ChatMessage;
+  /** The message's link address; null while it's still being sent. */
+  link: string | null;
+  /** Just jumped to: highlighted for a moment. */
+  jumped: boolean;
   call: ApiCall;
   encrypted: boolean;
   previews: boolean;
@@ -578,7 +634,14 @@ function Message({ m, call, encrypted, previews, compact, userId, username, memb
   const colour = useNameColour(gone ? null : m.own ? userId : m.authorId);
   const classes = ["msg", compact ? "compact" : "", m.pending ? "pending" : "", m.failed ? "failed" : "",
     m.deleted || m.unreadable ? "faint" : "",
-    m.mentionsMe && !m.deleted && !m.unreadable ? "mentions-me" : ""].filter(Boolean).join(" ");
+    m.mentionsMe && !m.deleted && !m.unreadable ? "mentions-me" : "", jumped ? "jumped" : ""].filter(Boolean).join(" ");
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(t);
+  }, [copied]);
+  const canLink = !!address && !m.deleted;
 
   const sticker = !m.deleted && !m.unreadable ? stickerIdOf(m.text) : null;
   let body: ReactNode;
@@ -624,9 +687,13 @@ function Message({ m, call, encrypted, previews, compact, userId, username, memb
           Not sent: {m.failed}. <button className="link small" onClick={onDismiss}>Dismiss</button>
         </div>
       )}
-      {!editing && (canEdit || canDelete || canReport || canReact) && (
+      {!editing && (canEdit || canDelete || canReport || canReact || canLink) && (
         <div className="actions">
           {canReact && <button onClick={(e) => onOpenReact(e.currentTarget)} title="Add reaction">React</button>}
+          {canLink && (
+            <button onClick={() => void navigator.clipboard.writeText(address).then(() => setCopied(true), () => {})}
+              title="Copy a link to this message">{copied ? "Copied" : "Copy Message Link"}</button>
+          )}
           {canEdit && <button onClick={onEdit} title="Edit">Edit</button>}
           {canReport && <button onClick={onReport} title="Report to the moderators">Report</button>}
           {canDelete && (
@@ -670,6 +737,7 @@ function EditBox({ initial, members, onSave, onCancel }: {
   const [busy, setBusy] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
   const picker = useMentionPicker(members, text, setText, ref);
+  const chanPicker = useChannelPicker(text, setText, ref);
   const codes = useEmojiShortcodes(text, setText, ref);
   useEffect(() => {
     const el = ref.current;
@@ -688,7 +756,7 @@ function EditBox({ initial, members, onSave, onCancel }: {
   }
 
   function onKey(e: KeyboardEvent<HTMLTextAreaElement>) {
-    if (codes.onKey(e) || picker.onKey(e)) return;
+    if (codes.onKey(e) || picker.onKey(e) || chanPicker.onKey(e)) return;
     if (e.key === "Escape") {
       e.preventDefault();
       onCancel();
@@ -701,10 +769,12 @@ function EditBox({ initial, members, onSave, onCancel }: {
   return (
     <div className="edit-box">
       {picker.list}
+      {chanPicker.list}
       {codes.list}
       <AutoTextarea ref={ref} value={text} onChange={setText} onKeyDown={onKey}
         onSelect={(e) => {
           picker.onSelect(e);
+          chanPicker.onSelect(e);
           codes.onSelect(e);
         }}
         disabled={busy} label="Edit message" />
@@ -748,6 +818,7 @@ function Composer({ snap, call, uploads, canManageStickers, onSend, onEditLast }
   const ready = files.flatMap((f) => (f.status === "ready" && f.result ? [f.result] : []));
   const canSend = !reason && !uploading && (!!text.trim() || ready.length > 0);
   const mentionPicker = useMentionPicker(snap.members, text, setText, ref);
+  const channelPicker = useChannelPicker(text, setText, ref);
   const emojiCodes = useEmojiShortcodes(text, setText, ref, (s) => onSend(stickerToken(s.id)));
 
   /** Put picked emoji at the caret (or over the selection). */
@@ -797,7 +868,7 @@ function Composer({ snap, call, uploads, canManageStickers, onSend, onEditLast }
   }
 
   function onKey(e: KeyboardEvent<HTMLTextAreaElement>) {
-    if (emojiCodes.onKey(e) || mentionPicker.onKey(e)) return;
+    if (emojiCodes.onKey(e) || mentionPicker.onKey(e) || channelPicker.onKey(e)) return;
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       if (inCodeBlock(e.currentTarget)) return; // a new line, not send
       e.preventDefault();
@@ -813,6 +884,7 @@ function Composer({ snap, call, uploads, canManageStickers, onSend, onEditLast }
     <UploadTray items={files} onRemove={uploads.remove} />
     <div className="composer">
       {mentionPicker.list}
+      {channelPicker.list}
       {emojiCodes.list}
       {emoji && !reason && (
         <EmojiPicker onPick={insertEmoji} onClose={closeEmoji}
@@ -848,6 +920,7 @@ function Composer({ snap, call, uploads, canManageStickers, onSend, onEditLast }
         onKeyDown={onKey}
         onSelect={(e) => {
           mentionPicker.onSelect(e);
+          channelPicker.onSelect(e);
           emojiCodes.onSelect(e);
         }}
         onPaste={(e) => {
@@ -930,16 +1003,18 @@ function AutoTextarea({ ref, value, onChange, onKeyDown, onSelect, onPaste, disa
   );
 }
 
-// ------------------------------------------------------ @ autocomplete
+// ------------------------------------------------- @ and # autocomplete
 
 /** "@" plus what has been typed of a name, right before the caret. */
 const MENTION_TYPING = /(?:^|[^\w@])@([A-Za-z0-9_-]{0,32})$/;
+/** "#" plus what has been typed of a channel name, right before the
+ * caret ("#" starting a word, so "C#" or a URL's fragment don't count). */
+const CHANNEL_TYPING = /(?:^|\s)#([a-z0-9-]{0,32})$/i;
 const MAX_SUGGESTIONS = 8;
 
 /**
  * The list of names that pops up while typing "@". Offers only people who
- * may view the channel (the server drops anyone else anyway). Arrow keys
- * move, Enter or Tab picks, Escape closes; clicking works too.
+ * may view the channel (the server drops anyone else anyway).
  */
 function useMentionPicker(
   members: readonly Mention[],
@@ -947,20 +1022,66 @@ function useMentionPicker(
   setText: (v: string) => void,
   ref: React.RefObject<HTMLTextAreaElement | null>,
 ) {
-  // Where the "@" is and what follows it, or null when not typing a name.
+  return useSuggestions({
+    typing: MENTION_TYPING, text, setText, ref,
+    label: "People in this channel",
+    find: (q) => members.filter((m) => m.username.toLowerCase().startsWith(q)),
+    key: (m) => m.user_id,
+    insert: (m) => `@${m.username} `,
+    draw: (m) => <ColouredName userId={m.user_id}>@{m.username}</ColouredName>,
+  });
+}
+
+/**
+ * The list of channels that pops up while typing "#": text channels you
+ * can see. Picking one inserts its link address, which reads as a link
+ * anywhere and draws as a #channel chip here (links.ts).
+ */
+function useChannelPicker(
+  text: string,
+  setText: (v: string) => void,
+  ref: React.RefObject<HTMLTextAreaElement | null>,
+) {
+  const channels = useLinks()?.channels ?? [];
+  return useSuggestions({
+    typing: CHANNEL_TYPING, text, setText, ref,
+    label: "Channels",
+    find: (q) => channels.filter((c) => c.kind === "text" && c.name.startsWith(q)),
+    key: (c) => c.id,
+    insert: (c) => `${channelLink(c.id)} `,
+    draw: (c) => <>#{c.name}</>,
+  });
+}
+
+/**
+ * A suggestion list for what's being typed before the caret. Arrow keys
+ * move, Enter or Tab picks, Escape closes; clicking works too. `typing`
+ * matches the trigger and the query (group 1) at the end of the text
+ * before the caret; picking replaces both with insert(item).
+ */
+function useSuggestions<T>({ typing, text, setText, ref, label, find, key, insert, draw }: {
+  typing: RegExp;
+  text: string;
+  setText: (v: string) => void;
+  ref: React.RefObject<HTMLTextAreaElement | null>;
+  label: string;
+  /** Matches for the query (lower case), best first. */
+  find: (q: string) => readonly T[];
+  key: (item: T) => string;
+  insert: (item: T) => string;
+  draw: (item: T) => ReactNode;
+}) {
+  // Where the trigger is and what follows it, or null when not typing one.
   const [query, setQuery] = useState<{ at: number; q: string } | null>(null);
   const [active, setActive] = useState(0);
 
-  const q = query?.q.toLowerCase() ?? "";
-  const matches = query
-    ? members.filter((m) => m.username.toLowerCase().startsWith(q)).slice(0, MAX_SUGGESTIONS)
-    : [];
+  const matches = query ? find(query.q.toLowerCase()).slice(0, MAX_SUGGESTIONS) : [];
   const open = matches.length > 0;
 
   const onSelect = (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
     const el = e.currentTarget;
     const caret = el.selectionStart;
-    const m = el.selectionEnd === caret ? MENTION_TYPING.exec(el.value.slice(0, caret)) : null;
+    const m = el.selectionEnd === caret ? typing.exec(el.value.slice(0, caret)) : null;
     const next = m ? { at: caret - m[1].length - 1, q: m[1] } : null;
     if (next?.at !== query?.at || next?.q !== query?.q) {
       setQuery(next);
@@ -968,14 +1089,14 @@ function useMentionPicker(
     }
   };
 
-  const pick = (who: Mention) => {
+  const pick = (item: T) => {
     if (!query) return;
     const end = query.at + 1 + query.q.length;
-    const insert = `@${who.username} `;
+    const ins = insert(item);
     const after = text.slice(end).replace(/^ /, "");
-    setText(text.slice(0, query.at) + insert + after);
+    setText(text.slice(0, query.at) + ins + after);
     setQuery(null);
-    const caret = query.at + insert.length;
+    const caret = query.at + ins.length;
     requestAnimationFrame(() => {
       const el = ref.current;
       if (!el) return;
@@ -1010,16 +1131,16 @@ function useMentionPicker(
   };
 
   const list = open ? (
-    <ul className="mention-list" role="listbox" aria-label="People in this channel">
-      {matches.map((m, i) => (
-        <li key={m.user_id} role="option" aria-selected={i === active}
+    <ul className="mention-list" role="listbox" aria-label={label}>
+      {matches.map((item, i) => (
+        <li key={key(item)} role="option" aria-selected={i === active}
           className={i === active ? "active" : undefined}
           onMouseDown={(e) => {
             e.preventDefault(); // keep focus in the textarea
-            pick(m);
+            pick(item);
           }}
           onMouseEnter={() => setActive(i)}>
-          <ColouredName userId={m.user_id}>@{m.username}</ColouredName>
+          {draw(item)}
         </li>
       ))}
     </ul>

@@ -1259,7 +1259,7 @@ at the end.
   otherwise. Rename and Delete open Channel Settings (name field
   selected; delete confirmation showing), so there is one place for
   each. The gear stays. No Mute Sounds on voice: no message sounds
-  there. Copy Link waits for per-channel addresses (Open items).
+  there. Copy Channel Link added with channel links (2026-11-06).
   - **Rename** (Ryan asked; the old "fixed after creation" was only for
     want of an endpoint). `PATCH /api/v1/channels/{id}/name`,
     manage_channels, same rules as creation, 409 when taken, then
@@ -1428,6 +1428,25 @@ one session each, in this order:
    and it reads as a link anywhere). To settle while building: a
    message link to a message that isn't loaded uses the same "load
    older until found" as reply jumps.
+
+   **Built 2026-11-06, LK1-LK9 pass** (`client-web/src/links.ts`; chips
+   in `markdown.tsx`; jump in `ChannelPane.tsx` MessageList). Settled:
+   Ryan renamed the action: **Copy Channel Link** (channel menu, text
+   channels only: opening a voice link would mean joining a call) and
+   **Copy Message Link** (message hover bar), since "Copy Link" read
+   like copying a web address. A jump loads up to 20 older pages (1,000
+   messages), centres the message and highlights it for 2 s
+   (`.msg.jumped`); otherwise a channel notice says why (deleted, older
+   than the channel keeps, before this device could read it, or too far
+   back). A link to a channel you can't see, opened or clicked, leaves a
+   notice. A link the page was opened with waits through sign-in;
+   `hashchange` follows links pasted into the same tab. Own links get
+   no link preview. The # list shares one `useSuggestions` with the @
+   list; it needs "#" to start a word (so "C#" and URLs don't trigger).
+   Known limits: a link opened in a new browser tab while another tab
+   holds the account hits the one-tab lock; in the desktop app a link to
+   a different added server opens in the browser rather than switching
+   (would need a desktop release).
 3. **Replies.** A Reply action on each message; a bar above the
    composer ("Replying to staff", preview, cancel, and an @ on/off
    toggle, on by default). The sent message shows the original's
@@ -3124,6 +3143,9 @@ verified; the section named holds the design.
 - 2026-11-06 Code blocks with a language (lowlight colouring, Copy,
   composer Code button), CB1-CB8 (Feature decisions, "Planned: replies,
   links and code blocks", stage 1).
+- 2026-11-06 Channel and message links (Copy Channel Link, Copy Message
+  Link, #channel chips, # suggestions, jump to message), LK1-LK9 (same
+  section, stage 2).
 
 ## Open items
 
@@ -3150,7 +3172,8 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
 - [ ] **Replies, channel and message links, code blocks**: designed
       with Ryan 2026-11-06 (Feature decisions, "Planned", "Replies,
       links and code blocks"); built in three stages, one per session.
-      Stage 1 (code blocks) built 2026-11-06; next: 2 links, 3 replies.
+      Stages 1 (code blocks) and 2 (links) built 2026-11-06; next: 3
+      replies.
 - [ ] **Channel groups and ordering:** text channels are sorted by name
       (`listChannels`, `ORDER BY c.name`). Wanted: named groups
       (categories) that collapse, and drag-to-reorder for channels and
