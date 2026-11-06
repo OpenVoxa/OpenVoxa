@@ -191,8 +191,10 @@ is 0.1.8. Publish a patch: `cd client-desktop && npm run release:win`
   Ryan is the only user. Disk is at 86% (17 GB of Docker build cache).
 - Known gaps and untested steps (K1 flows 2-5, G2-G4, P3, D1): decisions.md
   Open items.
-- **Next:** the backlog, discuss each with Ryan before building: touchscreen
-  push-to-talk button (now also for Tap to Talk), audio batch 2 (RNNoise,
+- 2026-11-06: **on-screen talk button** (TB1-TB8) in the voice bar for
+  Push-to-Talk / Tap to Talk, shown on touch screens by default. Test
+  accounts stay until a clean sweep before beta (Ryan).
+- **Next:** the backlog, discuss each with Ryan before building: audio batch 2 (RNNoise,
   per-channel quality, ducking), avatars, server icons, bug reports (then enable the
   About tab's Report a Bug), channel links (Copy Link). Desktop updates later:
   code signing, "server needs app version X".
