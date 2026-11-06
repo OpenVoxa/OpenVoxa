@@ -1403,6 +1403,17 @@ one session each, in this order:
    Code button that wraps the selection (or an empty line) in ```
    fences. To settle while building: the exact language list and the
    bundle size (report it to Ryan).
+
+   **Built 2026-11-06, CB1-CB8 pass.** Settled: 37 languages
+   (`codeHighlight.ts`: lowlight's "common" set minus arduino, vbnet and
+   wasm, plus dockerfile, nginx and powershell; aliases such as js, sh,
+   yml, html, toml, ps1 work). The highlighter is its own chunk, 155 KB
+   (50 KB gzipped), loaded on the first block with a language; the main
+   bundle is unchanged. Every fenced block gets the bar (label if any,
+   Copy). Token colours are ten `--code-*` variables, each at least
+   4.5:1 on `--input`; not in Settings > Appearance (clutter). Added
+   while building (CB6-CB7): Enter inside a code block (odd number of ```
+   before the caret) starts a new line instead of sending or saving.
 2. **Channel and message links.** Addresses in the URL fragment, so the
    server needs no routes and nothing is sent to it:
    `https://<server>/#/c/<channel id>` and `.../#/c/<channel id>/<message
@@ -3110,6 +3121,9 @@ verified; the section named holds the design.
   administrators; migration 0032), BR1-BR8 (Feature decisions,
   "Planned", bug reports, "Changed and settled"; Implementation notes,
   Server, "Bug reports").
+- 2026-11-06 Code blocks with a language (lowlight colouring, Copy,
+  composer Code button), CB1-CB8 (Feature decisions, "Planned: replies,
+  links and code blocks", stage 1).
 
 ## Open items
 
@@ -3136,6 +3150,7 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
 - [ ] **Replies, channel and message links, code blocks**: designed
       with Ryan 2026-11-06 (Feature decisions, "Planned", "Replies,
       links and code blocks"); built in three stages, one per session.
+      Stage 1 (code blocks) built 2026-11-06; next: 2 links, 3 replies.
 - [ ] **Channel groups and ordering:** text channels are sorted by name
       (`listChannels`, `ORDER BY c.name`). Wanted: named groups
       (categories) that collapse, and drag-to-reorder for channels and

@@ -692,7 +692,7 @@ function EditBox({ initial, members, onSave, onCancel }: {
     if (e.key === "Escape") {
       e.preventDefault();
       onCancel();
-    } else if (e.key === "Enter" && !e.shiftKey) {
+    } else if (e.key === "Enter" && !e.shiftKey && !inCodeBlock(e.currentTarget)) {
       e.preventDefault();
       void save();
     }
@@ -763,6 +763,25 @@ function Composer({ snap, call, uploads, canManageStickers, onSend, onEditLast }
     });
   }, []);
 
+  /** Wrap the selection (or an empty line) in ``` fences, each fence on
+   * its own line. With a selection the caret goes after the opening fence,
+   * where a language ("go") goes; otherwise onto the empty line. */
+  const wrapCode = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    const v = el.value, start = el.selectionStart, end = el.selectionEnd;
+    const sel = v.slice(start, end).replace(/^\n+|\n+$/g, "");
+    const before = start > 0 && v[start - 1] !== "\n" ? "\n" : "";
+    const after = end < v.length && v[end] !== "\n" ? "\n" : "";
+    const open = before + "```\n";
+    setText(v.slice(0, start) + open + sel + "\n```" + after + v.slice(end));
+    const caret = sel ? start + open.length - 1 : start + open.length;
+    requestAnimationFrame(() => {
+      el.focus();
+      el.setSelectionRange(caret, caret);
+    });
+  }, []);
+
   // Focus follows the channel.
   useEffect(() => {
     ref.current?.focus();
@@ -780,6 +799,7 @@ function Composer({ snap, call, uploads, canManageStickers, onSend, onEditLast }
   function onKey(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (emojiCodes.onKey(e) || mentionPicker.onKey(e)) return;
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+      if (inCodeBlock(e.currentTarget)) return; // a new line, not send
       e.preventDefault();
       void send();
     } else if (e.key === "ArrowUp" && !text) {
@@ -840,6 +860,9 @@ function Composer({ snap, call, uploads, canManageStickers, onSend, onEditLast }
         placeholder={reason ?? `Message #${snap.channel.name}`}
         label={`Message #${snap.channel.name}`}
       />
+      <button className="secondary code-btn" disabled={!!reason}
+        onMouseDown={(e) => e.preventDefault()} // keep the selection
+        onClick={wrapCode} title="Code block" aria-label="Code block">{"</>"}</button>
       {gifsEnabled && (
         <button className={`secondary gif-btn${gifs ? " on" : ""}`} disabled={!!reason}
           onMouseDown={(e) => e.stopPropagation()}
@@ -859,6 +882,13 @@ function Composer({ snap, call, uploads, canManageStickers, onSend, onEditLast }
     </div>
     </div>
   );
+}
+
+/** Whether the caret is inside a code block (an odd number of fences
+ * before it). Enter then starts a new line instead of sending or saving,
+ * so code can be typed without Shift. */
+function inCodeBlock(el: HTMLTextAreaElement): boolean {
+  return (el.value.slice(0, el.selectionStart).match(/```/g)?.length ?? 0) % 2 === 1;
 }
 
 /** A textarea that grows with its content, up to a limit (CSS). */
