@@ -236,6 +236,8 @@ export type ChatEvent =
   | { type: "message"; channelId: string; messageId: string; open: boolean }
   /** The open report queue changed; sent only to people who can read it. */
   | { type: "reports_changed" }
+  /** Bug reports changed; sent only to administrators. */
+  | { type: "bug_reports_changed" }
   /** The server's sticker set or its limits changed: refetch the list. */
   | { type: "stickers_changed" }
   /** Someone's name colour may have changed (group colours, membership,
@@ -295,6 +297,7 @@ function compareMessages(a: ChatMessage, b: ChatMessage): number {
 const GLOBAL_EVENTS = new Set([
   "user_purged", "access_changed", "channel_changed", "channel_deleted",
   "perms_changed", "channel_activity", "voice_changed", "reports_changed",
+  "bug_reports_changed",
   "mention", "stickers_changed", "names_changed",
   "archive_message_gone", "archive_channel_expired",
 ]);
@@ -767,6 +770,9 @@ export class Chat {
         break;
       case "reports_changed":
         this.#emit({ type: "reports_changed" });
+        break;
+      case "bug_reports_changed":
+        this.#emit({ type: "bug_reports_changed" });
         break;
       case "stickers_changed":
         this.#emit({ type: "stickers_changed" });

@@ -17,7 +17,7 @@
  * the computer's traffic.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { ApiCall } from "@core/identity";
 import type { Chat } from "@core/chat";
 import { countDown, countUp, sizeOf, trafficTotals } from "@core/traffic";
@@ -28,6 +28,20 @@ const GITHUB = "https://github.com/OpenVoxa/OpenVoxa";
 interface ServerVersion { commit: string; date: string; dirty: boolean }
 interface AppInfo { app: string; electron: string; chromium: string; os: string }
 interface Me { username: string; permissions: string[]; groups: { id: string; name: string }[] }
+
+/** One section of the debug info rows, as shown, copied and sent with a bug report. */
+export interface DebugSection { section: string; items: [string, string][] }
+
+/** The debug info as plain text, one "  key: value" line per row. */
+export function debugText(sections: readonly DebugSection[]): string {
+  const lines: string[] = [];
+  for (const r of sections) {
+    if (lines.length) lines.push("");
+    lines.push(r.section);
+    for (const [k, v] of r.items) lines.push(`  ${k}: ${v.replace(/\s+/g, " ")}`);
+  }
+  return lines.join("\n");
+}
 
 // ------------------------------------------------------------ the meter
 
@@ -108,6 +122,8 @@ export function AboutSettings({ call, chat, voice, snap }: { call: ApiCall; chat
   const [version, setVersion] = useState<ServerVersion | null>(null);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [reporting, setReporting] = useState(false);
+  const [sent, setSent] = useState(false);
   const rate = useBandwidth(voice);
   const now = useNow();
   const desktop = (window as unknown as { openvoxaDesktop?: { appInfo?: () => Promise<AppInfo | null> } }).openvoxaDesktop;
@@ -132,7 +148,7 @@ export function AboutSettings({ call, chat, voice, snap }: { call: ApiCall; chat
   const since = chat.connectedSince;
   const inCall = snap?.state === "connected";
 
-  const rows: { section: string; items: [string, string][] }[] = [
+  const rows: DebugSection[] = [
     {
       section: "This Server",
       items: [
@@ -168,15 +184,17 @@ export function AboutSettings({ call, chat, voice, snap }: { call: ApiCall; chat
     },
   ];
 
+  // What Copy Debug Info copies and a bug report carries: a header
+  // section (time, user agent), then the rows shown on this tab.
+  const debug: DebugSection[] = [
+    { section: "OpenVoxa debug info", items: [["Time", new Date(now).toISOString()], ["User agent", navigator.userAgent]] },
+    ...rows,
+  ];
+
   async function copyDebug() {
-    const lines = [`OpenVoxa debug info, ${new Date().toISOString()}`, `User agent: ${navigator.userAgent}`];
-    for (const r of rows) {
-      lines.push("", r.section);
-      for (const [k, v] of r.items) lines.push(`  ${k}: ${v.replace(/\s+/g, " ")}`);
-    }
     try {
-      await navigator.clipboard.writeText(lines.join("\n"));
-      setCopied("Copied. Paste it into your bug report.");
+      await navigator.clipboard.writeText(debugText(debug));
+      setCopied("Copied.");
     } catch {
       setCopied("Couldn't copy: this browser blocked the clipboard.");
     }
@@ -219,11 +237,85 @@ export function AboutSettings({ call, chat, voice, snap }: { call: ApiCall; chat
       <section className="settings-section">
         <div className="row-actions">
           <button className="secondary" onClick={() => void copyDebug()}>Copy Debug Info</button>
-          <button className="secondary" disabled title="Coming in a later version">Report a Bug</button>
+          <button className="secondary" onClick={() => { setReporting(true); setSent(false); }}
+            disabled={reporting}>Report a Bug</button>
         </div>
         {copied && <p className="muted small" role="status">{copied}</p>}
+        {sent && <p className="muted small" role="status">Sent to this server's moderators and administrators. Thank you!</p>}
       </section>
+
+      {reporting && (
+        <BugReportForm call={call} debug={debug} onCancel={() => setReporting(false)}
+          onSent={() => { setReporting(false); setSent(true); }} />
+      )}
     </>
+  );
+}
+
+// ------------------------------------------------------------ bug report
+
+/**
+ * Report a Bug: goes to this server's moderators and administrators (decisions.md,
+ * Feature decisions, "Planned", bug reports, "Changed and settled"). The
+ * debug info is shown in full before it goes, and can be left out.
+ */
+function BugReportForm({ call, debug, onCancel, onSent }: {
+  call: ApiCall;
+  debug: DebugSection[];
+  onCancel: () => void;
+  onSent: () => void;
+}) {
+  const [text, setText] = useState("");
+  const [include, setInclude] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // The rows as they were when the form opened, so what was shown is
+  // what is sent (bandwidth and uptime keep moving on the tab).
+  const [snapshot] = useState(debug);
+
+  async function send(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await call("/api/v1/bug-reports", {
+        method: "POST",
+        body: JSON.stringify({ text, ...(include ? { debug: snapshot } : {}) }),
+      });
+      onSent();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="settings-section">
+      <h3 className="settings-head">Report a Bug</h3>
+      <form className="settings-form" onSubmit={send}>
+        <label>
+          What went wrong?
+          <textarea value={text} onChange={(e) => { setText(e.target.value); setError(null); }} rows={5}
+            maxLength={4000} autoFocus required
+            placeholder="What you were doing, what you expected, and what happened instead." />
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={include} onChange={(e) => setInclude(e.target.checked)} />
+          <span>Include debug info</span>
+        </label>
+        {include && <pre className="debug-preview small">{debugText(snapshot)}</pre>}
+        <p className="muted small">
+          Goes to this server's moderators and administrators; administrators can pass real bugs on to the
+          OpenVoxa project. No messages or keys are included.
+        </p>
+        {error && <p className="error" role="alert">{error}</p>}
+        <div className="row-actions">
+          <button type="submit" className="primary" disabled={busy || !text.trim()}>{busy ? "Sending…" : "Send Report"}</button>
+          <button type="button" className="secondary" onClick={onCancel} disabled={busy}>Cancel</button>
+        </div>
+      </form>
+    </section>
   );
 }
 

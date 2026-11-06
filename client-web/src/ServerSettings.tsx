@@ -32,6 +32,7 @@ import { StickerMessage, StickersTab } from "./stickers";
 import { VoiceTab } from "./shareLimit";
 import { SignupTab } from "./SignupTab";
 import { SecurityTab } from "./SecurityTab";
+import { BugReportsTab } from "./BugReports";
 import { MUTE_DURATIONS } from "./VoiceUI";
 import { stickerIdOf } from "@core/stickers";
 import { ColouredName, MIN_NAME_CONTRAST, nameContrast, refreshNames, useServerNameColours } from "./names";
@@ -136,24 +137,28 @@ function useUserList(call: ApiCall, reload: number) {
 
 const when = (at: string) => new Date(at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
-export type ServerTab = "groups" | "members" | "reports" | "bans" | "log" | "stickers" | "voice" | "signup" | "security";
+export type ServerTab = "groups" | "members" | "reports" | "bugs" | "bans" | "log" | "stickers" | "voice" | "signup" | "security";
 
 /**
  * reload changes whenever the server says permissions moved, so the lists
  * follow changes made elsewhere (another admin, the CLI).
  */
-export function ServerSettingsDialog({ call, me, reload, openReports, onClose }: {
+export function ServerSettingsDialog({ call, me, reload, openReports, openBugReports, onClose }: {
   call: ApiCall;
   me: Me;
   reload: number;
   /** Shown on the Reports tab; with any open, the dialog opens there. */
   openReports: number;
+  /** Shown on the Bug Reports tab; opens there when no message reports wait. */
+  openBugReports: number;
   onClose: () => void;
 }) {
   const has = (p: string) => me.permissions.includes(p);
-  const [tab, setTab] = useState<ServerTab>(() => (openReports > 0 && has("view_reports") ? "reports" : "groups"));
+  const [tab, setTab] = useState<ServerTab>(() => (openReports > 0 && has("view_reports") ? "reports"
+    : openBugReports > 0 && has("view_reports") ? "bugs" : "groups"));
   const tabs: [ServerTab, string][] = [["groups", "Groups"], ["members", "Members"]];
   if (has("view_reports")) tabs.push(["reports", openReports ? `Reports (${openReports})` : "Reports"]);
+  if (has("view_reports")) tabs.push(["bugs", openBugReports ? `Bug Reports (${openBugReports})` : "Bug Reports"]);
   if (has("ban")) tabs.push(["bans", "Bans"]);
   if (has("ban") || has("view_reports") || has("delete_messages") || has("server_mute")) tabs.push(["log", "Log"]);
   // Every staff member can see the set; managing it needs the switch.
@@ -174,6 +179,7 @@ export function ServerSettingsDialog({ call, me, reload, openReports, onClose }:
         {tab === "groups" && <GroupsTab call={call} me={me} reload={reload} />}
         {tab === "members" && <MembersTab call={call} me={me} reload={reload} />}
         {tab === "reports" && <ReportsTab call={call} me={me} reload={reload} />}
+        {tab === "bugs" && <BugReportsTab call={call} reload={reload} isAdmin={has("administrator")} />}
         {tab === "bans" && <BansTab call={call} reload={reload} />}
         {tab === "log" && <LogTab call={call} me={me} reload={reload} />}
         {tab === "stickers" && (

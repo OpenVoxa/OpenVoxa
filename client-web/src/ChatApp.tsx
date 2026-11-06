@@ -90,6 +90,10 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   // reportsTick trigger a refetch.
   const [openReports, setOpenReports] = useState(0);
   const [reportsTick, setReportsTick] = useState(0);
+  // Open bug reports, the same way and for the same people
+  // (bug_reports_changed is sent only to them).
+  const [openBugs, setOpenBugs] = useState(0);
+  const [bugsTick, setBugsTick] = useState(0);
   const [dialog, setDialog] = useState<
     | { k: "create"; kind: "text" | "voice" }
     | { k: "settings"; id: string; focus?: "name" | "delete" }
@@ -205,6 +209,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           }
           else if (e.type === "voice") setPresence(e.presence);
           else if (e.type === "reports_changed") setReportsTick((t) => t + 1);
+          else if (e.type === "bug_reports_changed") setBugsTick((t) => t + 1);
           else if (e.type === "stickers_changed") void refreshStickers();
           else if (e.type === "names_changed") refreshNames();
           else if (e.type === "me_changed") refreshMe();
@@ -270,6 +275,34 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
       window.removeEventListener("focus", load);
     };
   }, [call, readsReports, reportsTick, permsTick]);
+
+  const readsBugs = readsReports;
+  useEffect(() => {
+    if (!readsBugs) {
+      setOpenBugs(0);
+      return;
+    }
+    let live = true;
+    const load = () => {
+      (call("/api/v1/bug-reports?status=open") as Promise<unknown[]>)
+        .then((r) => live && setOpenBugs(r.length))
+        .catch(() => {});
+    };
+    load();
+    const timer = setInterval(load, 120_000);
+    window.addEventListener("focus", load);
+    return () => {
+      live = false;
+      clearInterval(timer);
+      window.removeEventListener("focus", load);
+    };
+  }, [call, readsBugs, bugsTick, permsTick]);
+
+  // The gear's tooltip and dot: open message reports and bug reports.
+  const waiting = [
+    openReports ? `${openReports}${openReports >= 100 ? "+" : ""} open report${openReports === 1 ? "" : "s"}` : "",
+    openBugs ? `${openBugs} open bug report${openBugs === 1 ? "" : "s"}` : "",
+  ].filter(Boolean).join(", ");
 
   const text = useMemo(() => channels.filter((c) => c.kind === "text"), [channels]);
   const voiceChannels = useMemo(() => channels.filter((c) => c.kind === "voice"), [channels]);
@@ -437,10 +470,10 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           OpenVoxa
           {isStaff && (
             <button className="icon dot-host" onClick={() => setDialog({ k: "server" })}
-              title={openReports ? `Server settings: ${openReports}${openReports >= 100 ? "+" : ""} open report${openReports === 1 ? "" : "s"}` : "Server settings"}
-              aria-label={openReports ? `Server settings, ${openReports} open reports` : "Server settings"}>
+              title={waiting ? `Server settings: ${waiting}` : "Server settings"}
+              aria-label={waiting ? `Server settings, ${waiting}` : "Server settings"}>
               <GearIcon />
-              {openReports > 0 && <span className="alert-dot" aria-hidden="true" />}
+              {waiting && <span className="alert-dot" aria-hidden="true" />}
             </button>
           )}
         </header>
@@ -573,10 +606,11 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
       )}
       {dialog?.k === "server" && isStaff && (
         <ServerSettingsDialog call={call} me={{ userId: session.user_id, permissions: perms, rank }}
-          reload={permsTick + reportsTick} openReports={openReports}
+          reload={permsTick + reportsTick + bugsTick} openReports={openReports} openBugReports={openBugs}
           onClose={() => {
             setDialog(null);
             setReportsTick((t) => t + 1);
+            setBugsTick((t) => t + 1);
           }} />
       )}
       {person && voiceClient && (
