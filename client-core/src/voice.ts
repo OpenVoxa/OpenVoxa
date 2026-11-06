@@ -104,9 +104,12 @@ export interface AudioSettings {
   /** How loud share sound plays while ducked, 0..0.9 of its volume. */
   duckLevel: number;
   echoCancellation: boolean;
-  noiseSuppression: boolean;
+  /** Off; Standard: the browser's filter; Strong: RNNoise (rnnoiseWorklet.ts) instead. */
+  noise: NoiseMode;
   autoGainControl: boolean;
 }
+
+export type NoiseMode = "off" | "standard" | "strong";
 
 export type { MicLevel } from "./micChain.js";
 
@@ -221,6 +224,8 @@ export interface VoiceOptions {
   windowShareSound?: (onFail: (reason: string) => void) => Promise<ShareSound | null>;
   /** The mic AudioWorklet (micWorklet.ts), built by the app. Without it the mic is sent as captured. */
   micWorkletUrl?: string;
+  /** Strong noise suppression's AudioWorklet (rnnoiseWorklet.ts); downloaded when first used. */
+  rnnoiseWorkletUrl?: string;
 }
 
 /** A share's sound from outside getDisplayMedia (the desktop app). */
@@ -378,6 +383,8 @@ export class VoiceClient {
   /** The mic's processing (micChain.ts), one per published mic. */
   #proc: MicChain | null = null;
   #ctx: AudioContext | null = null;
+  #ctx48Refused = false;
+  #strongProblem: "unsupported" | "error" | null = null;
   #gateOpen = false;
   #mutedTalking = false;
   #voiceSince: number | null = null;
@@ -1123,18 +1130,18 @@ export class VoiceClient {
       duckShare: this.#flag("voice.duckShare", true),
       duckLevel: this.#num("voice.duckLevel", 0.3, 0, 0.9),
       echoCancellation: this.#flag("voice.echoCancellation", true),
-      noiseSuppression: this.#flag("voice.noiseSuppression", true),
+      noise: this.#noiseMode(),
       autoGainControl: this.#flag("voice.autoGainControl", true),
     };
   }
 
   /** Change remembered audio settings; applies at once, in a call and in the mic test. */
   async setAudioSettings(change: Partial<Omit<AudioSettings, "mode">>): Promise<void> {
-    const str = (v: number | boolean) => typeof v === "boolean" ? (v ? "1" : "0") : String(v);
+    const str = (v: number | boolean | string) => typeof v === "boolean" ? (v ? "1" : "0") : String(v);
     const keys: Record<string, string> = {
       inputGain: "voice.inputGain", vadAuto: "voice.vadAuto", vadThresholdDb: "voice.vadThreshold",
       tapSilenceMs: "voice.tapSilence", pttReleaseMs: "voice.pttRelease", outputVolume: "voice.outputVolume",
-      echoCancellation: "voice.echoCancellation", noiseSuppression: "voice.noiseSuppression",
+      echoCancellation: "voice.echoCancellation", noise: "voice.noise",
       autoGainControl: "voice.autoGainControl", duckShare: "voice.duckShare", duckLevel: "voice.duckLevel",
     };
     for (const [k, v] of Object.entries(change)) {
@@ -1145,9 +1152,14 @@ export class VoiceClient {
       for (const p of this.#room?.remoteParticipants.values() ?? []) this.#applyVolume(p);
     }
     if ("duckShare" in change || "duckLevel" in change) this.#updateDuck();
-    if ("echoCancellation" in change || "noiseSuppression" in change || "autoGainControl" in change) {
+    if ("noise" in change) this.#strongProblem = null; // picking again tries again
+    if ("noise" in change) {
+      if (this.#proc) await this.#applyStrong(this.#proc);
+      if (this.#test) await this.#applyStrong(this.#test.chain);
+    }
+    if ("echoCancellation" in change || "noise" in change || "autoGainControl" in change) {
       // The browser applies these when capturing: capture again.
-      if (this.#mic) await this.#mic.restartTrack(this.#captureOptions());
+      await this.#recapture();
       if (this.#test) {
         await this.stopMicTest();
         await this.startMicTest();
@@ -1161,9 +1173,90 @@ export class VoiceClient {
     return {
       deviceId: this.#opts.store.get("voice.input") ?? undefined,
       echoCancellation: a.echoCancellation,
-      noiseSuppression: a.noiseSuppression,
+      // The browser's filter for Standard, and in place of Strong where Strong can't run.
+      noiseSuppression: a.noise === "standard" || (a.noise === "strong" && this.#strongProblem !== null),
       autoGainControl: a.autoGainControl,
     };
+  }
+
+  /**
+   * Captures the call's mic again with the current filters (echo
+   * cancellation, noise suppression, automatic gain): unpublished and
+   * published fresh, the path a join (and a server unmute) takes. Not
+   * LiveKit's restartTrack: in the desktop app (Electron 45, Windows) the
+   * restarted capture came back dead, meter included, until a rejoin
+   * (RN7), even with the chain's clone let go first. Others see the mic
+   * drop for a moment.
+   */
+  async #recapture(): Promise<void> {
+    const room = this.#room;
+    if (!room || !this.#mic) return;
+    const run = this.#micChain.then(async () => {
+      const mic = this.#mic;
+      if (this.#room !== room || !mic) return;
+      this.#mic = null;
+      try {
+        await room.localParticipant.unpublishTrack(mic, true);
+      } catch {
+        /* already down */
+      }
+      mic.stop();
+      this.#dropProc();
+    });
+    this.#micChain = run.catch(() => {});
+    try {
+      await run;
+      await this.#syncMic(room);
+    } catch (err) {
+      this.#notice(`Couldn't restart the microphone: ${errorText(err)}. Leave and rejoin the call.`);
+    }
+  }
+
+  /** For the console (openvoxaVoice.micInfo()): the call's capture as the browser sees it. */
+  micInfo(): Record<string, unknown> {
+    const raw = (this.#mic as unknown as { _mediaStreamTrack?: MediaStreamTrack } | null)?._mediaStreamTrack;
+    return {
+      published: !!this.#mic,
+      livekitMuted: this.#mic?.isMuted ?? null,
+      track: raw ? { state: raw.readyState, enabled: raw.enabled, muted: raw.muted, label: raw.label, settings: raw.getSettings() } : null,
+      context: this.#ctx ? { state: this.#ctx.state, sampleRate: this.#ctx.sampleRate } : null,
+      chain: !!this.#proc,
+      noise: this.audioSettings.noise,
+      strongProblem: this.#strongProblem,
+    };
+  }
+
+  #noiseMode(): NoiseMode {
+    const v = this.#opts.store.get("voice.noise");
+    if (v === "off" || v === "standard" || v === "strong") return v;
+    return this.#flag("voice.noiseSuppression", true) ? "standard" : "off"; // the old on/off switch
+  }
+
+  /** Strong noise suppression couldn't run here: "unsupported" (not 48 kHz) or "error" (didn't load). */
+  get strongNoiseProblem(): "unsupported" | "error" | null {
+    return this.#strongProblem;
+  }
+
+  /**
+   * Puts RNNoise in front of a chain, or takes it out, as the setting
+   * says. Where it can't run, says so once and captures again with the
+   * browser's filter (#captureOptions), so Strong is never worse than
+   * Standard.
+   */
+  async #applyStrong(chain: MicChain): Promise<void> {
+    const want = this.audioSettings.noise === "strong";
+    const r = await chain.setStrongNoise(want && this.#strongProblem === null, this.#opts.rnnoiseWorkletUrl);
+    if (!want || this.#strongProblem !== null || (r !== "unsupported" && r !== "error")) return;
+    this.#strongProblem = r;
+    this.#notice(r === "unsupported"
+      ? "Strong noise suppression needs 48 kHz audio, which this browser didn't give. Using the browser's noise suppression instead."
+      : "Strong noise suppression didn't load. Using the browser's noise suppression instead.");
+    this.#changed();
+    if (chain === this.#proc) await this.#recapture();
+    else if (chain === this.#test?.chain) {
+      await this.stopMicTest();
+      await this.startMicTest();
+    }
   }
 
   #chainConfig() {
@@ -1185,9 +1278,31 @@ export class VoiceClient {
     this.#test?.chain.configure({ ...c, mode: c.mode === "gate" ? "gate" : "open" });
   }
 
-  #audioContext(): AudioContext {
-    if (!this.#ctx || this.#ctx.state === "closed") this.#ctx = new AudioContext({ latencyHint: "interactive" });
-    return this.#ctx;
+  /**
+   * The mic's AudioContext, at 48 kHz where the browser allows it (RNNoise
+   * needs it; it is Opus's rate anyway). Firefox may refuse a mic at a
+   * different rate from its context: then the context goes back to the
+   * browser's own rate, and Strong noise suppression can't run.
+   */
+  #audioContext(track: MediaStreamTrack): AudioContext {
+    const make = (rate?: number) => new AudioContext({ latencyHint: "interactive", sampleRate: rate });
+    let ctx = this.#ctx;
+    if (!ctx || ctx.state === "closed") {
+      try {
+        ctx = this.#ctx48Refused ? make() : make(48000);
+      } catch {
+        ctx = make();
+      }
+      this.#ctx = ctx;
+    }
+    try {
+      ctx.createMediaStreamSource(new MediaStream([track])).disconnect();
+    } catch {
+      this.#ctx48Refused = true;
+      void ctx.close().catch(() => {});
+      ctx = this.#ctx = make();
+    }
+    return ctx;
   }
 
   /** Puts the processing between the mic and LiveKit. Without it the mic goes out as captured. */
@@ -1195,7 +1310,7 @@ export class VoiceClient {
     const url = this.#opts.micWorkletUrl;
     if (!url) return;
     try {
-      const ctx = this.#audioContext();
+      const ctx = this.#audioContext(mic.mediaStreamTrack);
       const chain = await MicChain.create(ctx, url, this.#chainConfig());
       chain.onLevel((l) => this.#onLevel(l));
       chain.onTap((open) => {
@@ -1206,6 +1321,7 @@ export class VoiceClient {
       await mic.setAudioContext(ctx);
       await mic.setProcessor(chain.processor());
       this.#proc = chain;
+      await this.#applyStrong(chain);
     } catch (err) {
       this.#notice(`Voice activation isn't available in this browser (${errorText(err)}). Your mic is open while unmuted.`);
     }
@@ -1277,7 +1393,7 @@ export class VoiceClient {
         autoGainControl: o.autoGainControl,
       },
     });
-    const ctx = this.#audioContext();
+    const ctx = this.#audioContext(stream.getAudioTracks()[0]!);
     let chain: MicChain;
     try {
       if (!url) throw new Error("no mic worklet");
@@ -1298,6 +1414,7 @@ export class VoiceClient {
     this.#test = { stream, chain, el };
     this.#configureChains();
     await el.play().catch(() => {});
+    await this.#applyStrong(chain); // may start the test again, with the browser's filter
     this.#changed();
   }
 

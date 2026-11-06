@@ -10,7 +10,7 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type {
-  AudioDevices, AudioSettings, MicLevel, MicMode, ScreenShare, ShareSettings, VoiceClient, VoiceParticipant,
+  AudioDevices, AudioSettings, MicLevel, MicMode, NoiseMode, ScreenShare, ShareSettings, VoiceClient, VoiceParticipant,
   VoiceSnapshot,
 } from "@core/voice";
 import type { ApiCall } from "@core/identity";
@@ -666,7 +666,14 @@ const MODES: { id: MicMode; label: string; help: string }[] = [
   { id: "ptt", label: "Push-to-Talk", help: "Hold a key to talk." },
   { id: "tap", label: "Tap to Talk (Experimental)",
     help: "Press the key once and talk; the mic closes on its own when you stop. Press again to close it sooner." },
-  { id: "open", label: "Open Mic", help: "Always sending while unmuted. Only the browser's noise filter in between." },
+  { id: "open", label: "Open Mic", help: "Always sending while unmuted. Only noise suppression in between." },
+];
+
+const NOISE: { id: NoiseMode; label: string; help: string }[] = [
+  { id: "off", label: "Off", help: "Your mic as it is. For music, or a quiet room with a good mic." },
+  { id: "standard", label: "Standard", help: "The browser's filter: steady noise like fans and hum." },
+  { id: "strong", label: "Strong",
+    help: "Also keyboards, clicks, dogs and traffic. Uses a little more processing power and adds about 20 ms of delay. Downloads about 2 MB the first time." },
 ];
 
 /** Input mode, sensitivity, volumes, the mic test and the browser's processing: the rest of the Voice tab. */
@@ -791,12 +798,28 @@ function MicSettings({ voice, snap, keyName, bindKey, binding }: {
       {!inCall && (mode === "voice" || mode === "tap") && voice.micTesting && <LevelMeterHint />}
       {testError && <p className="error small" role="alert">{testError}</p>}
 
+      <h3 className="settings-head">Noise Suppression</h3>
+      <div className="radio-list" role="radiogroup" aria-label="Noise suppression">
+        {NOISE.map((n) => (
+          <label key={n.id} className="check">
+            <input type="radio" name="noise-mode" checked={a.noise === n.id} onChange={() => set({ noise: n.id })} />
+            <span>
+              {n.label}
+              <span className="muted small block">{n.help}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+      {a.noise === "strong" && voice.strongNoiseProblem && (
+        <p className="error small" role="alert">
+          {voice.strongNoiseProblem === "unsupported"
+            ? "Strong isn't available in this browser (it needs 48 kHz audio). The browser's filter is used instead."
+            : "Strong didn't load. The browser's filter is used instead. Pick Strong again to retry."}
+        </p>
+      )}
+
       <h3 className="settings-head">Processing</h3>
       <p className="muted small">The browser's own filters. Turn them off for music, or with a good headset.</p>
-      <label className="check">
-        <input type="checkbox" checked={a.noiseSuppression} onChange={(e) => set({ noiseSuppression: e.target.checked })} />
-        <span>Noise suppression</span>
-      </label>
       <label className="check">
         <input type="checkbox" checked={a.echoCancellation} onChange={(e) => set({ echoCancellation: e.target.checked })} />
         <span>
