@@ -47,6 +47,97 @@ export function keyLabel(code: string): string {
   return code;
 }
 
+// ------------------------------------------------ on-screen talk button
+
+/** auto: only where there is a touch screen; always; never. */
+export type TalkButtonPref = "auto" | "always" | "never";
+const TALK_BUTTON = "voice.talkButton";
+const talkButtonListeners = new Set<() => void>();
+const TOUCH = "(any-pointer: coarse)";
+
+export function talkButtonPref(): TalkButtonPref {
+  const v = localStore.get(TALK_BUTTON);
+  return v === "always" || v === "never" ? v : "auto";
+}
+
+function setTalkButtonPref(v: TalkButtonPref): void {
+  localStore.set(TALK_BUTTON, v);
+  for (const l of talkButtonListeners) l();
+}
+
+/** Whether the voice bar shows the talk button: the setting, and for Auto whether there's a touch screen. */
+function useTalkButtonShown(): boolean {
+  const subscribe = useCallback((cb: () => void) => {
+    talkButtonListeners.add(cb);
+    const mq = window.matchMedia(TOUCH);
+    mq.addEventListener("change", cb);
+    return () => {
+      talkButtonListeners.delete(cb);
+      mq.removeEventListener("change", cb);
+    };
+  }, []);
+  return useSyncExternalStore(subscribe, () => {
+    const pref = talkButtonPref();
+    return pref === "always" || (pref === "auto" && window.matchMedia(TOUCH).matches);
+  });
+}
+
+/**
+ * Push-to-Talk or Tap to Talk without a keyboard. It presses the same
+ * "key" as usePushToTalk: held while a finger (or the mouse button) is
+ * down, so in Tap to Talk a tap opens and the next tap closes. Pointer
+ * capture keeps it held when the finger slides off the button; a
+ * cancelled touch (the browser took it for a scroll) lets go.
+ */
+function TalkButton({ voice, snap }: { voice: VoiceClient; snap: VoiceSnapshot }) {
+  const held = useRef(false);
+  const blocked = snap.state !== "connected" || !snap.canPublish || snap.serverMuted || snap.deafened;
+  const press = (on: boolean) => {
+    // Some browsers (Safari) still deliver pointer events to a disabled button.
+    if (on && blocked) return;
+    if (held.current === on) return;
+    held.current = on;
+    voice.setPTTHeld(on);
+  };
+  // Let go if the bar goes away mid-press (left the call, mode changed).
+  useEffect(() => () => {
+    if (held.current) voice.setPTTHeld(false);
+  }, [voice]);
+
+  const tap = snap.micMode === "tap";
+  const label = snap.pttHeld ? (tap ? "Talking: Tap to Stop" : "Talking") : tap ? "Tap to Talk" : "Hold to Talk";
+  const why = !snap.canPublish ? "You can't speak here"
+    : snap.serverMuted ? "A moderator has muted you"
+    : snap.deafened ? "Undeafen to talk"
+    : tap ? "Tap, then talk; it closes when you stop" : "Hold while you talk";
+  return (
+    <button className={`talk-btn${snap.pttHeld ? " talking" : ""}`} disabled={blocked} title={why}
+      aria-pressed={snap.pttHeld}
+      onPointerDown={(e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        e.currentTarget.setPointerCapture(e.pointerId);
+        press(true);
+      }}
+      onPointerUp={() => press(false)}
+      onPointerCancel={() => press(false)}
+      onLostPointerCapture={() => press(false)}
+      onContextMenu={(e) => e.preventDefault()}
+      onKeyDown={(e) => {
+        if ((e.key === " " || e.key === "Enter") && !e.repeat) {
+          e.preventDefault();
+          press(true);
+        }
+      }}
+      onKeyUp={(e) => {
+        if (e.key === " " || e.key === "Enter") press(false);
+      }}
+      onBlur={() => press(false)}>
+      {label}
+    </button>
+  );
+}
+
 function isTyping(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null;
   if (!el) return false;
@@ -320,6 +411,7 @@ export function VoiceBar({ voice, snap, channelName, onShare, onSettings }: {
   onShare: () => void;
   onSettings: () => void;
 }) {
+  const talkShown = useTalkButtonShown();
   if (snap.state === "idle") {
     return snap.lastEnd ? (
       <div className="voice-bar ended" role="status">
@@ -350,6 +442,7 @@ export function VoiceBar({ voice, snap, channelName, onShare, onSettings }: {
       {snap.audioBlocked && (
         <button className="primary small-btn" onClick={() => void voice.startAudio()}>Click to hear the call</button>
       )}
+      {snap.pttMode && talkShown && <TalkButton voice={voice} snap={snap} />}
       <div className="voice-buttons">
         <button className={`vbtn${snap.serverMuted ? " locked" : !snap.pttMode && (snap.muted || snap.deafened) ? " on" : ""}`}
           disabled={connecting || !snap.canPublish || snap.serverMuted || snap.pttMode}
@@ -585,6 +678,7 @@ function MicSettings({ voice, snap, keyName, bindKey, binding }: {
 }) {
   const [a, setA] = useState<AudioSettings>(voice.audioSettings);
   const [testError, setTestError] = useState<string | null>(null);
+  const [talkPref, setTalkPref] = useState(talkButtonPref);
   const forced = !!snap?.forcePTT && snap.state !== "idle";
   const inCall = !!snap && snap.state !== "idle";
   const mode: MicMode = forced ? "ptt" : a.mode;
@@ -622,8 +716,21 @@ function MicSettings({ voice, snap, keyName, bindKey, binding }: {
               {binding ? "Press a key… (Esc cancels)" : keyName}
             </button>
           </div>
+          <label className="inline-select">
+            <span className="small">On-screen button</span>
+            <select value={talkPref} onChange={(e) => {
+              const v = e.target.value as TalkButtonPref;
+              setTalkPref(v);
+              setTalkButtonPref(v);
+            }}>
+              <option value="auto">Touch screens only</option>
+              <option value="always">Always</option>
+              <option value="never">Never</option>
+            </select>
+          </label>
           <p className="muted small">
-            Only works while this tab is focused; the desktop app will add a global key. While typing in the message
+            The button sits in the voice bar, above Mute; {mode === "tap" ? "tap it instead of pressing the key" : "hold it instead of the key"}.
+            The key only works while this tab is focused; the desktop app will add a global key. While typing in the message
             box, keys that type a letter don't trigger it: pick a key like Right Ctrl or F13 to talk while typing.
           </p>
         </>

@@ -458,7 +458,7 @@ export class VoiceClient {
         transmitting: this.#micOpen() && (this.#effectiveMode() !== "voice" || !this.#proc || this.#gateOpen),
         mutedTalking: this.#mutedTalking,
         forcePTT: this.#forcePTT,
-        pttHeld: this.#effectiveMode() === "tap" ? this.#tapOpen : this.#pttHeld,
+        pttHeld: this.#canTalk() && (this.#effectiveMode() === "tap" ? this.#tapOpen : this.#pttHeld),
         micOpen: this.#micOpen(),
         sharing: this.#screenTracks.length > 0,
         epoch: this.#epoch,
@@ -828,7 +828,10 @@ export class VoiceClient {
         }
         const was = (prev?.canPublishSources?.length ?? 0) > 0 && !prev!.canPublishSources!.includes(SOURCE_MICROPHONE);
         const now = this.#serverMuted();
-        if (now && !was) this.#notice("A moderator has muted you on this server: you can listen but not speak.");
+        if (now && !was) {
+          this.#notice("A moderator has muted you on this server: you can listen but not speak.");
+          this.#letGo(); // so the mic doesn't come back open on unmute
+        }
         if (!now && was) this.#notice("A moderator has unmuted you: you can speak again.");
         void this.#syncMic(room).catch((err) => this.#notice(`Couldn't turn your microphone back on: ${errorText(err)}`));
         void this.#restoreShareAudio(room);
@@ -959,9 +962,18 @@ export class VoiceClient {
     return m === "ptt" || m === "tap";
   }
 
+  /**
+   * Whether the mic could open at all: published (not server-muted, not
+   * listen-only) and not deafened. A push-to-talk press while it can't is
+   * ignored, so nothing claims "Talking" over a mic that's gone.
+   */
+  #canTalk(): boolean {
+    return !!this.#mic && this.#canPublish && !this.#deafened;
+  }
+
   /** Whether LiveKit's mic is unmuted. In voice activation the gate still decides what is sent. */
   #micOpen(): boolean {
-    if (!this.#mic || !this.#canPublish || this.#deafened) return false;
+    if (!this.#canTalk()) return false;
     switch (this.#effectiveMode()) {
       case "ptt": return this.#pttHeld;
       case "tap": return this.#tapOpen;
@@ -1000,6 +1012,7 @@ export class VoiceClient {
   /** Silence everyone and close the mic; undeafen restores both. */
   setDeafened(deafened: boolean): Promise<void> {
     this.#deafened = deafened;
+    if (deafened) this.#letGo();
     for (const p of this.#room?.remoteParticipants.values() ?? []) this.#applyVolume(p);
     return this.#applyMic();
   }
@@ -1017,6 +1030,7 @@ export class VoiceClient {
 
   /** The push-to-talk key went down (true) or up (false). In Tap to Talk a press opens or closes. */
   setPTTHeld(held: boolean): void {
+    if (held && !this.#canTalk()) return;
     const mode = this.#effectiveMode();
     if (mode === "tap") {
       if (held === this.#pttHeld) return;
@@ -1044,6 +1058,14 @@ export class VoiceClient {
     const ms = this.audioSettings.pttReleaseMs;
     if (ms > 0) this.#pttRelease = setTimeout(release, ms);
     else release();
+  }
+
+  /** Release push-to-talk and close Tap to Talk, as if the key went up and the silence ran out. */
+  #letGo(): void {
+    this.#pttHeld = false;
+    clearTimeout(this.#pttRelease);
+    this.#tapOpen = false;
+    this.#proc?.tap("close");
   }
 
   /** The channel's settings changed (force push-to-talk). */
