@@ -191,6 +191,10 @@ Per-channel audio quality is shelved (Ryan: rarely used). Desktop app
   Disk 83%.
 - Untested and gaps: decisions.md Open items (K1 flows 2-5, G2-G4, P3,
   D1, VA7c, DK1-DK9).
-- **Next** (discuss each with Ryan first): avatars, server icons, bug
-  reports (then enable About's Report a Bug), channel links (Copy Link).
-  Later: desktop code signing, "server needs app version X".
+- **Next session: switch stream** (agreed with Ryan 2026-11-06; decisions.md
+  Open items, Next up). Design talk first, then build.
+- **After that** (discuss each with Ryan first; decisions.md Open items, Next
+  up): avatars, server icons, bug reports (then enable About's Report a
+  Bug), channel links; added 2026-11-06: switch stream, quoting, code
+  blocks with a language, channel groups and ordering, DMs and whispers,
+  desktop status icon. Later: code signing, "server needs app version X".
