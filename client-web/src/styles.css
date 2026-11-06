@@ -982,8 +982,10 @@ button.dot-host { position: relative; }
   pointer-events: none;
 }
 .person-tile.speaking::after { box-shadow: inset 0 0 0 3px var(--speaking); }
+/* Bottom right, clear of the share buttons along the top and the name
+   label bottom left. */
 .tile-banner {
-  position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 2;
+  position: absolute; bottom: 8px; right: 8px; z-index: 2;
   display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: var(--radius);
   background: var(--alert); color: var(--on-accent); font-size: 14px; font-weight: 700; white-space: nowrap;
   box-shadow: 0 4px 12px rgb(0 0 0 / 0.4);

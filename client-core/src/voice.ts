@@ -33,6 +33,8 @@ import {
   LocalAudioTrack,
   type AudioCaptureOptions,
   type LocalTrack,
+  type LocalVideoTrack,
+  type TrackPublishOptions,
   type Participant,
   type RemoteParticipant,
   type RemoteTrack,
@@ -140,6 +142,8 @@ export interface VoiceSnapshot {
   /** This device is sending audio right now. */
   readonly micOpen: boolean;
   readonly sharing: boolean;
+  /** The running share's quality (after the server's limit), or null. */
+  readonly share: ShareSettings | null;
   /** Media key epoch, once encryption is up. */
   readonly epoch: number | null;
   /** The browser blocked audio until the user interacts; call startAudio. */
@@ -266,6 +270,49 @@ async function capToLimit(track: LocalTrack, limit: ShareLimit): Promise<void> {
   }
 }
 
+/** Share settings held to the server's limit (frame rate and bitrate; the size by capToLimit). */
+function heldToLimit(s: ShareSettings, limit: ShareLimit | null): ShareSettings {
+  return limit ? { ...s, fps: Math.min(s.fps, limit.fps), kbps: Math.min(s.kbps, limit.kbps) } : s;
+}
+
+const WEBKIT = typeof navigator !== "undefined" &&
+  /AppleWebKit/.test(navigator.userAgent) && !/(Chrome|Chromium|Android)\//.test(navigator.userAgent);
+
+/** The capture size asked for, as LiveKit asks it (Safari: max, others: ideal). */
+function captureSize(s: ShareSettings): MediaTrackConstraints {
+  return WEBKIT
+    ? { width: { max: s.width }, height: { max: s.height }, frameRate: s.fps }
+    : { width: { ideal: s.width }, height: { ideal: s.height }, frameRate: s.fps };
+}
+
+/** How a share's picture is published, also when its quality changes live. */
+function shareOptions(s: ShareSettings): TrackPublishOptions {
+  // Safari (iPad, CV5) sends only the small VP8 copy of a share: viewers
+  // asking for the full one got 0 kbps, a black Watch view. Safari and
+  // every other WebKit browser send one full H.264 copy instead
+  // (hardware-encoded), so their shares cost viewers' tiles more.
+  const encoding = { maxBitrate: s.kbps * 1000, maxFramerate: s.fps };
+  return {
+    // Screen-share tracks read screenShareEncoding, NOT videoEncoding;
+    // setting only the latter leaves 1080p15 at 1.5 Mbps in place.
+    screenShareEncoding: encoding,
+    videoEncoding: encoding,
+    // Two layers: full quality, and half resolution, which the call
+    // view's tiles show (adaptiveStream picks it from their size) and
+    // anyone who can't keep up falls back to. VP8, because H.264
+    // simulcast is poorly supported (decisions.md, "Voice channel
+    // view"); watching costs a little more CPU where VP8 isn't
+    // hardware-decoded.
+    simulcast: !WEBKIT,
+    screenShareSimulcastLayers: [
+      new VideoPreset(Math.round(s.width / 2), Math.round(s.height / 2),
+        Math.round(s.kbps * 1000 * 0.3), Math.min(s.fps, 30)),
+    ],
+    videoCodec: WEBKIT ? "h264" : "vp8",
+    degradationPreference: s.priority === "motion" ? "maintain-framerate" : "maintain-resolution",
+  };
+}
+
 // ------------------------------------------------------------ media keys
 
 const MEDIA_KEYRING = 16;
@@ -371,6 +418,12 @@ export class VoiceClient {
   #heldShareAudio: LocalTrack | null = null;
   /** Stops the desktop app's window share sound, if one runs. */
   #stopWindowSound: (() => void) | null = null;
+  /** What the running share was asked for (held to the limit). */
+  #share: ShareSettings | null = null;
+  /** A switch or quality change is under way (one at a time). */
+  #shareBusy = false;
+  /** The browser's own "Stop sharing" bar bypasses our button. */
+  #onShareEnded = () => void this.stopShare();
   #canPublish = false;
   #muted = false;
   #deafened = false;
@@ -478,6 +531,7 @@ export class VoiceClient {
         pttHeld: this.#canTalk() && (this.#effectiveMode() === "tap" ? this.#tapOpen : this.#pttHeld),
         micOpen: this.#micOpen(),
         sharing: this.#screenTracks.length > 0,
+        share: this.#screenTracks.length ? this.#share : null,
         epoch: this.#epoch,
         audioBlocked: this.#audioBlocked,
         lastEnd: this.#lastEnd,
@@ -499,6 +553,11 @@ export class VoiceClient {
   };
 
   /** A line for the voice bar; it goes away by itself after a while. */
+  /** Show a line under the voice bar, as the call's own notices are. */
+  showNotice(text: string): void {
+    this.#notice(text);
+  }
+
   #notice(text: string): void {
     this.#notices = [...this.#notices.slice(-4), text];
     this.#changed();
@@ -757,6 +816,7 @@ export class VoiceClient {
     this.#heldShareAudio = null;
     this.#stopWindowSound?.();
     this.#stopWindowSound = null;
+    this.#share = null;
     this.#mic?.stop();
     this.#mic = null;
     this.#dropProc();
@@ -1586,56 +1646,23 @@ export class VoiceClient {
     if (!room || !this.#canPublish) throw new Error("you can't share here");
     if (this.#screenTracks.length) return;
     if (this.#shareBlocked(room)) throw new Error(SHARE_BLOCKED);
-    // Server-muted: picture only (LiveKit would refuse the sound).
-    if (s.audio && this.#serverMuted()) s = { ...s, audio: false };
-
     // Held to the server's limit whatever was asked for, so an honest
     // client is never the one the server has to stop.
     const limit = await this.shareLimit();
-    if (limit) {
-      s = { ...s, fps: Math.min(s.fps, limit.fps), kbps: Math.min(s.kbps, limit.kbps) };
-    }
-
-    const tracks = await createLocalScreenTracks({
-      audio: s.audio ? SHARE_AUDIO : false,
-      resolution: { width: s.width, height: s.height, frameRate: s.fps },
-    });
-    // A window share in the desktop app: its sound comes separately.
-    let windowSound: ShareSound | null = null;
-    if (s.audio && !tracks.some((t) => t.kind === Track.Kind.Audio) && this.#opts.windowShareSound) {
-      try {
-        windowSound = await this.#opts.windowShareSound((reason) => {
-          if (this.#stopWindowSound === windowSound?.stop) this.#notice(`Your share's sound stopped: ${reason}`);
-        });
-      } catch (err) {
-        this.#notice(`Couldn't share the window's sound: ${errorText(err)}`);
-      }
-      if (windowSound) {
-        const audio = new LocalAudioTrack(windowSound.track, undefined, false);
-        audio.source = Track.Source.ScreenShareAudio;
-        tracks.push(audio);
-      }
-    }
+    s = heldToLimit(s, limit);
+    const cap = await this.#capture(s, limit);
     if (this.#room !== room) {
-      for (const t of tracks) t.stop(); // left the call meanwhile
-      windowSound?.stop();
+      cap.release(); // left the call meanwhile
       return;
     }
-    this.#stopWindowSound = windowSound?.stop ?? null;
+    this.#stopWindowSound = cap.windowSound?.stop ?? null;
+    this.#share = s;
+    const tracks = cap.audio ? [cap.video, cap.audio] : [cap.video];
     this.#screenTracks = tracks;
-    if (limit) {
-      for (const t of tracks) if (t.kind === Track.Kind.Video) await capToLimit(t, limit);
-    }
-    // Browsers tag screen capture "detail", which pins games near 15 fps
-    // whatever the bitrate; "motion" flips the tradeoff.
-    const hint = s.priority === "motion" ? "motion" : "detail";
-    const encoding = { maxBitrate: s.kbps * 1000, maxFramerate: s.fps };
     try {
       for (const track of tracks) {
-        if (track.kind === Track.Kind.Video) track.mediaStreamTrack.contentHint = hint;
-        await this.#publishShare(room, track, s, encoding);
-        // The browser's own "Stop sharing" bar bypasses our button.
-        track.mediaStreamTrack.addEventListener("ended", () => void this.stopShare());
+        await room.localParticipant.publishTrack(track, track === cap.video ? shareOptions(s) : undefined);
+        track.mediaStreamTrack.addEventListener("ended", this.#onShareEnded);
       }
     } catch (err) {
       await this.stopShare();
@@ -1645,31 +1672,164 @@ export class VoiceClient {
     this.#changed();
   }
 
-  #publishShare(room: Room, track: LocalTrack, s: ShareSettings, encoding: { maxBitrate: number; maxFramerate: number }) {
-    // Safari (iPad, CV5) sends only the small VP8 copy of a share: viewers
-    // asking for the full one got 0 kbps, a black Watch view. Safari and
-    // every other WebKit browser send one full H.264 copy instead
-    // (hardware-encoded), so their shares cost viewers' tiles more.
-    const webkit = /AppleWebKit/.test(navigator.userAgent) && !/(Chrome|Chromium|Android)\//.test(navigator.userAgent);
-    return room.localParticipant.publishTrack(track, {
-        // Screen-share tracks read screenShareEncoding, NOT videoEncoding;
-        // setting only the latter leaves 1080p15 at 1.5 Mbps in place.
-        screenShareEncoding: encoding,
-        videoEncoding: encoding,
-        // Two layers: full quality, and half resolution, which the call
-        // view's tiles show (adaptiveStream picks it from their size) and
-        // anyone who can't keep up falls back to. VP8, because H.264
-        // simulcast is poorly supported (decisions.md, "Voice channel
-        // view"); watching costs a little more CPU where VP8 isn't
-        // hardware-decoded.
-        simulcast: !webkit,
-        screenShareSimulcastLayers: [
-          new VideoPreset(Math.round(s.width / 2), Math.round(s.height / 2),
-            Math.round(s.kbps * 1000 * 0.3), Math.min(s.fps, 30)),
-        ],
-        videoCodec: webkit ? "h264" : "vp8",
-        degradationPreference: s.priority === "motion" ? "maintain-framerate" : "maintain-resolution",
-      });
+  /**
+   * Share something else without ending the share (decisions.md, "Switch
+   * stream"): the browser's (or the app's) picker opens again, and the new
+   * capture replaces the old one inside the published track, so viewers
+   * keep watching: same track, same Watch, same Listen. The sound follows
+   * the new pick. Cancelling the picker leaves the share as it was
+   * (rejects like startShare).
+   */
+  async switchShare(): Promise<void> {
+    const room = this.#room;
+    const video = this.#shareVideo();
+    if (!room || !video || !this.#share) throw new Error("you aren't sharing");
+    if (this.#shareBusy) return;
+    this.#shareBusy = true;
+    try {
+      const limit = await this.shareLimit();
+      const s = heldToLimit(this.#share, limit);
+      const cap = await this.#capture(s, limit);
+      if (this.#room !== room || this.#shareVideo() !== video) {
+        cap.release(); // stopped or left meanwhile
+        return;
+      }
+      // Picture: the old capture is stopped by LiveKit once replaced, and
+      // the encodings are worked out again for the new size.
+      const mst = cap.video.mediaStreamTrack;
+      video.mediaStreamTrack.removeEventListener("ended", this.#onShareEnded);
+      await video.replaceTrack(mst, { userProvidedTrack: false });
+      mst.addEventListener("ended", this.#onShareEnded);
+
+      // Sound: swapped in place, added or taken down, as the new pick has it.
+      const oldAudio = this.#screenTracks.find((t) => t.kind === Track.Kind.Audio) ?? null;
+      // Server-muted: the old source's held sound is no use any more.
+      this.#heldShareAudio?.stop();
+      this.#heldShareAudio = null;
+      if (cap.audio && oldAudio) {
+        oldAudio.mediaStreamTrack.removeEventListener("ended", this.#onShareEnded);
+        await oldAudio.replaceTrack(cap.audio.mediaStreamTrack, { userProvidedTrack: false });
+        oldAudio.mediaStreamTrack.addEventListener("ended", this.#onShareEnded);
+      } else if (oldAudio) {
+        // Out of the list first, or the unpublish reads as a server mute.
+        this.#screenTracks = this.#screenTracks.filter((t) => t !== oldAudio);
+        try {
+          await room.localParticipant.unpublishTrack(oldAudio, true);
+        } catch {
+          /* already gone */
+        }
+        oldAudio.stop();
+      } else if (cap.audio) {
+        try {
+          await room.localParticipant.publishTrack(cap.audio);
+          cap.audio.mediaStreamTrack.addEventListener("ended", this.#onShareEnded);
+          this.#screenTracks = [...this.#screenTracks, cap.audio];
+        } catch (err) {
+          cap.audio.stop();
+          this.#notice(`Couldn't share the new sound: ${errorText(err)}`);
+        }
+      }
+      // Window sound: the new recording runs before the old one is let go
+      // (desktopShareSound.ts: the old one then leaves the app alone).
+      const oldStop = this.#stopWindowSound;
+      this.#stopWindowSound = cap.windowSound?.stop ?? null;
+      oldStop?.();
+      this.#share = s;
+    } finally {
+      this.#shareBusy = false;
+      this.#changed();
+    }
+  }
+
+  /**
+   * Change the running share's quality (preset size, frame rate, bitrate,
+   * Detail or Motion) without ending it: the capture is asked for the new
+   * size and the encoder for the new limits, in place. Held to the
+   * server's limit like a new share.
+   */
+  async setShareQuality(q: ShareSettings): Promise<void> {
+    const video = this.#shareVideo();
+    if (!video || !this.#share) throw new Error("you aren't sharing");
+    if (this.#shareBusy) throw new Error("the share is still changing; try again");
+    this.#shareBusy = true;
+    try {
+      const limit = await this.shareLimit();
+      const s = heldToLimit({ ...q, audio: this.#share.audio }, limit);
+      if (this.#shareVideo() !== video) return;
+      const mst = video.mediaStreamTrack;
+      try {
+        await mst.applyConstraints(captureSize(s));
+      } catch (err) {
+        console.warn("couldn't resize the share:", err);
+      }
+      if (limit) await capToLimit(video, limit);
+      mst.contentHint = s.priority === "motion" ? "motion" : "detail";
+      // LiveKit works the encodings out again when the track is "replaced"
+      // (with itself here), from its publish options; forgetting the last
+      // size makes it do so even when the size stayed the same (checked by
+      // experiment: bitrate and frame rate change live, viewers stay).
+      video.publishOptions = { ...video.publishOptions, ...shareOptions(s) };
+      video.lastEncodedDimensions = undefined;
+      await video.replaceTrack(mst, { userProvidedTrack: false });
+      await video.setDegradationPreference(s.priority === "motion" ? "maintain-framerate" : "maintain-resolution");
+      this.#share = s;
+    } finally {
+      this.#shareBusy = false;
+      this.#changed();
+    }
+  }
+
+  /** The running share's picture track. */
+  #shareVideo(): LocalVideoTrack | undefined {
+    return this.#screenTracks.find((t) => t.kind === Track.Kind.Video) as LocalVideoTrack | undefined;
+  }
+
+  /**
+   * Opens the picker and captures what is chosen, with its sound: the
+   * browser's, or in the desktop app a window's from the app's helper.
+   * Server-muted: picture only (LiveKit would refuse the sound). Nothing
+   * is published yet.
+   */
+  async #capture(s: ShareSettings, limit: ShareLimit | null): Promise<{
+    video: LocalVideoTrack;
+    audio: LocalTrack | null;
+    windowSound: ShareSound | null;
+    release: () => void;
+  }> {
+    const audioWanted = s.audio && !this.#serverMuted();
+    const tracks = await createLocalScreenTracks({
+      audio: audioWanted ? SHARE_AUDIO : false,
+      resolution: { width: s.width, height: s.height, frameRate: s.fps },
+    });
+    const video = tracks.find((t) => t.kind === Track.Kind.Video) as LocalVideoTrack;
+    let audio: LocalTrack | null = tracks.find((t) => t.kind === Track.Kind.Audio) ?? null;
+    // A window share in the desktop app: its sound comes separately.
+    let windowSound: ShareSound | null = null;
+    if (audioWanted && !audio && this.#opts.windowShareSound) {
+      try {
+        windowSound = await this.#opts.windowShareSound((reason) => {
+          if (this.#stopWindowSound === windowSound?.stop) this.#notice(`Your share's sound stopped: ${reason}`);
+        });
+      } catch (err) {
+        this.#notice(`Couldn't share the window's sound: ${errorText(err)}`);
+      }
+      if (windowSound) {
+        audio = new LocalAudioTrack(windowSound.track, undefined, false);
+        audio.source = Track.Source.ScreenShareAudio;
+      }
+    }
+    if (limit) await capToLimit(video, limit);
+    // Browsers tag screen capture "detail", which pins games near 15 fps
+    // whatever the bitrate; "motion" flips the tradeoff.
+    video.mediaStreamTrack.contentHint = s.priority === "motion" ? "motion" : "detail";
+    return {
+      video, audio, windowSound,
+      release: () => {
+        video.stop();
+        audio?.stop();
+        windowSound?.stop();
+      },
+    };
   }
 
   /** The server's screen share limit, asked afresh each time. */
@@ -1708,6 +1868,7 @@ export class VoiceClient {
     this.#heldShareAudio = null;
     this.#stopWindowSound?.();
     this.#stopWindowSound = null;
+    this.#share = null;
     for (const t of tracks) {
       try {
         await this.#room?.localParticipant.unpublishTrack(t, true);

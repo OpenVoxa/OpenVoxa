@@ -457,8 +457,8 @@ export function VoiceBar({ voice, snap, channelName, onShare, onSettings }: {
           <HeadphonesIcon off={snap.deafened} />
         </button>
         <button className={`vbtn${snap.sharing ? " on" : ""}`} disabled={connecting || !snap.canPublish}
-          onClick={() => (snap.sharing ? void voice.stopShare() : onShare())}
-          title={!snap.canPublish ? "You can't share here" : snap.sharing ? "Stop sharing" : "Share your screen"}
+          onClick={onShare}
+          title={!snap.canPublish ? "You can't share here" : snap.sharing ? "Switch, change quality or stop sharing" : "Share your screen"}
           aria-pressed={snap.sharing}>
           <ScreenIcon />
         </button>
@@ -509,62 +509,130 @@ export function ShareDialog({ voice, onClose }: { voice: VoiceClient; onClose: (
   const allowed = PRESETS.map((p) => presetAllowed(p, limit ?? null));
   const hidden = allowed.some((ok) => !ok);
 
-  async function start() {
-    const p = PRESETS[preset] ?? PRESETS[1];
+  const snap = voice.snapshot();
+  const sharing = snap.sharing;
+
+  function settings(i: number, prio: ShareSettings["priority"]): ShareSettings {
+    const p = PRESETS[i] ?? PRESETS[1];
     // Sound is always asked for: whether a share has it is chosen in the
     // picker (the desktop app's or the browser's), next to what is shared.
-    // A server mute still turns it off (VoiceClient.startShare).
-    const s: ShareSettings = { width: p.width, height: p.height, fps: p.fps, kbps: p.kbps, priority, audio: true };
+    // A server mute still turns it off (VoiceClient's #capture).
+    return { width: p.width, height: p.height, fps: p.fps, kbps: p.kbps, priority: prio, audio: true };
+  }
+
+  async function start() {
     localStore.set(SHARE_PREFS, JSON.stringify({ preset, priority }));
     setBusy(true);
     setError(null);
     try {
-      await voice.startShare(s);
+      await voice.startShare(settings(preset, priority));
       onClose();
     } catch (err) {
-      // Cancelling the picker is not an error worth showing: browsers say
-      // NotAllowedError, the desktop app's own picker "AbortError: Invalid
-      // capture constraints" (Electron, found by experiment). The
-      // operating system refusing (Chromium: "Permission denied by
-      // system", e.g. macOS Screen Recording off) is worth showing: say why.
-      const e = err as { name?: string; message?: string };
-      const msg = e.message ?? "";
-      if (e.name === "NotAllowedError" && /by system/i.test(msg)) {
-        setError("Your computer blocked screen capture. Allow this app or browser to record the screen in your system's privacy settings, then try again.");
-      } else if (e.name === "NotAllowedError" || (e.name === "AbortError" && /invalid capture constraints/i.test(msg))) {
-        onClose();
-      } else setError(err instanceof Error ? err.message : String(err));
+      const text = shareErrorText(err);
+      if (text) setError(text);
+      else onClose();
       setBusy(false);
     }
   }
 
+  // While sharing: a quality change applies at once, in place.
+  async function changeQuality(i: number, prio: ShareSettings["priority"]) {
+    setPreset(i);
+    setPriority(prio);
+    localStore.set(SHARE_PREFS, JSON.stringify({ preset: i, priority: prio }));
+    setBusy(true);
+    setError(null);
+    try {
+      await voice.setShareQuality(settings(i, prio));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+    setBusy(false);
+  }
+
+  async function switchShare() {
+    setBusy(true);
+    setError(null);
+    try {
+      await voice.switchShare();
+      onClose();
+    } catch (err) {
+      const text = shareErrorText(err);
+      if (text) setError(text);
+      setBusy(false); // cancelled: the share goes on, the dialog stays
+    }
+  }
+
   return (
-    <Modal title="Share your screen" onClose={onClose}>
+    <Modal title={sharing ? "You're sharing your screen" : "Share your screen"} onClose={onClose}>
       <div className="modal-body">
         <label>
           Quality
-          <select value={preset} onChange={(e) => setPreset(Number(e.target.value))}>
+          <select value={preset} disabled={busy} onChange={(e) => {
+            const i = Number(e.target.value);
+            if (sharing) void changeQuality(i, priority);
+            else setPreset(i);
+          }}>
             {PRESETS.map((p, i) => allowed[i] && <option key={p.label} value={i}>{p.label}</option>)}
           </select>
           {hidden && <span className="muted small block">Higher qualities are turned off on this server.</span>}
         </label>
         <label>
           Optimise for
-          <select value={priority} onChange={(e) => setPriority(e.target.value as ShareSettings["priority"])}>
+          <select value={priority} disabled={busy} onChange={(e) => {
+            const prio = e.target.value as ShareSettings["priority"];
+            if (sharing) void changeQuality(preset, prio);
+            else setPriority(prio);
+          }}>
             <option value="detail">Detail: text and documents stay sharp</option>
             <option value="motion">Motion: games and video stay smooth</option>
           </select>
         </label>
         {serverMuted && <p className="muted small">A moderator has muted you, so your share won't have sound.</p>}
-        <p className="muted small">Your browser asks what to share next. Encrypted end to end, like voice.</p>
+        {sharing
+          ? <p className="muted small">Changes apply straight away, and viewers keep watching. Switch What You Share picks another screen or window without ending the share.</p>
+          : <p className="muted small">Your browser asks what to share next. Encrypted end to end, like voice.</p>}
         {error && <p className="error" role="alert">{error}</p>}
-        <div className="modal-actions">
-          <button className="secondary" onClick={onClose}>Cancel</button>
-          <button className="primary" onClick={() => void start()} disabled={busy || limit === undefined}>{busy ? "Starting…" : "Choose what to share"}</button>
-        </div>
+        {sharing ? (
+          <div className="modal-actions">
+            <button className="secondary" onClick={onClose}>Close</button>
+            <button className="outline" disabled={busy} onClick={() => { void voice.stopShare(); onClose(); }}>Stop Sharing</button>
+            <button className="primary" disabled={busy || limit === undefined} onClick={() => void switchShare()}>Switch What You Share</button>
+          </div>
+        ) : (
+          <div className="modal-actions">
+            <button className="secondary" onClick={onClose}>Cancel</button>
+            <button className="primary" onClick={() => void start()} disabled={busy || limit === undefined}>{busy ? "Starting…" : "Choose what to share"}</button>
+          </div>
+        )}
       </div>
     </Modal>
   );
+}
+
+/**
+ * What to say when the picker didn't give a share, or null when it was
+ * just cancelled: browsers say NotAllowedError, the desktop app's own
+ * picker "AbortError: Invalid capture constraints" (Electron, found by
+ * experiment). The operating system refusing (Chromium: "Permission
+ * denied by system", e.g. macOS Screen Recording off) is worth showing.
+ */
+export function shareErrorText(err: unknown): string | null {
+  const e = err as { name?: string; message?: string };
+  const msg = e?.message ?? "";
+  if (e?.name === "NotAllowedError" && /by system/i.test(msg)) {
+    return "Your computer blocked screen capture. Allow this app or browser to record the screen in your system's privacy settings, then try again.";
+  }
+  if (e?.name === "NotAllowedError" || (e?.name === "AbortError" && /invalid capture constraints/i.test(msg))) return null;
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** Switch on your own share's tile: the picker at once, keeping the quality. */
+function switchFromTile(voice: VoiceClient) {
+  voice.switchShare().catch((err) => {
+    const text = shareErrorText(err);
+    if (text) voice.showNotice(`Couldn't switch your share: ${text}`);
+  });
 }
 
 // ------------------------------------------------------- settings dialog
@@ -1100,6 +1168,7 @@ function PersonTile({ voice, person, share, mutedTalking, hidden, onHide, onWatc
             </button>
           )}
           <button className="secondary" onClick={fullscreen}>Fullscreen</button>
+          {person.isLocal && <button className="secondary" onClick={() => switchFromTile(voice)}>Switch</button>}
           {/* Hiding a share means not following it: its sound stops too. */}
           <button className="secondary" onClick={() => {
             if (showing.listening) voice.setShareListening(showing.participantId, false);
@@ -1169,6 +1238,7 @@ function ScreenTile({ voice, share, stats, onClick }: {
           </button>
         )}
         <button className="secondary" onClick={fullscreen}>Fullscreen</button>
+        {share.isLocal && <button className="secondary" onClick={() => switchFromTile(voice)}>Switch</button>}
       </figcaption>
     </figure>
   );

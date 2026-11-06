@@ -18,15 +18,28 @@ interface DesktopBridge {
   stopShareSound(): Promise<void>;
 }
 
+/**
+ * The recording the app is running for this page, if any. The app runs
+ * one per server: starting a new one ends the old one there, so after a
+ * switch (VoiceClient.switchShare) the old sound must not tell the app
+ * to stop, or it would stop the new one (and drop a pick still waiting
+ * to start).
+ */
+let current: object | null = null;
+
 export async function desktopShareSound(onFail: (reason: string) => void): Promise<ShareSound | null> {
   const bridge = (window as unknown as { openvoxaDesktop?: DesktopBridge }).openvoxaDesktop;
   if (!bridge) return null;
   const ctx = new AudioContext({ sampleRate: 48_000 });
+  const me = {};
   let stopped = false;
   const stop = () => {
     if (stopped) return;
     stopped = true;
-    void bridge.stopShareSound();
+    if (current === me) {
+      current = null;
+      void bridge.stopShareSound();
+    }
     void ctx.close();
   };
   try {
@@ -61,6 +74,7 @@ export async function desktopShareSound(onFail: (reason: string) => void): Promi
       stop();
       return null;
     }
+    current = me;
     await ctx.resume();
     const [track] = dest.stream.getAudioTracks();
     return { track, stop };
