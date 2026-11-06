@@ -560,12 +560,29 @@ Push-to-Talk: Tap to Talk counts as an open mic there (Ryan).
   talking stops, then comes back up over 600 ms, so gaps between words
   don't pump. All in `voice.ts` (`#updateDuck`), on the receiving
   device: a multiplier on `ScreenShareAudio` volume in `#applyVolume`.
-- **Later:** stronger noise suppression (RNNoise; agreed shape: Off /
-  Standard (browser) / Strong (RNNoise), Standard the default, Strong
-  replacing the browser's filter, before voice activation), per-channel
-  audio quality (now every mic sends LiveKit's default 48 kbps mono;
+- **Noise suppression** (Ryan, 2026-11-06; RN1-RN9): the old on/off
+  switch became Off / Standard (the browser's filter, the default) /
+  Strong (RNNoise 0.2, instead of the browser's filter, never stacked).
+  The old "off" reads as Off. Strong filters both of micChain's paths,
+  so voice activation judges the cleaned sound and typing doesn't open
+  the gate. Code: `client-core/src/rnnoiseWorklet.ts`, an AudioWorklet
+  in front of micWorklet, loaded only when Strong is first picked
+  (`@jitsi/rnnoise-wasm` 0.2.1 pinned, Apache-2.0; its "sync" build
+  inlines the wasm: a 1.9 MB file, 1.7 MB through Caddy's gzip). Measured
+  in Chromium on synthetic speech: steady noise -40 dB, clicks -17 dB,
+  speech unchanged, ~4% of one core, ~19 ms added (9 ms of 128-to-480
+  sample buffering plus RNNoise's own frame). Needs 48 kHz: the mic's
+  AudioContext asks for 48 kHz and falls back to the browser's rate if a
+  mic won't connect at 48 kHz (Firefox may refuse); then Strong says so
+  and the browser's filter is used, so Strong is never worse than
+  Standard. Firefox passed RN9. Switching in a call recaptures the mic
+  (Implementation notes, LiveKit, "Recapturing the mic").
+- **Later:** per-channel audio quality (Ryan, 2026-11-06: probably
+  rarely used, not now; every mic sends LiveKit's default 48 kbps mono;
   idea: presets 32/48/64/96/128 per voice channel, `manage_channels`,
   enforced by the sender only). Ducking on your own voice too, maybe.
+  RNNoise's voice probability (returned per frame, unused) could drive
+  voice activation.
 
 #### Screen share quality limit
 
@@ -2337,6 +2354,25 @@ disabled: micChain sets `clone.enabled = true`. LiveKit stops
 long as its mic. Audio processors need `track.setAudioContext()` first
 when `webAudioMix` is off.
 
+**Recapturing the mic: don't use restartTrack (2026-11-06, RN7).**
+Changing a capture filter (echo cancellation, noise suppression,
+automatic gain) needs a new getUserMedia. LiveKit's
+`restartTrack()` with our processor worked in Chrome and in a fake-mic
+Electron test on Linux, but in the desktop app on Windows (Electron 45)
+the restarted capture was dead, the meter included, until a rejoin; also
+with micChain's clone released first. `#recapture` in voice.ts now
+unpublishes, stops and drops the chain, then `#syncMic` publishes a
+fresh mic, the join path. The gap isn't noticeable (Ryan). Device
+switching still uses `switchActiveDevice` and works.
+
+**A fake mic beeps once a second.** Chromium's
+`--use-fake-device-for-media-stream` sends short beeps, so a level
+sampled over less than a second can read silence. Sample peaks over
+2 s or more. Testing LiveKit headless: mint a token with the stack's
+API key in the test itself (HS256 JWT, `video.roomJoin`), run Electron
+under Xvfb in `node:22-bookworm` with `--network host`, room
+`rt-test-*`.
+
 ### Electron and Windows
 
 **Electron screen share (desktop step 2, found by experiment).**
@@ -2570,6 +2606,13 @@ entry was rejected: it changes the archive and backup formats for little
 gain.
 
 ### Web client and browsers
+
+**Audio worklets have no `self` or `location`.** Vite's worker build
+(`?worker&url`, IIFE) turns `import.meta.url` into
+`self.location.href`, which throws on the audio thread. The Emscripten
+glue in rnnoiseWorklet reads it at load, so `rnnoiseShim.ts` (imported
+first) defines both. Any new worklet that imports a library: check the
+built file's first line.
 
 **Markdown escapes before formatting, never after.** Message bodies are
 untrusted input. Escaping first and applying formatting to the escaped
@@ -2806,6 +2849,8 @@ verified; the section named holds the design.
   settings").
 - 2026-11-06 Settings section headers in the accent colour with a line
   between sections (SH1-SH4; Ryan: the lines are subtle, fine for now).
+- 2026-11-06 Strong noise suppression (RNNoise), RN1-RN9, RN7b-RN7d
+  (Feature decisions, "Voice activation and audio settings").
 
 ## Open items
 
@@ -2818,9 +2863,8 @@ verified; the section named holds the design.
 - [ ] Bug reports from users (same section; where they go is open).
 - [ ] Channel links (an address per channel, Copy Link in the channel
       menu); Ryan: later.
-- [ ] Audio, second batch: stronger noise suppression (RNNoise), audio
-      quality per voice channel (Feature decisions, "Voice activation
-      and audio settings"). Ducking is built (DK).
+- [ ] Audio quality per voice channel (Feature decisions, "Voice
+      activation and audio settings", Later). Ryan: rarely used, later.
 - [ ] Desktop app, later: badges via a preload, voice handoff between
       servers, global push-to-talk, tray, notifications, idle unload of
       background servers.
