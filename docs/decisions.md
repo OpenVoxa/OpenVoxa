@@ -1385,6 +1385,52 @@ at the end.
       server makes the session; the QR stands in for both the password
       and the two-factor code, since the approving device passed both.
 
+### Planned: replies, links and code blocks
+
+Decided with Ryan, 2026-11-06 (all as recommended). Related: a reply
+jumps to its original through a message link, and all three change how
+messages are written and drawn (`markdown.tsx`). Built in three stages,
+one session each, in this order:
+
+1. **Code blocks with a language.** The fence's language ("```go") is
+   kept and shown on the block, with a Copy button and syntax colouring
+   by **lowlight** (highlight.js's engine producing a syntax tree, so
+   React elements, never HTML strings: bodies are untrusted; Feature
+   decisions, "Markdown"). About 35 common languages, loaded lazily the
+   first time a block with a language is drawn; unknown languages show
+   the label, uncoloured. Token colours are theme variables in
+   `styles.css` (so `appearance.ts` overrides work). The composer gets a
+   Code button that wraps the selection (or an empty line) in ```
+   fences. To settle while building: the exact language list and the
+   bundle size (report it to Ryan).
+2. **Channel and message links.** Addresses in the URL fragment, so the
+   server needs no routes and nothing is sent to it:
+   `https://<server>/#/c/<channel id>` and `.../#/c/<channel id>/<message
+   id>` (ids, so renames don't break links). Copy Link in the channel
+   menu (replacing the waiting placeholder) and on each message.
+   Opening one goes there (browser or desktop app; the fragment is
+   cleared afterwards, like `#signin=`). In chat, a link to this server
+   shows as a clickable **#general** chip (message links: "#general >
+   message") that navigates in-app instead of reloading; a channel you
+   can't see shows as a greyed "#unknown-channel". Typing # in the
+   composer suggests channels and inserts the link address (portable,
+   and it reads as a link anywhere). To settle while building: a
+   message link to a message that isn't loaded uses the same "load
+   older until found" as reply jumps.
+3. **Replies.** A Reply action on each message; a bar above the
+   composer ("Replying to staff", preview, cancel, and an @ on/off
+   toggle, on by default). The sent message shows the original's
+   author and first line above it; clicking jumps there, loading older
+   history page by page (bounded) and saying so when the original is
+   gone (deleted, or older than the channel keeps). The reference (the
+   original's id and author) and the preview line travel **inside the
+   message body**, so it works in encrypted channels and for people who
+   joined after the original; the server never parses it. The @ toggle
+   adds the original's author to the message's mentions, which the
+   server already delivers as notifications. To settle while building:
+   the body format (a first-line token like stickers'), and what older
+   clients show.
+
 ## Permission groups
 
 Build-order step 12, decided by Ryan 2026-10-31.
@@ -3073,8 +3119,6 @@ verified; the section named holds the design.
       letter circles in voice tiles. Feature decisions, "Planned".
 - [ ] Server icon and name in the pane, set in Server settings (same
       section).
-- [ ] Channel links (an address per channel, Copy Link in the channel
-      menu); Ryan: later.
 - [ ] Audio quality per voice channel (Feature decisions, "Voice
       activation and audio settings", Later). Ryan: rarely used, later.
 - [ ] Desktop app, later: badges via a preload, voice handoff between
@@ -3089,17 +3133,9 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
 
 - [x] **Switch stream:** built 2026-11-06 with live quality changes
       (Feature decisions, "Switch stream"; SW1-SW9 passed).
-- [ ] **Quoting messages:** a Quote (or Reply) action on a message that
-      shows the original above yours. Typing "> " already formats a
-      quote (`markdown.tsx`). Open: quote text only, or a reply that
-      links back to the original; encrypted channels (the server can't
-      see bodies, so the reference travels inside the message).
-- [ ] **Code blocks with a language:** ```` ``` ```` fenced blocks already
-      render, but the language after the fence ("```go") is dropped and
-      nothing is highlighted. Wanted: keep the language, show it on the
-      block, syntax highlighting (a library: weigh size and safety,
-      since bodies are untrusted; Feature decisions, "Markdown"), a Copy
-      button, maybe a code button in the composer (Teams-style).
+- [ ] **Replies, channel and message links, code blocks**: designed
+      with Ryan 2026-11-06 (Feature decisions, "Planned", "Replies,
+      links and code blocks"); built in three stages, one per session.
 - [ ] **Channel groups and ordering:** text channels are sorted by name
       (`listChannels`, `ORDER BY c.name`). Wanted: named groups
       (categories) that collapse, and drag-to-reorder for channels and

@@ -155,15 +155,11 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 
 ## Current state (rewrite every session)
 
-_2026-11-06._ Done this session: **bug reports** (BR1-BR8 pass):
-About, Report a Bug (text + debug rows, shown before sending); Server
-settings, Bug Reports for View reports holders; Send to GitHub is
-administrators only (prefilled issue in their browser, no reporter name
-or server address). Also **QR login** (QR1-QR9): Settings, Account,
-Sign In on Another Device; device keyrings beside the password one.
-Read Implementation notes, Server, "QR login" before touching sign-in
-or `storage.unlock`. Earlier: two-factor, switch stream, ducking share
-sound (DK1-DK9 **untested**), RNNoise. Desktop app 0.1.8.
+_2026-11-06._ Done: **bug reports** (BR1-BR8; View reports holders
+handle them, only administrators Send to GitHub) and **QR login**
+(QR1-QR9; device keyrings beside the password one: read Implementation
+notes, Server, "QR login" before touching sign-in). Earlier: two-factor,
+ducking share sound (DK1-DK9 **untested**). Desktop app 0.1.8.
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts (kept until a sweep before beta):
@@ -175,6 +171,10 @@ sound (DK1-DK9 **untested**), RNNoise. Desktop app 0.1.8.
   backed up daily 03:30 to `~/openvoxa-key-backups`. Ryan is the only
   user. `docker builder prune` when disk passes ~80%.
 - Untested and gaps: decisions.md Open items.
-- **Next** (Ryan picks; discuss first; Open items, Next up): avatars,
-  server icons, channel links, quoting, code block languages, channel
-  groups, DMs, desktop status icon. Later: code signing, "needs app version X".
+- **Next: replies, links and code blocks**, in three stages, one per
+  session (decisions.md, Feature decisions, "Planned: replies, links
+  and code blocks"): 1 code blocks (lowlight), 2 channel and message
+  links, 3 replies. Designed; build stage 1 next.
+- **After that** (Ryan picks; discuss first; Open items, Next up):
+  avatars, server icons, channel groups, DMs, desktop status icon.
+  Later: code signing, "needs app version X".
