@@ -105,6 +105,8 @@ type API struct {
 	// Two-factor (twofactor.go): sign-ins waiting for their code, and
 	// wrong codes per account.
 	pendingLogins *pendingLogins
+	// Bug reports filed per account (bugreports.go).
+	bugReportLimit *ratelimit.Limiter
 	// QR login links in flight (signinlinks.go).
 	signInLinks   *signInLinks
 	twoFactorUser *ratelimit.Limiter
@@ -136,6 +138,9 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 		signupLock: newSignupLockout(),
 
 		signInLinks: newSignInLinks(),
+
+		// 5 bug reports up front, then one every 10 minutes.
+		bugReportLimit: ratelimit.New(1.0/600.0, 5, 2*time.Hour),
 
 		// Two-factor codes: 5 wrong per account, then one every 5
 		// minutes, whatever the address and however many sign-ins.
@@ -290,6 +295,13 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 		withUUIDPath(api.requireAuth(api.deleteReaction)))
 	mux.HandleFunc("POST /api/v1/messages/{id}/report",
 		withUUIDPath(api.requireAuth(api.reportMessage)))
+
+	// Bug reports (bugreports.go): anyone files; View reports reads and
+	// handles them; marking one sent to GitHub is administrators only.
+	mux.HandleFunc("POST /api/v1/bug-reports", api.requireAuth(api.fileBugReport))
+	mux.HandleFunc("GET /api/v1/bug-reports", api.requirePerm(perm.ViewReports, api.listBugReports))
+	mux.HandleFunc("PATCH /api/v1/bug-reports/{id}", api.requirePerm(perm.ViewReports, api.updateBugReport))
+	mux.HandleFunc("DELETE /api/v1/bug-reports/{id}", api.requirePerm(perm.ViewReports, api.deleteBugReport))
 
 	mux.HandleFunc("GET /api/v1/reports",
 		api.requirePerm(perm.ViewReports, api.listReports))

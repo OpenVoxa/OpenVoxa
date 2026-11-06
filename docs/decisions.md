@@ -1231,6 +1231,24 @@ at the end.
     there has Send to GitHub, opening a prefilled OpenVoxa issue for real
     client bugs. Friends need no GitHub account and nothing is public
     until an administrator forwards it. Built after QR login (Ryan).
+  - **Changed and settled with Ryan, 2026-11-06:** bug reports stay in
+    the server: holders of **View reports** (moderators and
+    administrators) see and handle them (Close, Reopen, Delete), but
+    **only administrators Send to GitHub**, and users have no GitHub
+    path. The administrator set the server up and knows its
+    infrastructure, so they decide what reaches the project.
+    - Form: one box, "What went wrong?", plus the Copy Debug Info rows
+      shown in full with "Include debug info" (ticked by default).
+    - Send to GitHub opens a new OpenVoxa issue in the administrator's
+      browser, prefilled with the text and debug info, without the
+      reporter's name or the server address; they edit and submit it
+      on GitHub with their own account. The report gets a "Sent to
+      GitHub" tag.
+    - The same people see an open-report count badge (like message
+      reports); no pop-ups, no sound. Send to GitHub is greyed for
+      moderators.
+    - Open / Closed (Close, Reopen), deleted by hand. The reporter is
+      not told anything further.
 - **Channel menus** (agreed with Ryan 2026-11-05, built the same day,
   CM1-CM9; `ChannelMenu.tsx`). Right-click a channel in the sidebar,
   or long-press it (500 ms) on a touchscreen. Text: Mark as Read (greyed
@@ -2844,6 +2862,22 @@ session copy's check works with either. `/me/device-secrets*` passes
 the two-factor setup gate, like `unlock-secret`. Max 20 secrets per
 account, oldest dropped.
 
+**Bug reports (`bugreports.go`, migration 0032, client-web
+`BugReports.tsx`, About's `BugReportForm`).** The body is JSON {text,
+debug} sealed under the reporter's keystore key (context
+`openvoxa/bug-report/v1`), so account deletion shreds it; the list then
+shows "(deleted with the reporter's account)" and Send to GitHub is
+greyed. `debug` is the About rows as `[{section, items: [[k, v]]}]`,
+size-checked only. Filing: 5 per account, then one per 10 minutes.
+Reading and PATCH/DELETE need View reports; PATCH with
+`sent_to_github` also needs Administrator (403 otherwise).
+`bug_reports_changed` goes to View reports and Administrator holders. Send to
+GitHub is built in the administrator's client (`issueUrl`): drops the
+Address, Signed in as and Groups rows, adds this server's version from
+`/version`, shortens the text to keep the address under ~7000
+characters, and opens github.com/OpenVoxa/OpenVoxa/issues/new (the
+desktop app sends it to the system browser).
+
 **`go mod tidy` silently raises the `go` directive.** Running it with a
 newer local toolchain than the Dockerfile's base image rewrites `go.mod`
 and the container build then fails with a confusing version error. Keep
@@ -3025,6 +3059,11 @@ verified; the section named holds the design.
   login page "Sign in with a link"; device keyrings, migration 0031),
   QR1-QR9 (Feature decisions, "Planned", "QR login settled";
   Implementation notes, Server, "QR login").
+- 2026-11-06 Bug reports (Settings, About, Report a Bug; Server
+  settings, Bug Reports for View reports holders; Send to GitHub for
+  administrators; migration 0032), BR1-BR8 (Feature decisions,
+  "Planned", bug reports, "Changed and settled"; Implementation notes,
+  Server, "Bug reports").
 
 ## Open items
 
@@ -3034,8 +3073,6 @@ verified; the section named holds the design.
       letter circles in voice tiles. Feature decisions, "Planned".
 - [ ] Server icon and name in the pane, set in Server settings (same
       section).
-- [ ] Bug reports from users: decided (c), administrators first, with
-      Send to GitHub (same section). After QR login.
 - [ ] Channel links (an address per channel, Copy Link in the channel
       menu); Ryan: later.
 - [ ] Audio quality per voice channel (Feature decisions, "Voice
@@ -3159,6 +3196,8 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
 
 One line each; the section named has the detail.
 
+- [x] Bug reports: built 2026-11-06, BR1-BR8 pass (Feature
+      decisions, "Planned", bug reports, "Changed and settled").
 - [x] QR login (device linking by QR): built 2026-11-06, QR1-QR9
       pass (Feature decisions, "Planned", "QR login settled").
 - [x] Two-factor sign-in: built 2026-11-06 (Feature decisions,

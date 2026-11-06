@@ -1049,3 +1049,10 @@ button.dot-host { position: relative; }
 /* QR login (SignInLink.tsx): the code above its explanation and buttons. */
 .signin-link { display: flex; flex-direction: column; gap: 8px; }
 .signin-link .qr { align-self: flex-start; }
+
+/* Bug reports (AboutSettings.tsx form, BugReports.tsx): the debug rows as sent. */
+.debug-preview {
+  margin: 0; padding: 6px 10px; border-left: 3px solid var(--line);
+  white-space: pre-wrap; overflow-wrap: anywhere; max-height: 200px; overflow: auto;
+  font-family: ui-monospace, monospace; font-size: 12px;
+}
