@@ -165,36 +165,39 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 
 ## Current state (rewrite every session)
 
-_2026-11-05._ Done this session: **About tab** (AB1-AB8), **channel
-menus with rename** (CM1-CM9), **voice activation and audio settings**
-(VA1-VA13; Feature decisions "Voice activation and audio settings"):
-modes Voice Activity (default) / Push-to-Talk / Tap to Talk
-(experimental) / Open Mic, via `client-core/src/micWorklet.ts` +
-`micChain.ts` as a LiveKit track processor (read Implementation notes,
-LiveKit, "Mic processor" before touching it). Settings and Server
-settings are now 80% of the window. Channel create, rename and delete
-are in the moderation log (ML1-ML4). **Server password** (SP1-SP8;
-Feature decisions "Server password", `httpapi/signup.go`): sign-up
-Open / Server Password / Closed, rotation, per-address lockout. VA7c (forced PTT stuck on the other
-device) couldn't be reproduced: Open items, Untested. Ryan's desktop app
-is 0.1.8. Publish a patch: `cd client-desktop && npm run release:win`
-(commit the package.json bump).
+_2026-11-06._ Done this session: **ducking share sound** (DK1-DK9;
+Feature decisions, "Voice activation and audio settings"): while
+someone else talks, screen-share sound fades to a level set in
+Settings > Voice > Screen Share (on by default, 30%, Silent to 90%).
+Only other people's voices count. `#updateDuck` in `client-core/src/voice.ts`.
+**Untested**: it needs several people (sharer, talker, listener); Ryan
+will run DK1-DK9 with others and report back. Earlier: the voice
+activation modes and the on-screen talk button (TB1-TB8). Read
+Implementation notes, LiveKit, "Mic processor" before touching the
+mic chain. VA7c is still in Open items, Untested. Ryan's desktop app
+is 0.1.8. To publish a patch: `cd client-desktop && npm run release:win`,
+then commit the package.json bump.
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts: quillbrook (Ryan), staff, secondadmin,
-  testuser. Voice channels: voice-general, vip-voice (admins only).
+  testuser. They stay until a clean sweep before beta (Ryan). Voice
+  channels: voice-general, vip-voice (admins only).
 - Docker deploy: LiveKit v1.13.11, host networking (server reaches it
   at `host.docker.internal:7880`), `update-node-ip.sh` on cron. Blobs on
   bind mount `/mnt/openvoxa-blobs`. Account keys in volume
   `deploy_key-data`, wrapped under a KEK (Ryan holds the only copies),
   backed up daily 03:30 to `~/openvoxa-key-backups` (7 days). Closed off:
   Ryan is the only user. Disk is at 86% (17 GB of Docker build cache).
-- Known gaps and untested steps (K1 flows 2-5, G2-G4, P3, D1): decisions.md
-  Open items.
-- 2026-11-06: **on-screen talk button** (TB1-TB8) in the voice bar for
-  Push-to-Talk / Tap to Talk, shown on touch screens by default. Test
-  accounts stay until a clean sweep before beta (Ryan).
-- **Next:** the backlog, discuss each with Ryan before building: audio batch 2 (RNNoise,
-  per-channel quality, ducking), avatars, server icons, bug reports (then enable the
-  About tab's Report a Bug), channel links (Copy Link). Desktop updates later:
-  code signing, "server needs app version X".
+- Known gaps and untested steps (K1 flows 2-5, G2-G4, P3, D1, VA7c,
+  DK1-DK9): decisions.md, Open items.
+- **Next:** the rest of the backlog. Discuss each item with Ryan before
+  building it:
+  - audio batch 2: RNNoise and per-channel quality (the proposed shapes
+    are in Feature decisions, "Later")
+  - avatars
+  - server icons
+  - bug reports (then enable the About tab's Report a Bug)
+  - channel links (Copy Link)
+
+  Desktop updates come later: code signing, and "server needs app
+  version X".
