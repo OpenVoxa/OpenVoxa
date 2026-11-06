@@ -7,6 +7,8 @@ import { usePasswordCheck } from "./password";
 import { PasswordRules } from "./PasswordRules";
 import { unlockWithPassword, type PasswordUnlock } from "./unlock";
 import { setStaySignedIn, staySignedInChoice } from "./session";
+import { LinkSignIn, parseLink } from "./SignInLink";
+import type { LinkParts } from "@core/signinlink";
 
 /** A note for the first screen after sign-in, when unlocking changed something. */
 function unlockNote(how: PasswordUnlock): string | undefined {
@@ -21,10 +23,16 @@ function unlockNote(how: PasswordUnlock): string | undefined {
   }
 }
 
-export function Login({ onSession, notice }: {
+export function Login({ onSession, notice, link: openedLink = null }: {
   onSession: (s: Session, registered: boolean, note?: string) => void;
   notice?: string | null;
+  /** A QR login link this page was opened with (App.tsx). */
+  link?: LinkParts | null;
 }) {
+  // QR login: the link being used, and the paste box for one.
+  const [link, setLink] = useState<LinkParts | null>(openedLink);
+  const [pasting, setPasting] = useState(false);
+  const [pasted, setPasted] = useState("");
   const [mode, setMode] = useState<"login" | "register">("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -142,6 +150,49 @@ export function Login({ onSession, notice }: {
     setConfirm("");
   }
 
+  if (link) {
+    return <LinkSignIn parts={link} onCancel={() => { setLink(null); setPasted(""); }}
+      onSession={(s, note) => onSession(s, false, note)} />;
+  }
+
+  function submitPasted(e: FormEvent) {
+    e.preventDefault();
+    const parts = parseLink(pasted);
+    if (!parts) {
+      setError("That isn't a sign-in link. Copy it again from Settings > Account on your other device.");
+      return;
+    }
+    setError(null);
+    setLink(parts);
+  }
+
+  if (pasting) {
+    return (
+      <div className="auth-page">
+        <form className="auth-card" onSubmit={submitPasted}>
+          <h1>OpenVoxa</h1>
+          <p className="muted">Sign in with a link</p>
+          <label>
+            Link from your other device
+            <input value={pasted} onChange={(e) => { setPasted(e.target.value); setError(null); }}
+              placeholder="https://…/#signin=…" autoComplete="off" spellCheck={false} autoFocus required />
+            <span className="muted">
+              On a device where you're signed in, open Settings, Account, Sign In on Another Device, and use
+              Copy Link.
+            </span>
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={stay} onChange={(e) => { setStay(e.target.checked); setStaySignedIn(e.target.checked); }} />
+            <span>Stay signed in</span>
+          </label>
+          {error && <p className="error" role="alert">{error}</p>}
+          <button type="submit" className="primary" disabled={!pasted.trim()}>Continue</button>
+          <button type="button" className="link" onClick={() => { setPasting(false); setError(null); }}>Back</button>
+        </form>
+      </div>
+    );
+  }
+
   if (ticket) {
     return (
       <div className="auth-page">
@@ -229,6 +280,11 @@ export function Login({ onSession, notice }: {
           {registering ? "Already have an account? Log in" : "Need an account? Register"}
         </button>
         {!registering && closed && <p className="muted small">This server isn't accepting new accounts.</p>}
+        {!registering && (
+          <button type="button" className="link" onClick={() => { setPasting(true); setError(null); }}>
+            Sign in with a link from another device
+          </button>
+        )}
       </form>
     </div>
   );

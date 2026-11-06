@@ -6,6 +6,7 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -326,11 +327,21 @@ type twoFactorChallenge struct {
 }
 
 func (a *API) issueSession(w http.ResponseWriter, r *http.Request, userID, username, deviceName string) {
-	token, hash, err := auth.NewSessionToken()
+	resp, err := a.createSession(r.Context(), userID, username, deviceName)
 	if err != nil {
-		slog.Error("generating session token", "err", err)
+		slog.Error("creating session", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not create session")
 		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// createSession stores a new session and returns what the client keeps.
+// Shared by password sign-in, two-factor and QR login (signinlinks.go).
+func (a *API) createSession(ctx context.Context, userID, username, deviceName string) (sessionResponse, error) {
+	token, hash, err := auth.NewSessionToken()
+	if err != nil {
+		return sessionResponse{}, fmt.Errorf("generating session token: %w", err)
 	}
 
 	expiresAt := time.Now().Add(auth.SessionDuration)
@@ -343,38 +354,32 @@ func (a *API) issueSession(w http.ResponseWriter, r *http.Request, userID, usern
 		device = &d
 	}
 
-	if _, err := a.pool.Exec(r.Context(),
+	if _, err := a.pool.Exec(ctx,
 		`INSERT INTO sessions (user_id, token_hash, device_name, expires_at)
 		 VALUES ($1, $2, $3, $4)`,
 		userID, hash, device, expiresAt,
 	); err != nil {
-		slog.Error("creating session", "err", err)
-		writeError(w, http.StatusInternalServerError, "could not create session")
-		return
+		return sessionResponse{}, fmt.Errorf("storing session: %w", err)
 	}
 
-	perms, err := a.loadAccountPerms(r.Context(), userID)
+	perms, err := a.loadAccountPerms(ctx, userID)
 	if err != nil {
-		slog.Error("loading permissions", "err", err)
-		writeError(w, http.StatusInternalServerError, "could not create session")
-		return
+		return sessionResponse{}, fmt.Errorf("loading permissions: %w", err)
 	}
 
-	setup, err := a.twoFactorSetupNeeded(r.Context(), userID)
+	setup, err := a.twoFactorSetupNeeded(ctx, userID)
 	if err != nil {
-		slog.Error("checking two-factor requirement", "err", err)
-		writeError(w, http.StatusInternalServerError, "could not create session")
-		return
+		return sessionResponse{}, fmt.Errorf("checking two-factor requirement: %w", err)
 	}
 
-	writeJSON(w, http.StatusOK, sessionResponse{
+	return sessionResponse{
 		Token:                  token,
 		ExpiresAt:              expiresAt,
 		UserID:                 userID,
 		Username:               username,
 		accountPerms:           perms,
 		TwoFactorSetupRequired: setup,
-	})
+	}, nil
 }
 
 func (a *API) logout(w http.ResponseWriter, r *http.Request) {

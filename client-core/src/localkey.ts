@@ -11,6 +11,11 @@
  * - The keyring: the data key encrypted under a key derived from the
  *   password with Argon2id. Stored unencrypted beside the data, together
  *   with the salt and Argon2id settings; useless without the password.
+ * - Or, for a browser signed in by QR login (no password ever typed
+ *   there), a device keyring: the data key under a per-browser secret the
+ *   server keeps and releases only to a signed-in session of the account
+ *   (GET /api/v1/me/device-secrets/{id}). The first password sign-in
+ *   turns it into a password keyring.
  * - The session copy: the data key encrypted under a per-login-session
  *   secret the server keeps (GET /api/v1/me/unlock-secret). The tab keeps
  *   it in sessionStorage so a page refresh unlocks without the password.
@@ -38,9 +43,13 @@ const utf8 = new TextEncoder();
 const KEYRING_AAD = utf8.encode("openvoxa local keyring v1");
 const SESSION_AAD = utf8.encode("openvoxa session unlock v1");
 const CHECK_AAD = utf8.encode("openvoxa local keyring check v1");
+const DEVICE_AAD = utf8.encode("openvoxa device keyring v1");
 
 /** The unencrypted record that holds the wrapped data key. */
-export interface Keyring {
+export type Keyring = PasswordKeyring | DeviceKeyring;
+
+/** The data key under the password. */
+export interface PasswordKeyring {
   readonly v: 1;
   readonly kdf: {
     readonly alg: "argon2id";
@@ -58,12 +67,29 @@ export interface Keyring {
   readonly check: Uint8Array;
 }
 
+/** The data key under a server-held device secret (QR login). */
+export interface DeviceKeyring {
+  readonly v: 1;
+  readonly kdf: {
+    readonly alg: "server";
+    /** The device secret's id on the server. */
+    readonly id: string;
+  };
+  readonly wrapped: Uint8Array;
+  readonly check: Uint8Array;
+}
+
 export function isKeyring(v: unknown): v is Keyring {
   if (typeof v !== "object" || v === null) return false;
-  const k = v as Partial<Keyring>;
-  return k.v === 1 && k.kdf?.alg === "argon2id" &&
-    k.salt instanceof Uint8Array && k.wrapped instanceof Uint8Array &&
-    k.check instanceof Uint8Array;
+  const k = v as { v?: unknown; kdf?: { alg?: unknown; id?: unknown }; salt?: unknown;
+    wrapped?: unknown; check?: unknown };
+  if (k.v !== 1 || !(k.wrapped instanceof Uint8Array) || !(k.check instanceof Uint8Array)) return false;
+  if (k.kdf?.alg === "argon2id") return k.salt instanceof Uint8Array;
+  return k.kdf?.alg === "server" && typeof k.kdf.id === "string";
+}
+
+export function isDeviceKeyring(k: Keyring): k is DeviceKeyring {
+  return k.kdf.alg === "server";
 }
 
 function aesKey(raw: Uint8Array, usages: KeyUsage[]): Promise<CryptoKey> {
@@ -91,7 +117,7 @@ export async function unseal(key: CryptoKey, aad: Uint8Array, sealed: Uint8Array
   ));
 }
 
-async function passwordKey(password: string, salt: Uint8Array, kdf: Keyring["kdf"]): Promise<CryptoKey> {
+async function passwordKey(password: string, salt: Uint8Array, kdf: PasswordKeyring["kdf"]): Promise<CryptoKey> {
   const raw = await argon2id({
     password: password.normalize("NFC"),
     salt,
@@ -118,7 +144,7 @@ export class DataKey {
   }
 
   /** A keyring holding this key under the password (new salt each time). */
-  async wrap(password: string): Promise<Keyring> {
+  async wrap(password: string): Promise<PasswordKeyring> {
     const kdf = { alg: "argon2id" as const, ...KDF };
     const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
     const wrapped = await seal(await passwordKey(password, salt, kdf), KEYRING_AAD, this.raw);
@@ -136,8 +162,24 @@ export class DataKey {
     }
   }
 
+  /** A device keyring holding this key under a server-held secret. */
+  async wrapForDevice(id: string, secret: Uint8Array): Promise<DeviceKeyring> {
+    const wrapped = await seal(await aesKey(secret, ["encrypt"]), DEVICE_AAD, this.raw);
+    const check = await seal(this.key, CHECK_AAD, new Uint8Array(0));
+    return { v: 1, kdf: { alg: "server", id }, wrapped, check };
+  }
+
+  /** The key from a device keyring, or null when the secret does not open it. */
+  static async unwrapForDevice(ring: DeviceKeyring, secret: Uint8Array): Promise<DataKey | null> {
+    try {
+      return await DataKey.fromRaw(await unseal(await aesKey(secret, ["decrypt"]), DEVICE_AAD, ring.wrapped));
+    } catch {
+      return null;
+    }
+  }
+
   /** The key from a keyring, or null when the password does not open it. */
-  static async unwrap(ring: Keyring, password: string): Promise<DataKey | null> {
+  static async unwrap(ring: PasswordKeyring, password: string): Promise<DataKey | null> {
     const kek = await passwordKey(password, ring.salt, ring.kdf);
     try {
       return await DataKey.fromRaw(await unseal(kek, KEYRING_AAD, ring.wrapped));

@@ -501,7 +501,27 @@ export class Backup {
   async restore(key: RecoveryKey): Promise<RestoreResult> {
     const s = await this.#server();
     if (!s) throw new NoBackup();
-    const aes = await this.#unlockWith(s, key);
+    return this.#restoreWith(s, await this.#unlockWith(s, key));
+  }
+
+  /**
+   * restore() with the backup key itself rather than the 12 words: a QR
+   * login hands over the key a signed-in device remembered (signinlink.ts).
+   * Throws BackupLocked when the server's backup is no longer the one
+   * that key belongs to.
+   */
+  async restoreWithKey(backupId: string, raw: Uint8Array): Promise<RestoreResult> {
+    const s = await this.#server();
+    if (!s) throw new NoBackup();
+    if (s.id !== backupId) throw new BackupLocked();
+    const aes = await crypto.subtle.importKey(
+      // Extractable for the same reason as in derive().
+      "raw", new Uint8Array(raw), "AES-GCM", true, ["encrypt", "decrypt"],
+    );
+    return this.#restoreWith(s, aes);
+  }
+
+  async #restoreWith(s: ServerBackup, aes: CryptoKey): Promise<RestoreResult> {
 
     // Group chunks by generation. Normally there is one; two means an
     // upload was interrupted, and the newest complete one wins.
