@@ -1461,6 +1461,28 @@ one session each, in this order:
    the body format (a first-line token like stickers'), and what older
    clients show.
 
+   **Built 2026-11-06, RP1-RP11 pass** (`client-core/src/replies.ts`;
+   UI in `ChannelPane.tsx`). Settled with Ryan: the body's first line is
+   a token, `[reply:<message id>:<author id>:<name>] <preview>`, then the
+   reply (chosen over a quote holding a message link, which breaks if
+   the server's address changes). A browser tab not yet refreshed shows
+   that line raw; every client is served by the server, so that lasts
+   until a refresh. Chat splits it off (`ChatMessage.text` is the reply
+   alone, `.reply` the reference); send() and edit() put it back, and an
+   edit keeps the author's mention if the reply had it. The preview is
+   the original's first line with words (code fences and a quote marker
+   skipped), at most 100 characters; "Sticker", "Attachment" or "N
+   attachments" when there's no text. Shown **live** when the original
+   is loaded (edits; "Original message deleted"), else the saved
+   preview. Also settled: Reply sits after React in the hover bar, not
+   on pending, deleted, unreadable or deleted-account messages; @ is
+   greyed and off for your own message; GIFs and stickers sent while
+   replying are replies; Esc or × cancels, switching channel clears it;
+   a reply always gets its name header (never compact). Reports send
+   the body with its token (plain channels compare it with the stored
+   body) and Server settings > Reports shows "Replying to …" above it.
+   A sticker reply can't be edited, like any sticker (Ryan: leave it).
+
 ## Permission groups
 
 Build-order step 12, decided by Ryan 2026-10-31.
@@ -3146,6 +3168,8 @@ verified; the section named holds the design.
 - 2026-11-06 Channel and message links (Copy Channel Link, Copy Message
   Link, #channel chips, # suggestions, jump to message), LK1-LK9 (same
   section, stage 2).
+- 2026-11-06 Replies (Reply action, reply bar with @ toggle, reply line
+  that jumps to the original), RP1-RP11 (same section, stage 3).
 
 ## Open items
 
@@ -3169,11 +3193,6 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
 
 - [x] **Switch stream:** built 2026-11-06 with live quality changes
       (Feature decisions, "Switch stream"; SW1-SW9 passed).
-- [ ] **Replies, channel and message links, code blocks**: designed
-      with Ryan 2026-11-06 (Feature decisions, "Planned", "Replies,
-      links and code blocks"); built in three stages, one per session.
-      Stages 1 (code blocks) and 2 (links) built 2026-11-06; next: 3
-      replies.
 - [ ] **Channel groups and ordering:** text channels are sorted by name
       (`listChannels`, `ORDER BY c.name`). Wanted: named groups
       (categories) that collapse, and drag-to-reorder for channels and
@@ -3270,6 +3289,9 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
 
 One line each; the section named has the detail.
 
+- [x] Replies, channel and message links, code blocks: all three
+      stages built 2026-11-06, CB1-CB8, LK1-LK9, RP1-RP11 pass (Feature
+      decisions, "Planned: replies, links and code blocks").
 - [x] Bug reports: built 2026-11-06, BR1-BR8 pass (Feature
       decisions, "Planned", bug reports, "Changed and settled").
 - [x] QR login (device linking by QR): built 2026-11-06, QR1-QR9

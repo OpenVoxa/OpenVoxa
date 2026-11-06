@@ -26,6 +26,7 @@ import { PlainAttachment, SealedAttachment, UploadTray, useUploads } from "./att
 import { StickerMessage } from "./stickers";
 import { ColouredName, nameStyle, useNameColour } from "./names";
 import { stickerIdOf, stickerToken } from "@core/stickers";
+import { joinReply, previewOf, type ReplyRef } from "@core/replies";
 
 function useSnapshot(view: ChannelView): ChannelSnapshot {
   const subscribe = useCallback((cb: () => void) => view.on(cb), [view]);
@@ -53,7 +54,10 @@ export function ChannelPane({ view, call, userId, username, canDeleteAny, canMan
   const muted = useMutedChannels().has(snap.channel.id);
   const [editing, setEditing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The message the composer is replying to, and whether to mention its author.
+  const [replying, setReplying] = useState<Replying | null>(null);
   const c = snap.channel;
+  useEffect(() => setReplying(null), [c.id]);
   const previews = !c.encrypted || previewsEncrypted;
 
   const lastOwn = [...snap.messages].reverse().find((m) =>
@@ -132,6 +136,7 @@ export function ChannelPane({ view, call, userId, username, canDeleteAny, canMan
         onError={setError}
         jumpTo={jumpTo}
         onJumped={onJumped}
+        onReply={(m) => setReplying({ to: replyRefTo(m), mention: !m.own, own: m.own })}
       />
 
       {error && (
@@ -145,10 +150,13 @@ export function ChannelPane({ view, call, userId, username, canDeleteAny, canMan
         call={call}
         uploads={uploads}
         canManageStickers={canManageStickers}
+        replying={replying}
+        setReplying={setReplying}
         onSend={async (text, attachments) => {
           setError(null);
           try {
-            await view.send(text, attachments);
+            await view.send(text, attachments, replying ?? undefined);
+            setReplying(null);
             return true;
           } catch (err) {
             setError(errText(err));
@@ -190,7 +198,7 @@ const JUMP_PAGES = 20;
 /** How long the message jumped to stays highlighted. */
 const JUMP_FLASH_MS = 2000;
 
-function MessageList({ view, snap, call, previews, userId, username, canDeleteAny, editing, setEditing, onError, jumpTo, onJumped }: {
+function MessageList({ view, snap, call, previews, userId, username, canDeleteAny, editing, setEditing, onError, jumpTo: linkJump, onJumped: onLinkJumped, onReply }: {
   view: ChannelView;
   snap: ChannelSnapshot;
   call: ApiCall;
@@ -203,8 +211,14 @@ function MessageList({ view, snap, call, previews, userId, username, canDeleteAn
   onError: (e: string) => void;
   jumpTo: string | null;
   onJumped: () => void;
+  onReply: (m: ChatMessage) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  // A jump from a reply to its original; a message link's jump wins.
+  const [replyJump, setReplyJump] = useState<string | null>(null);
+  const jumpTo = linkJump ?? replyJump;
+  const onJumped = linkJump ? onLinkJumped : () => setReplyJump(null);
+  const byId = new Map(snap.messages.map((m) => [m.id, m]));
   const stick = useRef(true);
   // The message at the top of the view and its offset from the top, so
   // the view can stay still while older messages are added above it.
@@ -255,7 +269,7 @@ function MessageList({ view, snap, call, previews, userId, username, canDeleteAn
     remember(el);
   });
 
-  // Jumping to a message (a message link; replies later): scroll to it
+  // Jumping to a message (a message link or a reply): scroll to it
   // if it's loaded, else load older pages until it is, up to JUMP_PAGES.
   // After the effect above, so following the bottom doesn't undo it.
   const jumpState = useRef<{ id: string | null; pages: number; done: boolean }>({ id: null, pages: 0, done: false });
@@ -344,7 +358,7 @@ function MessageList({ view, snap, call, previews, userId, username, canDeleteAn
     // A notice breaks up a run of messages from one person.
     if (ni !== before) prev = undefined;
     const newDay = dayBreak(m.createdAt, m.id);
-    const compact = !newDay && !!prev && prev.authorId === m.authorId && !prev.deleted &&
+    const compact = !newDay && !m.reply && !!prev && prev.authorId === m.authorId && !prev.deleted &&
       Date.parse(m.createdAt) - Date.parse(prev.createdAt) < 5 * 60_000;
     rows.push(
       <Message
@@ -352,6 +366,8 @@ function MessageList({ view, snap, call, previews, userId, username, canDeleteAn
         m={m}
         link={m.pending ? null : channelLink(snap.channel.id, m.id)}
         jumped={flash === m.id}
+        original={m.reply ? byId.get(m.reply.messageId) ?? null : null}
+        onJumpToOriginal={() => m.reply && setReplyJump(m.reply.messageId)}
         call={call}
         encrypted={snap.channel.encrypted}
         previews={previews}
@@ -363,6 +379,8 @@ function MessageList({ view, snap, call, previews, userId, username, canDeleteAn
         canEdit={snap.canPost && m.own && !m.pending && !m.deleted && !m.unreadable && !stickerIdOf(m.text)}
         canReport={!m.own && !!m.authorId && !m.pending && !m.deleted && !m.unreadable}
         canReact={snap.canPost && !m.pending && !m.deleted && !m.unreadable}
+        canReply={snap.canPost && !m.pending && !m.deleted && !m.unreadable && !!m.authorId && !!m.username}
+        onReply={() => onReply(m)}
         onReact={(emoji, on) => void react(m, emoji, on)}
         onOpenReact={(el) => setReactingTo({ id: m.id, style: pickerBeside(el) })}
         onReport={() => setReporting(m)}
@@ -471,7 +489,8 @@ function ReportDialog({ m, call, encrypted, onClose }: {
     try {
       await call(`/api/v1/messages/${m.id}/report`, {
         method: "POST",
-        body: JSON.stringify({ reason: reason.trim(), body: m.text }),
+        // The whole text, reply token included, as the server stores it.
+        body: JSON.stringify({ reason: reason.trim(), body: joinReply(m.text, m.reply) }),
       });
       setDone(true);
     } catch (err) {
@@ -600,12 +619,15 @@ function Reactions({ m, userId, canReact, onReact, onOpenReact }: {
   );
 }
 
-function Message({ m, link: address, jumped, call, encrypted, previews, compact, userId, username, members, canDelete, canEdit, canReport, canReact, editing, onEdit, onCancelEdit, onSaveEdit, onDelete, onReport, onReact, onOpenReact, onDismiss }: {
+function Message({ m, link: address, jumped, original, onJumpToOriginal, call, encrypted, previews, compact, userId, username, members, canDelete, canEdit, canReport, canReact, canReply, onReply, editing, onEdit, onCancelEdit, onSaveEdit, onDelete, onReport, onReact, onOpenReact, onDismiss }: {
   m: ChatMessage;
   /** The message's link address; null while it's still being sent. */
   link: string | null;
   /** Just jumped to: highlighted for a moment. */
   jumped: boolean;
+  /** The message this replies to, if it's loaded. */
+  original: ChatMessage | null;
+  onJumpToOriginal: () => void;
   call: ApiCall;
   encrypted: boolean;
   previews: boolean;
@@ -617,6 +639,8 @@ function Message({ m, link: address, jumped, call, encrypted, previews, compact,
   canEdit: boolean;
   canReport: boolean;
   canReact: boolean;
+  canReply: boolean;
+  onReply: () => void;
   editing: boolean;
   onEdit: () => void;
   onCancelEdit: () => void;
@@ -654,6 +678,7 @@ function Message({ m, link: address, jumped, call, encrypted, previews, compact,
 
   return (
     <article className={classes} data-id={m.id} aria-label={`${name} at ${formatTime(m.createdAt)}`}>
+      {m.reply && !m.deleted && <ReplyLine to={m.reply} original={original} onClick={onJumpToOriginal} />}
       {compact
         ? <time className="side-time small" dateTime={m.createdAt}>{formatTime(m.createdAt)}</time>
         : (
@@ -687,9 +712,10 @@ function Message({ m, link: address, jumped, call, encrypted, previews, compact,
           Not sent: {m.failed}. <button className="link small" onClick={onDismiss}>Dismiss</button>
         </div>
       )}
-      {!editing && (canEdit || canDelete || canReport || canReact || canLink) && (
+      {!editing && (canEdit || canDelete || canReport || canReact || canReply || canLink) && (
         <div className="actions">
           {canReact && <button onClick={(e) => onOpenReact(e.currentTarget)} title="Add reaction">React</button>}
+          {canReply && <button onClick={onReply} title="Reply to this message">Reply</button>}
           {canLink && (
             <button onClick={() => void navigator.clipboard.writeText(address).then(() => setCopied(true), () => {})}
               title="Copy a link to this message">{copied ? "Copied" : "Copy Message Link"}</button>
@@ -704,6 +730,50 @@ function Message({ m, link: address, jumped, call, encrypted, previews, compact,
         </div>
       )}
     </article>
+  );
+}
+
+/** The composer's reply: what to, whether to mention its author (never
+ * on a reply to yourself). */
+interface Replying {
+  to: ReplyRef;
+  mention: boolean;
+  own: boolean;
+}
+
+/** One line saying what a message says, for a reply's preview. */
+function previewFor(m: ChatMessage): string {
+  if (stickerIdOf(m.text)) return "Sticker";
+  const text = previewOf(m.text);
+  if (text) return text;
+  const n = m.attachments.length;
+  return n === 1 ? "Attachment" : n > 1 ? `${n} attachments` : "";
+}
+
+function replyRefTo(m: ChatMessage): ReplyRef {
+  return { messageId: m.id, authorId: m.authorId, username: m.username, preview: previewFor(m) };
+}
+
+/**
+ * The line above a reply: the original's author and first line. Live
+ * when the original is loaded (edits, deletion); otherwise the preview
+ * saved when the reply was sent. Clicking jumps to the original.
+ */
+function ReplyLine({ to, original, onClick }: { to: ReplyRef; original: ChatMessage | null; onClick: () => void }) {
+  const colour = useNameColour(to.authorId);
+  let who = to.username;
+  let text: ReactNode = to.preview || <em>Click to see the message</em>;
+  if (original) {
+    if (original.username && original.authorId) who = original.username;
+    if (original.deleted) text = <em>Original message deleted</em>;
+    else if (!original.unreadable) text = previewFor(original) || text;
+  }
+  return (
+    <button className="reply-line" onClick={onClick} title="Jump to the original message">
+      <span className="reply-spine" aria-hidden />
+      <strong style={nameStyle(colour)}>{who}</strong>
+      <span className="reply-preview">{text}</span>
+    </button>
   );
 }
 
@@ -796,11 +866,13 @@ function composeBlocker(snap: ChannelSnapshot): string | null {
     : null;
 }
 
-function Composer({ snap, call, uploads, canManageStickers, onSend, onEditLast }: {
+function Composer({ snap, call, uploads, canManageStickers, replying, setReplying, onSend, onEditLast }: {
   snap: ChannelSnapshot;
   call: ApiCall;
   uploads: ReturnType<typeof useUploads>;
   canManageStickers: boolean;
+  replying: Replying | null;
+  setReplying: (r: Replying | null) => void;
   onSend: (text: string, attachments?: (AttachmentInfo | Upload)[]) => Promise<boolean>;
   onEditLast: () => void;
 }) {
@@ -853,10 +925,10 @@ function Composer({ snap, call, uploads, canManageStickers, onSend, onEditLast }
     });
   }, []);
 
-  // Focus follows the channel.
+  // Focus follows the channel, and starting a reply.
   useEffect(() => {
     ref.current?.focus();
-  }, [snap.channel.id]);
+  }, [snap.channel.id, replying?.to.messageId]);
 
   async function send() {
     if (!canSend) return;
@@ -876,11 +948,34 @@ function Composer({ snap, call, uploads, canManageStickers, onSend, onEditLast }
     } else if (e.key === "ArrowUp" && !text) {
       e.preventDefault();
       onEditLast();
+    } else if (e.key === "Escape" && replying) {
+      e.preventDefault();
+      setReplying(null);
     }
   }
 
   return (
     <div className="composer-wrap">
+    {replying && (
+      <div className="reply-bar">
+        <span className="reply-bar-text">
+          Replying to <strong>{replying.to.username}</strong>
+          {replying.to.preview && <span className="muted"> {replying.to.preview}</span>}
+        </span>
+        <button className={replying.mention ? "primary" : "outline"} disabled={replying.own}
+          aria-pressed={replying.mention && !replying.own}
+          onClick={() => setReplying({ ...replying, mention: !replying.mention })}
+          title={replying.own ? "Your own message: nobody to mention"
+            : replying.mention ? `${replying.to.username} is mentioned. Click to reply without mentioning.`
+            : `${replying.to.username} isn't mentioned. Click to mention.`}>
+          @ {replying.mention && !replying.own ? "On" : "Off"}
+        </button>
+        <button className="icon reply-x" onClick={() => {
+          setReplying(null);
+          ref.current?.focus();
+        }} title="Cancel reply (Esc)" aria-label="Cancel reply">×</button>
+      </div>
+    )}
     <UploadTray items={files} onRemove={uploads.remove} />
     <div className="composer">
       {mentionPicker.list}

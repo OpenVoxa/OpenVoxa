@@ -64,6 +64,8 @@ export {
 } from "./attachments.js";
 export type { Envelope, EncryptedFile, FileKey } from "./attachments.js";
 export { stickerIdOf, stickerToken } from "./stickers.js";
+export { splitReply, joinReply, previewOf, REPLY_PREVIEW_MAX } from "./replies.js";
+export type { ReplyRef } from "./replies.js";
 export type { StickerInfo, StickerLimits, StickerList } from "./stickers.js";
 export type { ApiCall, IdentityStatus } from "./identity.js";
 export type {
