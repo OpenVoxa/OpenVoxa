@@ -46,7 +46,7 @@ server/            Go (module root; go.mod says go 1.26)
   Dockerfile          client-core -> client-web -> Go -> distroless
   internal/httpapi/   HTTP + WS, one file per feature; livekitapi.go = LiveKit
                       admin calls; webui/ = embedded client-web build
-  internal/db/        Postgres; migrations/00NN_*.sql embedded, ordered (latest 0030)
+  internal/db/        Postgres; migrations/00NN_*.sql embedded, ordered (latest 0031)
   internal/{auth,blob,config,gif,hub,keystore,password,perm,ratelimit,sealedfile,totp,unfurl}
 client-core/       TypeScript protocol + crypto, no UI. src/: mls/ (ts-mls,
                    pinned 1.6.2), identity, groups (MLS lifecycle), chat
@@ -155,11 +155,15 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 
 ## Current state (rewrite every session)
 
-_2026-11-06._ Done this session: **two-factor sign-in** (TF1-TF11
-pass): Settings, Account; Server settings, Security; Members, Remove
-2FA; `reset-two-factor`. Read Implementation notes, Server, "Two-factor"
-before touching sign-in. Earlier the same day: switch stream, ducking
-share sound (DK1-DK9 **untested**), RNNoise. Desktop app 0.1.8.
+_2026-11-06._ Done this session: **QR login** (QR1-QR9 pass):
+Settings, Account, "Sign In on Another Device" shows a one-time link as
+a QR (plus Copy Link); the login page takes a pasted link; the signed-in
+device approves and hands over the backup key. QR-signed-in browsers
+are locked by a server-held device secret (migration 0031) beside the
+password keyring. Read Implementation notes, Server, "QR login" before
+touching sign-in or `storage.unlock`. Earlier the same day: two-factor
+(TF1-TF11), switch stream, ducking share sound (DK1-DK9 **untested**),
+RNNoise. Desktop app 0.1.8.
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts (kept until a sweep before beta):
@@ -171,10 +175,7 @@ share sound (DK1-DK9 **untested**), RNNoise. Desktop app 0.1.8.
   backed up daily 03:30 to `~/openvoxa-key-backups`. Ryan is the only
   user. `docker builder prune` when disk passes ~80%.
 - Untested and gaps: decisions.md Open items.
-- **Next session: QR login.** Choices made (decisions.md, Feature
-  decisions, "Planned", end); settle the open details with Ryan (who
-  shows the QR, the desktop app's part, fit with two-factor), then build.
-- **After that** (Ryan picks; discuss each first; Open items, Next up):
-  avatars, server icons, bug reports, channel links, quoting, code block
-  languages, channel groups, DMs, desktop status icon. Later: code
-  signing, "server needs app version X".
+- **Next** (Ryan picks; discuss first; Open items, Next up): bug
+  reports (decided: admins first, then GitHub), avatars, server icons,
+  channel links, quoting, code block languages, channel groups, DMs,
+  desktop status icon. Later: code signing, "needs app version X".
