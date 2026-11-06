@@ -19,6 +19,7 @@
  */
 
 import { decodeEnvelope, encodeEnvelope, encryptFile, type FileKey } from "./attachments.js";
+import { joinReply, splitReply, type ReplyRef } from "./replies.js";
 import type { ApiCall } from "./identity.js";
 import type { AutoEvent, MembershipChange, PersonChange } from "./groups.js";
 import { normalizeTime, storage, type SharedBy } from "./storage.js";
@@ -133,8 +134,10 @@ export interface ChatMessage {
   /** Written by this account. */
   readonly own: boolean;
   readonly deleted: boolean;
-  /** Empty when deleted or unreadable. */
+  /** Empty when deleted or unreadable. Without the reply token. */
   readonly text: string;
+  /** The message this one replies to (replies.ts). */
+  readonly reply?: ReplyRef;
   readonly unreadable?: Unreadable;
   /** Encrypted attachments' keys, from the envelope. */
   readonly files: readonly FileKey[];
@@ -1212,7 +1215,7 @@ export class ChannelView {
 
   #opened(base: Omit<ChatMessage, "text" | "files">, plain: string, extra: Partial<ChatMessage> = {}): ChatMessage {
     const env = decodeEnvelope(plain);
-    return { ...base, text: env.text, files: env.files, ...extra };
+    return { ...base, ...splitReply(env.text), files: env.files, ...extra };
   }
 
   /** Turn a server message into something to show, archiving as needed. */
@@ -1222,7 +1225,7 @@ export class ChannelView {
       if (this.#encrypted) await storage.deletePlaintext(m.id);
       return { ...base, text: "", files: [] };
     }
-    if (!this.#encrypted) return { ...base, text: m.body, files: [] };
+    if (!this.#encrypted) return { ...base, ...splitReply(m.body), files: [] };
 
     const id = m.id;
 
@@ -1312,7 +1315,8 @@ export class ChannelView {
     }
 
     if (!this.#encrypted) {
-      if (current) this.#put({ ...current, text: body, editedAt });
+      const { text, reply } = splitReply(body);
+      if (current) this.#put({ ...current, text, reply, editedAt });
       return;
     }
 
@@ -1597,8 +1601,13 @@ export class ChannelView {
    * Send a message. Shown at once as pending; the echo replaces it.
    * attachments: already uploaded (a GIF from POST /channels/{id}/gifs,
    * or upload() results); with one, the text may be empty.
+   * reply: the message this answers; mention: also mention its author.
    */
-  async send(text: string, attachments: readonly (AttachmentInfo | Upload)[] = []): Promise<void> {
+  async send(
+    text: string,
+    attachments: readonly (AttachmentInfo | Upload)[] = [],
+    reply?: { to: ReplyRef; mention: boolean },
+  ): Promise<void> {
     if (!text.trim() && !attachments.length) return;
     const infos = attachments.map((a) => ("info" in a ? a.info : a));
     const files = attachments.flatMap((a) => ("info" in a && a.key ? [a.key] : []));
@@ -1607,14 +1616,19 @@ export class ChannelView {
     if (!this.#canPost) throw new Error("you can't post in this channel");
 
     const mentions = await this.#mentionsIn(text);
+    if (reply?.mention && reply.to.authorId !== this.#chat.userId
+      && !mentions.some((m) => m.user_id === reply.to.authorId)) {
+      mentions.push({ user_id: reply.to.authorId, username: reply.to.username });
+    }
+    const full = joinReply(text, reply?.to);
     const ref = newRef();
-    let body = text;
-    let plain = text;
+    let body = full;
+    let plain = full;
     if (this.#encrypted) {
       if (!this.#groups.isMember(this.#channel.id)) {
         throw new Error("this device hasn't been added to this channel's encryption yet");
       }
-      plain = encodeEnvelope({ text, files });
+      plain = encodeEnvelope({ text: full, files });
       checkBodyLength(b64encode(new TextEncoder().encode(plain)), true, files.length); // before spending a key
       body = b64encode(await this.#groups.encrypt(this.#channel.id, new TextEncoder().encode(plain)));
     }
@@ -1631,6 +1645,7 @@ export class ChannelView {
       own: true,
       deleted: false,
       text,
+      reply: reply?.to,
       files,
       attachments: infos,
       mentions,
@@ -1665,12 +1680,18 @@ export class ChannelView {
     if (text === current.text) return;
 
     const mentions = (await this.#mentionsIn(text)).map((m) => m.user_id);
-    let body = text;
+    // A reply keeps its reference, and its author's mention if it had one.
+    const to = current.reply;
+    if (to && current.mentions.some((m) => m.user_id === to.authorId) && !mentions.includes(to.authorId)) {
+      mentions.push(to.authorId);
+    }
+    const full = joinReply(text, to);
+    let body = full;
     if (this.#encrypted) {
       if (current.unreadable) throw new Error("this device can't read that message, so it can't edit it");
       if (!this.#groups.isMember(this.#channel.id)) throw new Error("this device isn't in this channel's encryption");
       // Keep the attachment keys, or the files become unreadable.
-      const plain = encodeEnvelope({ text, files: [...current.files] });
+      const plain = encodeEnvelope({ text: full, files: [...current.files] });
       checkBodyLength(b64encode(new TextEncoder().encode(plain)), true);
       body = b64encode(await this.#groups.encrypt(this.#channel.id, new TextEncoder().encode(plain)));
       checkBodyLength(body, true);

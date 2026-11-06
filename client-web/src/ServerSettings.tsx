@@ -35,6 +35,7 @@ import { SecurityTab } from "./SecurityTab";
 import { BugReportsTab } from "./BugReports";
 import { MUTE_DURATIONS } from "./VoiceUI";
 import { stickerIdOf } from "@core/stickers";
+import { splitReply } from "@core/replies";
 import { ColouredName, MIN_NAME_CONTRAST, nameContrast, refreshNames, useServerNameColours } from "./names";
 
 /** What the dialog needs to know about the signed-in account. */
@@ -1192,8 +1193,7 @@ function ReportsTab({ call, me, reload }: { call: ApiCall; me: Me; reload: numbe
                 </div>
                 <blockquote className="quoted small">{r.content_deleted
                   ? <em className="muted">(content deleted with the account)</em>
-                  : stickerIdOf(r.claimed_body) ? <StickerMessage id={stickerIdOf(r.claimed_body)!} />
-                  : r.claimed_body || <em className="muted">(no text)</em>}</blockquote>
+                  : <ReportedText body={r.claimed_body} />}</blockquote>
                 {r.reason
                   ? <p className="small report-reason"><span className="muted">Reason:</span> {r.reason}</p>
                   : <p className="small muted report-reason">No reason given.</p>}
@@ -1263,6 +1263,23 @@ function ReportsTab({ call, me, reload }: { call: ApiCall; me: Me; reload: numbe
         </ul>
       )}
     </section>
+  );
+}
+
+/** A reported message's text, as its reporter's app showed it: a reply
+ * says what it replied to above the text. */
+function ReportedText({ body }: { body: string }) {
+  const { text, reply } = splitReply(body);
+  const sticker = stickerIdOf(text);
+  return (
+    <>
+      {reply && (
+        <span className="muted block">
+          Replying to {reply.username}{reply.preview ? `: ${reply.preview}` : ""}
+        </span>
+      )}
+      {sticker ? <StickerMessage id={sticker} /> : text || <em className="muted">(no text)</em>}
+    </>
   );
 }
 

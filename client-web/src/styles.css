@@ -864,8 +864,32 @@ button.dot-host { position: relative; }
 a.channel-chip:hover { background: var(--mention-me-bg); color: var(--text); }
 .channel-chip .chip-sep { font-weight: 400; }
 .channel-chip.unknown { background: var(--input); color: var(--muted); font-weight: 400; cursor: default; }
-/* The message a link (or, later, a reply) jumped to, for a moment. */
+/* The message a link or a reply jumped to, for a moment. */
 .msg.jumped, .msg.jumped:hover { background: var(--mention-me-bg); transition: background 0.4s; }
+
+/* Replies: the line above a reply (author and first line of the original,
+   joined to the avatar column by a bent spine), and the composer's bar. */
+.reply-line {
+  display: flex; align-items: center; gap: 6px; max-width: 100%;
+  margin: 0 0 2px -56px; padding: 0 0 0 52px; position: relative;
+  background: none; color: var(--muted); font-size: 13px; text-align: left; border-radius: 0;
+}
+.reply-spine {
+  position: absolute; left: 8px; top: 50%; width: 38px; height: 10px;
+  border-left: 2px solid var(--line); border-top: 2px solid var(--line); border-top-left-radius: 6px;
+}
+.reply-line strong { flex: none; font-size: 13px; }
+.reply-line .reply-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.reply-line:hover .reply-preview { color: var(--text); }
+.reply-bar {
+  display: flex; align-items: center; gap: 8px; margin: 0 16px 8px; padding: 6px 6px 6px 12px;
+  background: var(--panel); border-radius: var(--radius); font-size: 14px;
+}
+.reply-bar-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reply-bar button.primary, .reply-bar button.outline {
+  flex: none; font-size: 13px; font-weight: 700; padding: 3px 10px; border: 1px solid var(--accent);
+}
+.reply-bar .reply-x { flex: none; font-size: 18px; }
 .channel .mention-badge {
   min-width: 18px;
   height: 18px;
