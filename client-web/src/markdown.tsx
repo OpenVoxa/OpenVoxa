@@ -3,16 +3,18 @@
 
 /**
  * The small Markdown subset chat uses: **bold**, *italic* / _italic_,
- * ~~strike~~, `inline code`, ```fenced code```, "> " quotes, links, and
+ * ~~strike~~, `inline code`, ```fenced code``` (with an optional language,
+ * "```go", which labels and colours it), "> " quotes, links, and
  * @mentions (only names the server accepted for that message).
  *
  * Built as React elements, never as an HTML string, so a user's angle
- * bracket can only ever be text. Same subset as the debug page.
+ * bracket can only ever be text.
  */
 
-import { Fragment, type ReactNode } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { matchMember, MENTION_RE, type Mention } from "@core/chat";
 import { useNameColour } from "./names";
+import type { CodeNode } from "./codeHighlight";
 
 /** Who a message mentions, and who is reading. */
 interface MentionCtx {
@@ -41,13 +43,64 @@ export function Markdown({ text, mentions, me }: {
   for (const m of text.matchAll(/```([\s\S]*?)```/g)) {
     const i = m.index ?? 0;
     if (i > last) out.push(...blocks(trimEnds(text.slice(last, i), last > 0, true), `b${i}`, ctx));
-    // A language tag on the opening line ("```js") is dropped.
-    const code = m[1].replace(/^[\w+-]*\n/, "").replace(/\n$/, "");
-    out.push(<pre key={`c${i}`}><code>{code}</code></pre>);
+    // A language tag on the opening line ("```js") labels the block.
+    const tag = /^([\w+#.-]{0,20})\n/.exec(m[1]);
+    const code = (tag ? m[1].slice(tag[0].length) : m[1]).replace(/\n$/, "");
+    out.push(<CodeBlock key={`c${i}`} code={code} lang={tag?.[1] ?? ""} />);
     last = i + m[0].length;
   }
   if (last < text.length) out.push(...blocks(trimEnds(text.slice(last), last > 0, false), "tail", ctx));
   return <span className="text md">{out}</span>;
+}
+
+// ---------------------------------------------------------- code blocks
+
+type Highlighter = typeof import("./codeHighlight");
+let highlighter: Highlighter | null = null;
+let loadingHighlighter: Promise<Highlighter> | null = null;
+
+/** The highlighter, loaded once on first use (its own chunk). */
+function loadHighlighter(): Promise<Highlighter> {
+  loadingHighlighter ??= import("./codeHighlight").then((h) => (highlighter = h));
+  return loadingHighlighter;
+}
+
+/** A fenced block: its language (if given) and a Copy button on a bar
+ * above, the code coloured when the language is one we know. */
+function CodeBlock({ code, lang }: { code: string; lang: string }) {
+  const [hl, setHl] = useState(highlighter);
+  const [copied, setCopied] = useState<string | null>(null);
+  useEffect(() => {
+    if (lang && !hl) void loadHighlighter().then(setHl, () => {});
+  }, [lang, hl]);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(null), 1500);
+    return () => clearTimeout(t);
+  }, [copied]);
+  const tree = lang && hl ? hl.highlight(code, lang) : null;
+  return (
+    <div className="code-block">
+      <div className="code-head">
+        <span className="code-lang">{lang}</span>
+        <button className="secondary code-copy" onClick={() => {
+          navigator.clipboard.writeText(code).then(() => setCopied("Copied"), () => setCopied("Couldn't copy"));
+        }}>{copied ?? "Copy"}</button>
+      </div>
+      <pre><code>{tree ? codeNodes(tree, "h") : code}</code></pre>
+    </div>
+  );
+}
+
+/** lowlight's tree as React elements: text stays text, and the only
+ * markup is a span with highlight.js's class names ("hljs-keyword"). */
+function codeNodes(nodes: readonly CodeNode[], key: string): ReactNode[] {
+  return nodes.map((n, i) => {
+    if (n.type === "text") return n.value;
+    const cls = n.properties?.className;
+    const className = Array.isArray(cls) ? cls.filter((c) => typeof c === "string").join(" ") : undefined;
+    return <span key={`${key}.${i}`} className={className}>{codeNodes(n.children ?? [], `${key}.${i}`)}</span>;
+  });
 }
 
 /** Drop the line break next to a block element: the body is pre-wrap,
