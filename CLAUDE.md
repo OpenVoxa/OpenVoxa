@@ -165,17 +165,17 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 
 ## Current state (rewrite every session)
 
-_2026-11-06._ Done this session (Feature decisions, "Voice activation
-and audio settings"):
-- **Ducking share sound** while others talk (DK1-DK9, **untested**: Ryan
-  needs other people for it).
-- **Strong noise suppression**: RNNoise, `client-core/src/rnnoiseWorklet.ts`
-  (RN1-RN9 pass, Firefox too). Read Implementation notes before touching
-  the mic: LiveKit, "Mic processor" and "Recapturing the mic" (no
-  `restartTrack`); Web client, "Audio worklets have no `self`".
-- **Settings headers** in the accent colour, with lines between sections
-  (Ryan: the lines are subtle, fine for now).
+_2026-11-06._ Done this session: **switch stream** (Feature decisions,
+"Switch stream"; SW1-SW9 pass). While sharing, the share button opens
+the dialog (quality and Detail/Motion change live; Stop Sharing; Switch
+What You Share); your own share tile has Switch. Built on LiveKit
+`replaceTrack`: read Implementation notes, LiveKit, "Switching a share
+in place" before touching share code (the server keeps the publish-time
+size; desktop window sound handoff in `desktopShareSound.ts`). The
+"You're muted" tile banner now sits bottom right.
 
+Earlier the same day: ducking share sound (DK1-DK9 **untested**, needs
+other people), RNNoise strong noise suppression, accent settings headers.
 Per-channel audio quality is shelved (Ryan: rarely used). Desktop app
 0.1.8 (patch: `npm run release:win`, commit the package.json bump).
 
@@ -188,13 +188,11 @@ Per-channel audio quality is shelved (Ryan: rarely used). Desktop app
   `/mnt/openvoxa-blobs`. Account keys in volume `deploy_key-data` under
   a KEK (Ryan holds the only copies), backed up daily 03:30 to
   `~/openvoxa-key-backups` (7 days). Closed off: Ryan is the only user.
-  Disk 83%.
+  Disk 85%.
 - Untested and gaps: decisions.md Open items (K1 flows 2-5, G2-G4, P3,
   D1, VA7c, DK1-DK9).
-- **Next session: switch stream** (agreed with Ryan 2026-11-06; decisions.md
-  Open items, Next up). Design talk first, then build.
-- **After that** (discuss each with Ryan first; decisions.md Open items, Next
+- **Next** (Ryan picks; discuss each first; decisions.md Open items, Next
   up): avatars, server icons, bug reports (then enable About's Report a
-  Bug), channel links; added 2026-11-06: switch stream, quoting, code
-  blocks with a language, channel groups and ordering, DMs and whispers,
-  desktop status icon. Later: code signing, "server needs app version X".
+  Bug), channel links, quoting, code blocks with a language, channel
+  groups and ordering, DMs and whispers, desktop status icon. Later:
+  code signing, "server needs app version X".
