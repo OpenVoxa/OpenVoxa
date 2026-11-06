@@ -165,19 +165,15 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 
 ## Current state (rewrite every session)
 
-_2026-11-06._ Done this session: **switch stream** (Feature decisions,
-"Switch stream"; SW1-SW9 pass). While sharing, the share button opens
-the dialog (quality and Detail/Motion change live; Stop Sharing; Switch
-What You Share); your own share tile has Switch. Built on LiveKit
-`replaceTrack`: read Implementation notes, LiveKit, "Switching a share
-in place" before touching share code (the server keeps the publish-time
-size; desktop window sound handoff in `desktopShareSound.ts`). The
-"You're muted" tile banner now sits bottom right.
-
-Earlier the same day: ducking share sound (DK1-DK9 **untested**, needs
-other people), RNNoise strong noise suppression, accent settings headers.
-Per-channel audio quality is shelved (Ryan: rarely used). Desktop app
-0.1.8 (patch: `npm run release:win`, commit the package.json bump).
+_2026-11-06._ Done this session: **two-factor sign-in** (TF1-TF11
+pass). TOTP + 10 backup codes in Settings, Account; Server settings,
+Security (Off / Staff / Everyone, held at the setup screen at once);
+Members, Remove 2FA (logged); host command `reset-two-factor`. Read
+Implementation notes, Server, "Two-factor" before touching sign-in
+(ticket after the password, gate in `requireAuth`, secrets sealed in
+the keystore). Migration 0030. Also earlier the same day: switch
+stream, ducking share sound (DK1-DK9 **untested**), RNNoise. Desktop
+app 0.1.8 (patch: `npm run release:win`, commit the package.json bump).
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts (kept until a sweep before beta):
@@ -187,16 +183,17 @@ Per-channel audio quality is shelved (Ryan: rarely used). Desktop app
   (`host.docker.internal:7880`), `update-node-ip.sh` on cron. Blobs on
   `/mnt/openvoxa-blobs`. Account keys in volume `deploy_key-data` under
   a KEK (Ryan holds the only copies), backed up daily 03:30 to
-  `~/openvoxa-key-backups` (7 days). Closed off: Ryan is the only user.
-  Disk 62% (build cache cleared 2026-11-06; `docker builder prune` again
-  past ~80%).
+  `~/openvoxa-key-backups` (7 days); TOTP secrets live under those keys
+  too. Closed off: Ryan is the only user. Disk was 62% (`docker builder
+  prune` past ~80%).
 - Untested and gaps: decisions.md Open items (K1 flows 2-5, G2-G4, P3,
   D1, VA7c, DK1-DK9).
-- **Next session: two-factor sign-in (TOTP + backup codes), then QR
-  login.** Ryan's choices are made (decisions.md, Feature decisions,
-  "Planned", end: optional + admin can require, admin reset, QR skips
-  password and code after a confirm); settle the open details with him,
-  then build.
+- **Next session: QR login.** Ryan's choices are made (decisions.md,
+  Feature decisions, "Planned", end: the signed-in device confirms
+  "Sign in as <name> on this device?", the new one types nothing, QR
+  lasts ~2 minutes, single use, hands over the recovery key). Settle
+  the open details with him (who shows the QR, desktop app's part,
+  how it relates to two-factor's ticket), then build.
 - **After that** (Ryan picks; discuss each first; decisions.md Open
   items, Next up): avatars, server icons, bug reports (then enable About's Report a
   Bug), channel links, quoting, code blocks with a language, channel
