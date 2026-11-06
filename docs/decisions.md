@@ -1224,6 +1224,13 @@ at the end.
   developer), (c) both: admin first, who forwards. Whatever is
   chosen, a report must never include message content or keys without
   the user seeing it first.
+  - **Decided with Ryan, 2026-11-06: (c), administrators first.** About's
+    Report a Bug opens an in-app form (what went wrong, plus the Copy
+    Debug Info rows, shown before sending) that goes to the server's
+    administrators, in a Server settings tab like Reports. Each report
+    there has Send to GitHub, opening a prefilled OpenVoxa issue for real
+    client bugs. Friends need no GitHub account and nothing is public
+    until an administrator forwards it. Built after QR login (Ryan).
 - **Channel menus** (agreed with Ryan 2026-11-05, built the same day,
   CM1-CM9; `ChannelMenu.tsx`). Right-click a channel in the sidebar,
   or long-press it (500 ms) on a touchscreen. Text: Mark as Read (greyed
@@ -2979,7 +2986,8 @@ verified; the section named holds the design.
       letter circles in voice tiles. Feature decisions, "Planned".
 - [ ] Server icon and name in the pane, set in Server settings (same
       section).
-- [ ] Bug reports from users (same section; where they go is open).
+- [ ] Bug reports from users: decided (c), administrators first, with
+      Send to GitHub (same section). After QR login.
 - [ ] Channel links (an address per channel, Copy Link in the channel
       menu); Ryan: later.
 - [ ] Audio quality per voice channel (Feature decisions, "Voice
