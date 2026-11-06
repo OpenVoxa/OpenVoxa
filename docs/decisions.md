@@ -2866,12 +2866,48 @@ verified; the section named holds the design.
 - [ ] Audio quality per voice channel (Feature decisions, "Voice
       activation and audio settings", Later). Ryan: rarely used, later.
 - [ ] Desktop app, later: badges via a preload, voice handoff between
-      servers, global push-to-talk, tray, notifications, idle unload of
+      servers, global push-to-talk, notifications, idle unload of
       background servers.
 - [ ] Desktop updates, later: code signing; "this server needs app
       version X".
 - [ ] Minimized windows are probably missing from our share picker, as
       from Edge's (RS3; unchecked).
+
+Added by Ryan 2026-11-06 (each still needs a design talk):
+
+- [ ] **Switch stream:** change what you're sharing (another screen or
+      window) without ending the share. Today you stop and share again,
+      and viewers drop out and have to reopen it. Likely: replace the
+      published track's source in place (LiveKit `replaceTrack`), so
+      viewers keep watching; check share sound, the quality limit and
+      the desktop picker.
+- [ ] **Quoting messages:** a Quote (or Reply) action on a message that
+      shows the original above yours. Typing "> " already formats a
+      quote (`markdown.tsx`). Open: quote text only, or a reply that
+      links back to the original; encrypted channels (the server can't
+      see bodies, so the reference travels inside the message).
+- [ ] **Code blocks with a language:** ```` ``` ```` fenced blocks already
+      render, but the language after the fence ("```go") is dropped and
+      nothing is highlighted. Wanted: keep the language, show it on the
+      block, syntax highlighting (a library: weigh size and safety,
+      since bodies are untrusted; Feature decisions, "Markdown"), a Copy
+      button, maybe a code button in the composer (Teams-style).
+- [ ] **Channel groups and ordering:** text channels are sorted by name
+      (`listChannels`, `ORDER BY c.name`). Wanted: named groups
+      (categories) that collapse, and drag-to-reorder for channels and
+      groups (`manage_channels`). Open: voice channels in the same
+      groups, per-group permissions.
+- [ ] **Direct messages and whispers:** one-to-one and small-group
+      messages; always E2EE (Blocking decisions: DMs will be). Probably
+      an MLS group per conversation on the existing machinery. Whisper:
+      talk to one person in voice without the rest of the channel
+      hearing. Open: who may DM whom (blocking, server-wide off switch),
+      how moderators handle DM reports, DMs between servers (no
+      federation in v1, so none). The biggest of these.
+- [ ] **Desktop status icon:** your status on the taskbar button
+      (overlay icon: online, in voice, muted, deafened), maybe a tray
+      icon with Mute/Deafen. Needs the status from the server view
+      through a preload (as badges do).
 
 ### Features not built yet
 
