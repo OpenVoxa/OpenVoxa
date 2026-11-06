@@ -99,6 +99,10 @@ export interface AudioSettings {
   pttReleaseMs: number;
   /** Everyone's volume on this device, 0..1, on top of each person's own. */
   outputVolume: number;
+  /** Turn screen-share sound down while someone else talks. */
+  duckShare: boolean;
+  /** How loud share sound plays while ducked, 0..0.9 of its volume. */
+  duckLevel: number;
   echoCancellation: boolean;
   noiseSuppression: boolean;
   autoGainControl: boolean;
@@ -262,6 +266,12 @@ async function capToLimit(track: LocalTrack, limit: ShareLimit): Promise<void> {
 const MEDIA_KEYRING = 16;
 /** How long the previous epoch's media key keeps working after a change. */
 const MEDIA_KEY_HANDOVER_MS = 10_000;
+
+/** Ducking share sound: fade step, full fade down / up, hold after the talking stops. */
+const DUCK_STEP_MS = 30;
+const DUCK_ATTACK_MS = 150;
+const DUCK_RELEASE_MS = 600;
+const DUCK_HOLD_MS = 400;
 
 class MlsMediaKeys extends BaseKeyProvider {
   #current = -1;
@@ -757,6 +767,10 @@ export class VoiceClient {
     this.#keys = null;
     this.#epoch = null;
     this.#room = null;
+    if (this.#duckTimer) clearInterval(this.#duckTimer);
+    this.#duckTimer = null;
+    this.#duckGain = this.#duckTarget = 1;
+    this.#duckReleaseAt = 0;
     this.#state = "idle";
     this.#channelId = null;
     this.#canPublish = false;
@@ -794,10 +808,14 @@ export class VoiceClient {
             this.#audioEls.delete(sid);
           }
         }
+        this.#updateDuck(); // they may have left mid-sentence
         this.#changed();
       })
       .on(RoomEvent.ParticipantEncryptionStatusChanged, this.#changed)
-      .on(RoomEvent.ActiveSpeakersChanged, this.#changed)
+      .on(RoomEvent.ActiveSpeakersChanged, () => {
+        this.#updateDuck();
+        this.#changed();
+      })
       .on(RoomEvent.TrackMuted, this.#changed)
       .on(RoomEvent.TrackUnmuted, this.#changed)
       .on(RoomEvent.LocalTrackPublished, this.#changed)
@@ -1014,6 +1032,7 @@ export class VoiceClient {
     this.#deafened = deafened;
     if (deafened) this.#letGo();
     for (const p of this.#room?.remoteParticipants.values() ?? []) this.#applyVolume(p);
+    this.#updateDuck();
     return this.#applyMic();
   }
 
@@ -1101,6 +1120,8 @@ export class VoiceClient {
       tapSilenceMs: this.#num("voice.tapSilence", 1500, 500, 5000),
       pttReleaseMs: this.#num("voice.pttRelease", 200, 0, 1000),
       outputVolume: this.#num("voice.outputVolume", 1, 0, 1),
+      duckShare: this.#flag("voice.duckShare", true),
+      duckLevel: this.#num("voice.duckLevel", 0.3, 0, 0.9),
       echoCancellation: this.#flag("voice.echoCancellation", true),
       noiseSuppression: this.#flag("voice.noiseSuppression", true),
       autoGainControl: this.#flag("voice.autoGainControl", true),
@@ -1114,7 +1135,7 @@ export class VoiceClient {
       inputGain: "voice.inputGain", vadAuto: "voice.vadAuto", vadThresholdDb: "voice.vadThreshold",
       tapSilenceMs: "voice.tapSilence", pttReleaseMs: "voice.pttRelease", outputVolume: "voice.outputVolume",
       echoCancellation: "voice.echoCancellation", noiseSuppression: "voice.noiseSuppression",
-      autoGainControl: "voice.autoGainControl",
+      autoGainControl: "voice.autoGainControl", duckShare: "voice.duckShare", duckLevel: "voice.duckLevel",
     };
     for (const [k, v] of Object.entries(change)) {
       if (v !== undefined && keys[k]) this.#opts.store.set(keys[k], str(v));
@@ -1123,6 +1144,7 @@ export class VoiceClient {
     if ("outputVolume" in change) {
       for (const p of this.#room?.remoteParticipants.values() ?? []) this.#applyVolume(p);
     }
+    if ("duckShare" in change || "duckLevel" in change) this.#updateDuck();
     if ("echoCancellation" in change || "noiseSuppression" in change || "autoGainControl" in change) {
       // The browser applies these when capturing: capture again.
       if (this.#mic) await this.#mic.restartTrack(this.#captureOptions());
@@ -1306,7 +1328,64 @@ export class VoiceClient {
     const v = this.#deafened || this.#localMutedOf(p.identity) ? 0
       : this.#volumeOf(p.identity) * this.audioSettings.outputVolume;
     p.setVolume(v, Track.Source.Microphone);
-    p.setVolume(v, Track.Source.ScreenShareAudio);
+    p.setVolume(v * this.#duckGain, Track.Source.ScreenShareAudio);
+  }
+
+  // ---------------------------------------------- ducking share sound
+
+  /** Share sound's current multiplier: 1, or down to duckLevel while others talk. */
+  #duckGain = 1;
+  #duckTarget = 1;
+  #duckReleaseAt = 0;
+  #duckTimer: ReturnType<typeof setInterval> | null = null;
+
+  /**
+   * Someone else talking (as LiveKit's speaking signal says, the one behind
+   * the speaking rings) turns every share's sound down on this device. Only
+   * people this device can hear count: not locally muted ones, nobody while
+   * deafened, never yourself. Fades down fast and back up slowly, after a
+   * short hold, so gaps between words don't pump the volume.
+   */
+  #updateDuck(): void {
+    const room = this.#room;
+    const a = this.audioSettings;
+    const talking = !!room && a.duckShare && !this.#deafened && room.activeSpeakers.some((s) =>
+      s !== room.localParticipant && room.remoteParticipants.has(s.identity)
+      && !this.#localMutedOf(s.identity) && this.#volumeOf(s.identity) > 0);
+    if (talking) {
+      this.#duckTarget = a.duckLevel;
+      this.#duckReleaseAt = 0;
+    } else if (this.#duckTarget < 1 && !this.#duckReleaseAt) {
+      this.#duckReleaseAt = Date.now() + DUCK_HOLD_MS;
+    }
+    if (!room || !a.duckShare) {
+      this.#duckTarget = 1;
+      this.#duckReleaseAt = 0;
+    }
+    if (!this.#duckTimer && (this.#duckGain !== this.#duckTarget || this.#duckReleaseAt)) {
+      this.#duckTimer = setInterval(() => this.#duckStep(), DUCK_STEP_MS);
+    }
+    this.#duckStep();
+  }
+
+  #duckStep(): void {
+    if (this.#duckReleaseAt && Date.now() >= this.#duckReleaseAt) {
+      this.#duckReleaseAt = 0;
+      this.#duckTarget = 1;
+    }
+    const target = this.#duckTarget;
+    const before = this.#duckGain;
+    // Linear steps over the whole range: down in DUCK_ATTACK_MS, up in DUCK_RELEASE_MS.
+    this.#duckGain = target < before
+      ? Math.max(target, before - DUCK_STEP_MS / DUCK_ATTACK_MS)
+      : Math.min(target, before + DUCK_STEP_MS / DUCK_RELEASE_MS);
+    if (this.#duckGain !== before) {
+      for (const p of this.#room?.remoteParticipants.values() ?? []) this.#applyVolume(p);
+    }
+    if (this.#duckGain === this.#duckTarget && !this.#duckReleaseAt && this.#duckTimer) {
+      clearInterval(this.#duckTimer);
+      this.#duckTimer = null;
+    }
   }
 
   /** This device's playback volume for one person, 0..1. Remembered. */
@@ -1314,6 +1393,7 @@ export class VoiceClient {
     this.#opts.store.set(`voice.volume.${id}`, String(Math.min(1, Math.max(0, volume))));
     const p = this.#room?.remoteParticipants.get(id);
     if (p) this.#applyVolume(p);
+    this.#updateDuck();
     this.#changed();
   }
 
@@ -1322,6 +1402,7 @@ export class VoiceClient {
     this.#opts.store.set(`voice.localMute.${id}`, muted ? "1" : "0");
     const p = this.#room?.remoteParticipants.get(id);
     if (p) this.#applyVolume(p);
+    this.#updateDuck();
     this.#changed();
   }
 

@@ -625,6 +625,7 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
 .secret-change { display: flex; flex-direction: column; gap: 8px; }
 .slider-row { display: flex; flex-direction: column; gap: 4px; }
 .slider-head { display: flex; justify-content: space-between; }
+.slider-row.disabled { opacity: 0.5; }
 .level-meter-wrap { position: relative; padding: 4px 0; }
 .level-meter { position: relative; height: 10px; border-radius: 5px; background: var(--input); overflow: hidden; }
 .level-meter.idle { opacity: 0.5; }

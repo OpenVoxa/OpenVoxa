@@ -548,8 +548,24 @@ Push-to-Talk: Tap to Talk counts as an open mic there (Ryan).
   After TB7: a press is ignored unless the mic can open, and server mute
   or deafen closes an open Tap to Talk or held push-to-talk, so the mic
   doesn't come back open on unmute (Web client notes, "Disabled buttons").
-- **Later:** stronger noise suppression (RNNoise), per-channel audio
-  quality, ducking share sound while people talk.
+- **Ducking share sound** (Ryan, 2026-11-06; DK1-DK9): while someone
+  else talks, every screen share's sound on this device fades down.
+  Settings, Voice, Screen Share: "Lower screen share sound while others
+  talk" (on by default) and a slider for how loud share sound stays,
+  Silent to 90% (default 30%; greyed out when off). Only other people's
+  voices count for now (Ryan): not your own, not people you muted
+  locally or set to 0%, nothing while deafened. The trigger is LiveKit's
+  speaking signal (the speaking rings; nothing new reaches the server),
+  so it lags a little. Fades down in 150 ms, holds 400 ms after the
+  talking stops, then comes back up over 600 ms, so gaps between words
+  don't pump. All in `voice.ts` (`#updateDuck`), on the receiving
+  device: a multiplier on `ScreenShareAudio` volume in `#applyVolume`.
+- **Later:** stronger noise suppression (RNNoise; agreed shape: Off /
+  Standard (browser) / Strong (RNNoise), Standard the default, Strong
+  replacing the browser's filter, before voice activation), per-channel
+  audio quality (now every mic sends LiveKit's default 48 kbps mono;
+  idea: presets 32/48/64/96/128 per voice channel, `manage_channels`,
+  enforced by the sender only). Ducking on your own voice too, maybe.
 
 #### Screen share quality limit
 
@@ -2785,6 +2801,9 @@ verified; the section named holds the design.
   decisions, "Server password").
 - 2026-11-06 On-screen talk button for touchscreens, TB1-TB8, TB7b-TB7c
   (Feature decisions, "Voice activation and audio settings").
+- 2026-11-06 Ducking share sound while others talk, DK1-DK9 (untested:
+  Open items, Untested; Feature decisions, "Voice activation and audio
+  settings").
 
 ## Open items
 
@@ -2798,8 +2817,8 @@ verified; the section named holds the design.
 - [ ] Channel links (an address per channel, Copy Link in the channel
       menu); Ryan: later.
 - [ ] Audio, second batch: stronger noise suppression (RNNoise), audio
-      quality per voice channel, ducking share sound while people talk
-      (Feature decisions, "Voice activation and audio settings").
+      quality per voice channel (Feature decisions, "Voice activation
+      and audio settings"). Ducking is built (DK).
 - [ ] Desktop app, later: badges via a preload, voice handoff between
       servers, global push-to-talk, tray, notifications, idle unload of
       background servers.
@@ -2836,6 +2855,9 @@ verified; the section named holds the design.
       app). `#applyMic` now redraws before and after the mute switch and
       reports failures; Ryan couldn't reproduce afterwards. Possibly
       Safari. If it returns: what the voice bar says, and any notice.
+- [ ] DK1-DK9 (ducking share sound): built 2026-11-06, needs more than
+      one person (someone sharing a video with sound, someone talking,
+      someone listening). Ryan will run it with others.
 
 ### Security and protocol gaps
 
