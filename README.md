@@ -68,6 +68,7 @@ If this project ever has a monetization strategy, something has gone wrong. Plea
 **The server**
 
 - **Accounts** with argon2id password hashing and revocable server-side sessions
+- **Two-factor sign-in** with an authenticator app (TOTP) and single-use backup codes; administrators can require it for staff or for everyone
 - **Permission groups**: admin-defined groups with permission switches and a rank order; each channel lists which groups may view and which may post. Starts as Administrator, Moderator, Member and Everyone. There are always at least two administrators, and host commands to recover if not
 - **Voice** via a self-hosted LiveKit SFU, tested on desktop and iOS Safari. The server never touches media; it only hands out tokens
 - **Rate limiting** on authentication, per IP and per account
@@ -82,7 +83,7 @@ Permissions are enforced where it counts. A user without post rights in a voice 
 ## What it's meant to do, and doesn't yet
 
 - **More of the desktop app**: a global push-to-talk key, unread badges, tray, notifications, an installer with updates.
-- **Linking a new device by QR code**, and **two-factor sign-in** (TOTP).
+- **Signing in on a new device by QR code.**
 - **Several devices per account at once.** The design supports it; only one device per account is built.
 - **User avatars, server icons, channel right-click menus, a touchscreen push-to-talk button.**
 - **An independent security review.** See the banner.

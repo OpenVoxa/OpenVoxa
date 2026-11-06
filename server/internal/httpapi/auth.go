@@ -53,6 +53,9 @@ type sessionResponse struct {
 	UserID    string    `json:"user_id"`
 	Username  string    `json:"username"`
 	accountPerms
+	// The server requires two-factor for this account and it has none:
+	// the client shows the setup screen first (twofactor.go).
+	TwoFactorSetupRequired bool `json:"two_factor_setup_required"`
 }
 
 // accountPerms is what a client shows about its own permissions. Advisory:
@@ -292,7 +295,34 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Two-factor on: the password earns a ticket, the code a session
+	// (twofactor.go, loginTwoFactor).
+	var twoFactor bool
+	if err := a.pool.QueryRow(r.Context(),
+		`SELECT totp_enabled_at IS NOT NULL FROM users WHERE id = $1`, userID,
+	).Scan(&twoFactor); err != nil {
+		slog.Error("checking two-factor", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not log in")
+		return
+	}
+	if twoFactor {
+		ticket, err := a.pendingLogins.issue(userID, username, req.DeviceName)
+		if err != nil {
+			slog.Error("issuing two-factor ticket", "err", err)
+			writeError(w, http.StatusInternalServerError, "could not log in")
+			return
+		}
+		writeJSON(w, http.StatusOK, twoFactorChallenge{TwoFactorTicket: ticket})
+		return
+	}
+
 	a.issueSession(w, r, userID, username, req.DeviceName)
+}
+
+// twoFactorChallenge answers a right password on an account with
+// two-factor: send the code with this ticket to /auth/login/two-factor.
+type twoFactorChallenge struct {
+	TwoFactorTicket string `json:"two_factor_ticket"`
 }
 
 func (a *API) issueSession(w http.ResponseWriter, r *http.Request, userID, username, deviceName string) {
@@ -330,12 +360,20 @@ func (a *API) issueSession(w http.ResponseWriter, r *http.Request, userID, usern
 		return
 	}
 
+	setup, err := a.twoFactorSetupNeeded(r.Context(), userID)
+	if err != nil {
+		slog.Error("checking two-factor requirement", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not create session")
+		return
+	}
+
 	writeJSON(w, http.StatusOK, sessionResponse{
-		Token:        token,
-		ExpiresAt:    expiresAt,
-		UserID:       userID,
-		Username:     username,
-		accountPerms: perms,
+		Token:                  token,
+		ExpiresAt:              expiresAt,
+		UserID:                 userID,
+		Username:               username,
+		accountPerms:           perms,
+		TwoFactorSetupRequired: setup,
 	})
 }
 
@@ -357,6 +395,7 @@ type meResponse struct {
 	UserID   string `json:"user_id"`
 	Username string `json:"username"`
 	accountPerms
+	TwoFactorSetupRequired bool `json:"two_factor_setup_required"`
 }
 
 func (a *API) me(w http.ResponseWriter, r *http.Request) {
@@ -367,10 +406,17 @@ func (a *API) me(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not load account")
 		return
 	}
+	setup, err := a.twoFactorSetupNeeded(r.Context(), session.UserID)
+	if err != nil {
+		slog.Error("checking two-factor requirement", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not load account")
+		return
+	}
 	writeJSON(w, http.StatusOK, meResponse{
-		UserID:       session.UserID,
-		Username:     session.Username,
-		accountPerms: perms,
+		UserID:                 session.UserID,
+		Username:               session.Username,
+		accountPerms:           perms,
+		TwoFactorSetupRequired: setup,
 	})
 }
 

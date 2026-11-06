@@ -60,13 +60,17 @@ func (a *API) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		var s Session
 		var expiresAt time.Time
 		var permNames []string
+		var twoFactorOn bool
+		var twoFactorPolicy string
 
 		// The ban check runs on every request rather than only at login.
 		// Banning deletes existing sessions, but a token issued in the
 		// gap between those two statements would otherwise stay valid.
 		err := a.pool.QueryRow(r.Context(),
 			`SELECT s.id, s.user_id, u.username, s.expires_at,
-			        `+userPermsSQL+`
+			        `+userPermsSQL+`,
+			        u.totp_enabled_at IS NOT NULL,
+			        (SELECT two_factor_required FROM server_settings)
 			   FROM sessions s
 			   JOIN users u ON u.id = s.user_id
 			  WHERE s.token_hash = $1
@@ -77,7 +81,8 @@ func (a *API) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			             AND (b.expires_at IS NULL OR b.expires_at > now())
 			    )`,
 			auth.HashSessionToken(token),
-		).Scan(&s.SessionID, &s.UserID, &s.Username, &expiresAt, &permNames, &s.Rank)
+		).Scan(&s.SessionID, &s.UserID, &s.Username, &expiresAt, &permNames, &s.Rank,
+			&twoFactorOn, &twoFactorPolicy)
 
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
@@ -90,6 +95,12 @@ func (a *API) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		s.Perms = perm.NewSet(permNames)
+
+		// Held at the setup screen until two-factor is on (twofactor.go).
+		if !twoFactorOn && policyCovers(twoFactorPolicy, s.Perms) && !twoFactorSetupAllowed(r) {
+			writeTwoFactorSetupRequired(w)
+			return
+		}
 
 		if time.Now().After(expiresAt) {
 			// Clean up on sight rather than waiting for a sweep job.

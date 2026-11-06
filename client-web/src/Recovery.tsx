@@ -45,21 +45,30 @@ function sameWord(typed: string, word: string): boolean {
   return t === word || (t.length >= 4 && word.startsWith(t.slice(0, 4)) && word.startsWith(t));
 }
 
-/** The key as a QR code, drawn in the theme's colours (styles.css). */
-function QrCode({ payload }: { payload: string }) {
+/**
+ * A QR code, drawn in the theme's colours (styles.css). `plain` draws it
+ * black on white instead: for codes other apps scan (two-factor), since
+ * many authenticator apps can't read a light-on-dark code.
+ */
+export function QrCode({ payload, alt = "Recovery key as a QR code", plain = false }: {
+  payload: string;
+  alt?: string;
+  plain?: boolean;
+}) {
   const [src, setSrc] = useState<string | null>(null);
   useEffect(() => {
     const css = getComputedStyle(document.documentElement);
     qrSvg(payload, {
       type: "svg",
       errorCorrectionLevel: "M",
-      margin: 2,
-      color: { dark: css.getPropertyValue("--bg").trim(), light: css.getPropertyValue("--text").trim() },
+      margin: plain ? 4 : 2,
+      color: plain ? { dark: "#000000", light: "#ffffff" }
+        : { dark: css.getPropertyValue("--bg").trim(), light: css.getPropertyValue("--text").trim() },
     })
       .then((svg) => setSrc(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`))
       .catch(() => setSrc(null));
-  }, [payload]);
-  return src ? <img className="qr" src={src} alt="Recovery key as a QR code" /> : null;
+  }, [payload, plain]);
+  return src ? <img className="qr" src={src} alt={alt} /> : null;
 }
 
 export function RecoverySetup({
