@@ -722,6 +722,43 @@ with Hide (stop showing it), Listen and Fullscreen. Decided the same day:
   3974 kbps at 27 fps, so tiles take the small copy. Its width reads 0
   without the video element passed in.
 
+#### Switch stream
+
+Ryan, 2026-11-06. Change what you share, or its quality, without ending
+the share. Before this you stopped and shared again, and viewers' Watch
+closed and their Listen reset.
+
+- **In place, not a new share.** The new capture replaces the old one
+  inside the published track (LiveKit `replaceTrack`), so viewers keep
+  watching: same track, same Watch, same Listen. The old capture is let
+  go only once the new one is running, so cancelling the picker changes
+  nothing. Checked by experiment first (Implementation notes, "Switching
+  a share in place").
+- **Where (Ryan: both):** while sharing, the voice bar's share button
+  opens the share dialog as "You're sharing your screen": Quality,
+  Optimise for, and Close / Stop Sharing / Switch What You Share
+  (stopping takes one more click than before). Your own share's tile,
+  in the call view and in Watch, has a Switch button that opens the
+  picker straight away and keeps the quality.
+- **Quality live too (Ryan: include it).** In that dialog, Quality and
+  Optimise for apply as soon as they change: the capture is asked for
+  the new size, the encoder for the new bitrate and frame rate (both
+  layers), and Detail or Motion swaps the content hint and degradation
+  preference. Held to the server's limit like a new share.
+- **Sound follows the new pick:** swapped in place when both have it,
+  taken down or published when only one does. Viewers who were
+  listening keep listening (Listen lasts while the person shares). In
+  the desktop app a window's sound helper is started for the new window
+  before the old one is let go. Server-muted: the new pick is captured
+  without sound, and the old source's held sound is dropped.
+- **Limit check:** see Implementation notes. LiveKit keeps the size
+  declared when the share started, so the server's check doesn't see a
+  switch or a quality change. The honest client holds both to the limit;
+  a modified client could already under-declare.
+- **Code:** `VoiceClient.switchShare`, `setShareQuality`, `#capture`
+  (the picker and sound, shared with `startShare`), `shareOptions`;
+  `ShareDialog` and `switchFromTile` in VoiceUI.tsx.
+
 #### Speaking indicator
 
 Ryan, 2026-11-04 (ED7): the green ring lagged about a second both ways.
@@ -2218,6 +2255,27 @@ first. A backup restore only takes an edit mark together with its text.
 
 ### LiveKit and media
 
+**Switching a share in place** (2026-11-06, experiment: two rooms in
+headless Chromium against our LiveKit 1.13.11, livekit-client 2.23.0,
+E2EE on, canvas captures). `LocalVideoTrack.replaceTrack(newTrack,
+{ userProvidedTrack: false })` keeps the track SID (viewers saw no
+unpublish), keeps E2EE (the transform sits on the sender), stops the old
+capture, and works out the encodings again from the new size (1920x1080
+to 800x1000 to 2560x1440: both simulcast layers kept flowing, the
+viewer's picture changed size live). The small layer is the preset's
+half size, not half the capture (a 2560x1440 capture with the 1080p
+preset sends 960x540 as the small copy). **Quality live:** set
+`track.publishOptions` (screenShareEncoding, layers),
+`track.lastEncodedDimensions = undefined`, then `replaceTrack` with the
+same MediaStreamTrack: LiveKit skips the swap but redoes the encodings
+(4 Mbps 30 fps to 1.5 Mbps 15 fps live, both layers). **The size the
+server has stays the publish-time one:** `UpdateVideoLayers` (sent by
+hand) was ignored, so `ListParticipants` and the share limit check keep
+seeing the original size and bitrates. **Desktop window sound:** the
+app runs one helper per server, and the page's stop also cancels a pick
+still waiting for its sound, so after a switch the old sound must not
+call `stopShareSound` (`desktopShareSound.ts`, `current`).
+
 **LiveKit is served from our origin, pinned exactly.** Browsers refuse a
 Worker script from another origin, and the E2EE worker speaks a message
 protocol to the main library that changes between releases, so a floating
@@ -2851,6 +2909,9 @@ verified; the section named holds the design.
   between sections (SH1-SH4; Ryan: the lines are subtle, fine for now).
 - 2026-11-06 Strong noise suppression (RNNoise), RN1-RN9, RN7b-RN7d
   (Feature decisions, "Voice activation and audio settings").
+- 2026-11-06 Switch stream and live share quality, SW1-SW9, SW7b (the
+  "You're muted" banner moved to the tile's bottom right, clear of the
+  share buttons) (Feature decisions, "Switch stream").
 
 ## Open items
 
@@ -2875,12 +2936,8 @@ verified; the section named holds the design.
 
 Added by Ryan 2026-11-06 (each still needs a design talk):
 
-- [ ] **Switch stream:** change what you're sharing (another screen or
-      window) without ending the share. Today you stop and share again,
-      and viewers drop out and have to reopen it. Likely: replace the
-      published track's source in place (LiveKit `replaceTrack`), so
-      viewers keep watching; check share sound, the quality limit and
-      the desktop picker.
+- [x] **Switch stream:** built 2026-11-06 with live quality changes
+      (Feature decisions, "Switch stream"; SW1-SW9 passed).
 - [ ] **Quoting messages:** a Quote (or Reply) action on a message that
       shows the original above yours. Typing "> " already formats a
       quote (`markdown.tsx`). Open: quote text only, or a reply that
