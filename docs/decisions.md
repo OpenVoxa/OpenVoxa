@@ -3280,6 +3280,35 @@ verified; the section named holds the design.
 
 ### Next up (Ryan picks; each gets a design talk first)
 
+- [ ] **Beta v1: DEV and PROD** (Ryan, 2026-11-07). Instead of wiping
+      the current server, set up a clean PROD beside it:
+      - **PROD** on a new VM (Debian, Docker), reached from
+        Docker over SSH (`a dedicated SSH key`, key only for this). It takes
+        `openvoxa.example.com`, the router forwards (8443, UDP
+        50000-50100, TCP 7881), the public-IP cron and the desktop
+        update folder, so installed apps and bookmarks keep working.
+      - **DEV** is today's Docker stack, test data kept, moved to a new
+        name (e.g. `dev.openvoxa.example.com`), LAN only:
+        `Caddyfile.dns` still gets it a real certificate without inbound
+        ports, and `LIVEKIT_NODE_IP` becomes the LAN address.
+      - **Releases:** DEV runs work in progress; PROD only moves to a
+        tagged version (e.g. `v1.0.0-beta.1`) when Ryan says "release".
+      - **Stages:** (1) setup script and rewritten install docs; (2)
+        install PROD with them from scratch (the real test of the
+        self-host path) and cut the network over; (3) the release and
+        PROD update routine. Open for later: an official desktop app on
+        GitHub Releases for other people's servers; prebuilt server
+        images; the README's "do not use" warning for beta.
+- [ ] **Desktop app icon** (Ryan, 2026-11-07): replace the Electron
+      logo. Waiting on a PNG from Ryan's graphic artist (square, 1024 px
+      ideal, at least 512, transparent). Then: generate a multi-size
+      `client-desktop/build/icon.ico` (16-256 px); set `icon` in
+      `scripts/package.mjs` (the packager writes it into the exe, no
+      Wine), `win.icon` / `nsis.installerIcon` / `uninstallerIcon` in
+      `scripts/release.mjs`, and `icon` on the BrowserWindow in
+      `src/main.ts`; ship with `npm run release:win`. Windows may show
+      the old shortcut icon until its icon cache refreshes.
+
 - [ ] User avatars, uploaded in Settings, per server. They replace the
       letter circles in voice tiles. Feature decisions, "Planned".
 - [x] Server icon and name in the pane, set in Server settings: built
