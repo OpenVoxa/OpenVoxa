@@ -32,6 +32,7 @@ import { ServerSettingsDialog } from "./ServerSettings";
 import { configureStickers, refreshStickers } from "./stickers";
 import { configureNames, refreshNames } from "./names";
 import { channelLink, LinksContext, onAddressTarget, takePendingTarget, type LinkTarget, type Links } from "./links";
+import { serverInfoChanged } from "./serverInfo";
 
 const LAST_CHANNEL = (userId: string) => `lastChannel.${userId}`;
 
@@ -213,6 +214,14 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           else if (e.type === "bug_reports_changed") setBugsTick((t) => t + 1);
           else if (e.type === "stickers_changed") void refreshStickers();
           else if (e.type === "names_changed") refreshNames();
+          else if (e.type === "server_info_changed") serverInfoChanged();
+          else if (e.type === "events_reconnected") {
+            // Server-wide events sent while the socket was down are lost.
+            serverInfoChanged();
+            void refreshStickers();
+            refreshNames();
+            refreshMe();
+          }
           else if (e.type === "me_changed") refreshMe();
         });
         // The sign-in's list may be stale: a server update can add a

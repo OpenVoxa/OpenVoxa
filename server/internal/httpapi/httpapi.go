@@ -190,6 +190,12 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 
 	mux.HandleFunc("POST /api/v1/auth/register", api.limitByIP(api.register))
 	mux.HandleFunc("GET /api/v1/setup", api.setupStatus)
+	// The server's name and icon (serverinfo.go): public to read.
+	mux.HandleFunc("GET /api/v1/server-info", api.getServerInfo)
+	mux.HandleFunc("GET /api/v1/server-icon", api.getServerIcon)
+	mux.HandleFunc("PUT /api/v1/server-info/name", api.requirePerm(perm.Administrator, api.putServerName))
+	mux.HandleFunc("PUT /api/v1/server-icon", api.requirePerm(perm.Administrator, api.putServerIcon))
+	mux.HandleFunc("DELETE /api/v1/server-icon", api.requirePerm(perm.Administrator, api.deleteServerIcon))
 	// Sign-up mode and server password (signup.go), administrators only.
 	mux.HandleFunc("GET /api/v1/signup-settings", api.requirePerm(perm.Administrator, api.getSignupSettings))
 	mux.HandleFunc("PUT /api/v1/signup-settings", api.requirePerm(perm.Administrator, api.putSignupSettings))

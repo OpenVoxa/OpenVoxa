@@ -49,7 +49,11 @@ const ALLOWED_PERMISSIONS = new Set([
   "notifications",
 ]);
 
-type Server = { origin: string };
+// name and icon come from the server's /api/v1/server-info and are kept
+// here, so the pane shows them at once and while a server is offline.
+// icon is a data: URL the shell built itself (see fetchServerInfo);
+// iconSrc is the server's icon path, with its version, already fetched.
+type Server = { origin: string; name?: string; icon?: string; iconSrc?: string };
 type State = {
   servers: Server[];
   selected: string | null;
@@ -65,7 +69,17 @@ function loadState(): State {
   try {
     const s = JSON.parse(readFileSync(statePath(), "utf8")) as State;
     const servers = Array.isArray(s.servers)
-      ? s.servers.filter((x) => typeof x?.origin === "string" && normalizeOrigin(x.origin) === x.origin)
+      ? s.servers
+          .filter((x) => typeof x?.origin === "string" && normalizeOrigin(x.origin) === x.origin)
+          .map((x) => {
+            const icon = typeof x.icon === "string" && ICON_DATA_URL.test(x.icon) ? x.icon : undefined;
+            return {
+              origin: x.origin,
+              name: typeof x.name === "string" ? cleanName(x.name) || undefined : undefined,
+              icon,
+              iconSrc: icon && typeof x.iconSrc === "string" ? x.iconSrc : undefined,
+            };
+          })
       : [];
     const selected = servers.some((x) => x.origin === s.selected) ? s.selected : (servers[0]?.origin ?? null);
     return { servers, selected, bounds: s.bounds, maximized: s.maximized };
@@ -77,6 +91,78 @@ function loadState(): State {
 function saveState() {
   mkdirSync(path.dirname(statePath()), { recursive: true });
   writeFileSync(statePath(), JSON.stringify(state, null, 2));
+}
+
+// ---- Server name and icon ----
+
+const NAME_MAX = 40;
+const ICON_MAX_BYTES = 512 * 1024;
+const ICON_DATA_URL = /^data:image\/(png|webp);base64,[A-Za-z0-9+/]+=*$/;
+
+// cleanName: no control characters, at most NAME_MAX characters.
+function cleanName(s: string): string {
+  return Array.from(s.replace(/\p{Cc}/gu, "").trim()).slice(0, NAME_MAX).join("");
+}
+
+// iconType reads the type from the bytes, never from the server's
+// headers: PNG or WebP only. SVG and everything else are refused (an SVG
+// can carry script).
+function iconType(b: Uint8Array): string | null {
+  const png = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  if (b.length >= 8 && png.every((v, i) => b[i] === v)) return "image/png";
+  const ascii = (from: number, to: number) => String.fromCharCode(...b.subarray(from, to));
+  if (b.length >= 12 && ascii(0, 4) === "RIFF" && ascii(8, 12) === "WEBP") return "image/webp";
+  return null;
+}
+
+const infoFetches = new Map<string, Promise<void>>();
+
+// fetchServerInfo asks a server for its name and icon and keeps them.
+// The pane only ever gets a name (shown as text) and a data: URL of a
+// PNG or WebP built here, so it never loads anything from a server.
+// One fetch per server at a time; failures keep what was known.
+function fetchServerInfo(origin: string): Promise<void> {
+  const running = infoFetches.get(origin);
+  if (running) return running;
+  const p = (async () => {
+    try {
+      const res = await net.fetch(origin + "/api/v1/server-info", { signal: AbortSignal.timeout(10_000) });
+      if (!res.ok) return;
+      const body = (await res.json()) as { name?: unknown; icon?: unknown };
+      const name = typeof body.name === "string" ? cleanName(body.name) || undefined : undefined;
+      let icon: string | undefined;
+      let iconSrc: string | undefined;
+      if (typeof body.icon === "string") {
+        const url = new URL(body.icon, origin);
+        if (url.origin !== origin || url.pathname !== "/api/v1/server-icon") return;
+        iconSrc = url.pathname + url.search;
+        const known = state.servers.find((s) => s.origin === origin);
+        if (known?.iconSrc === iconSrc && known.icon) {
+          icon = known.icon;
+        } else {
+          const r = await net.fetch(url.href, { signal: AbortSignal.timeout(10_000) });
+          if (!r.ok) return;
+          const bytes = new Uint8Array(await r.arrayBuffer());
+          const type = bytes.length <= ICON_MAX_BYTES ? iconType(bytes) : null;
+          if (!type) return;
+          icon = `data:${type};base64,${Buffer.from(bytes).toString("base64")}`;
+        }
+      }
+      const s = state.servers.find((x) => x.origin === origin);
+      if (!s || (s.name === name && s.icon === icon && s.iconSrc === iconSrc)) return;
+      s.name = name;
+      s.icon = icon;
+      s.iconSrc = iconSrc;
+      saveState();
+      sendServers();
+    } catch {
+      /* offline or not answering: keep what we had */
+    } finally {
+      infoFetches.delete(origin);
+    }
+  })();
+  infoFetches.set(origin, p);
+  return p;
 }
 
 // ---- Addresses ----
@@ -402,7 +488,10 @@ function viewFor(origin: string): WebContentsView {
   });
   view.webContents.on("render-process-gone", dropPick);
   view.webContents.on("destroyed", () => stopShareSound(origin));
-  view.webContents.on("did-finish-load", () => pane?.webContents.send("server-error", { origin, message: null }));
+  view.webContents.on("did-finish-load", () => {
+    pane?.webContents.send("server-error", { origin, message: null });
+    void fetchServerInfo(origin);
+  });
   view.setVisible(false);
   win!.contentView.addChildView(view);
   void view.webContents.loadURL(origin + "/");
@@ -560,6 +649,12 @@ function registerIpc() {
     chromium: process.versions.chrome,
     os: `${process.platform} ${process.getSystemVersion()}`,
   } : null);
+  // A nudge only: the page says the name or icon changed and the shell
+  // fetches them itself, so nothing the page sends reaches the pane.
+  ipcMain.handle("view:server-info-changed", (e) => {
+    const origin = viewOrigin(e);
+    if (origin) void fetchServerInfo(origin);
+  });
   ipcMain.handle("view:share-sound-stop", (e) => {
     const origin = viewOrigin(e);
     if (origin) stopShareSound(origin);

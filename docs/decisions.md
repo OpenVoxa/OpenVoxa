@@ -1185,6 +1185,48 @@ that.
 - **Later:** a server saying "this server needs app version X or later"
   (for features that need a newer shell, such as new preload calls).
 
+#### Server name and icon
+
+Decided with Ryan, 2026-11-07; built the same day (desktop 0.1.9).
+
+- **Where set:** Server settings, General (first tab, administrators
+  only): Server Name (up to 40 characters, empty = none) and Server
+  Icon (Upload/Change Icon, Remove Icon), both saved with Save. Each
+  change goes in the moderation log (`set_server_name`,
+  `set_server_icon`, `remove_server_icon`).
+- **Where shown:** the desktop pane (icon in the 48 px circle, else the
+  first letter of the name, else of the address; hover shows "name
+  (address)"), the browser tab title and favicon, and the sign-in pages.
+  **Sign-in branding (Ryan):** the icon (96 px circle) and the server
+  name as the largest text, with "OpenVoxa" small under it; without a
+  name, "OpenVoxa" as before. A wide banner on the sign-in page comes
+  with the Home page stage (same upload).
+- **Missed events:** the saving page updates itself and nudges its
+  desktop shell directly, not only through `server_info_changed`; and
+  when the event socket reconnects, `events_reconnected` refetches what
+  server-wide events would have changed (server info, stickers, name
+  colours, own permissions). Found by SI9: an icon removed while the
+  desktop page's socket was reconnecting stuck until a reload.
+- **Crop tool (Ryan's pick over an automatic centre crop):** drag, zoom
+  (slider, wheel, +/-) and arrow keys, under a circle showing what the
+  pane keeps; the picture always covers the square. The browser draws
+  the square to a 256 x 256 canvas and uploads WebP (PNG where it can't
+  write WebP). Accepts PNG, JPEG, WebP or GIF (first frame) as input.
+- **Server:** `server_settings` columns (migration 0033): the icon is
+  small, so its bytes live in the row, not the blob store. Public
+  `GET /api/v1/server-info` (`{name, icon}`, icon a path with
+  `?v=<icon_version>`) and `GET /api/v1/server-icon` (nosniff, sandbox
+  CSP, immutable only for the current version). Admin: `PUT
+  /api/v1/server-info/name`, `PUT`/`DELETE /api/v1/server-icon` (raw
+  body, PNG or WebP by magic bytes, square, at most 1024 px and 512 KB).
+  Changes send `server_info_changed` to every socket.
+- **Desktop security:** the shell fetches the info itself (on each view
+  load, and when the page nudges it via `serverInfoChanged()` in
+  `viewPreload.ts`, which carries no data), accepts only an icon path on
+  that server, checks PNG/WebP by magic bytes and size, and gives the
+  pane a `data:` URL; name, icon and `iconSrc` are kept in
+  `servers.json` so offline servers keep their icon.
+
 ### Planned: server icons, updates, bug reports, channel menus, avatars
 
 Ryan's list, 2026-11-04. Recorded, not designed in detail yet: each gets
@@ -3170,6 +3212,10 @@ verified; the section named holds the design.
   section, stage 2).
 - 2026-11-06 Replies (Reply action, reply bar with @ toggle, reply line
   that jumps to the original), RP1-RP11 (same section, stage 3).
+- 2026-11-07 Server name and icon (Server settings, General, with a
+  crop tool; desktop pane, tab title and favicon, sign-in branding;
+  migration 0033; desktop 0.1.9), SI1-SI3, SI5-SI7, SI9-SI12 (Feature
+  decisions, "Server name and icon").
 
 ## Open items
 
@@ -3177,8 +3223,8 @@ verified; the section named holds the design.
 
 - [ ] User avatars, uploaded in Settings, per server. They replace the
       letter circles in voice tiles. Feature decisions, "Planned".
-- [ ] Server icon and name in the pane, set in Server settings (same
-      section).
+- [x] Server icon and name in the pane, set in Server settings: built
+      2026-11-07 (Feature decisions, "Server name and icon"; SI1-SI9).
 - [ ] Audio quality per voice channel (Feature decisions, "Voice
       activation and audio settings", Later). Ryan: rarely used, later.
 - [ ] Desktop app, later: badges via a preload, voice handoff between
@@ -3205,6 +3251,24 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
       hearing. Open: who may DM whom (blocking, server-wide off switch),
       how moderators handle DM reports, DMs between servers (no
       federation in v1, so none). The biggest of these.
+- [ ] **Home page** (Ryan, 2026-11-07; first answers given, details
+      still to design): a Home item at the top of the channel list
+      (server icon and name) opening a page with a wide banner image and
+      administrator-written formatted text (welcome, rules, links; same
+      markdown as messages, #channel links), edited in Server settings,
+      General, reusing the icon upload and crop (wide crop). Not
+      encrypted. Answers so far: **lands on Home** on first visit and
+      whenever an administrator changes it (a dot on Home until seen),
+      otherwise where you left off; **news** goes in a read-only
+      #announcements channel (channel access already allows view without
+      post), not on Home; **members only**, not on the sign-in page,
+      except the banner: Ryan wants branding at sign-in, so the banner
+      may show there too (decide in the design talk);
+      **rules acceptance** is a server option ("enforce community
+      rules"): when on, people must accept on their next sign-in. Open:
+      whether a rules change asks everyone to accept again; whether the
+      rules are a separate section of Home or the whole text; what an
+      account that hasn't accepted can do (nothing, or read only).
 - [ ] **Desktop status icon:** your status on the taskbar button
       (overlay icon: online, in voice, muted, deafened), maybe a tray
       icon with Mute/Deafen. Needs the status from the server view
@@ -3239,6 +3303,10 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
 - [ ] DK1-DK9 (ducking share sound): built 2026-11-06, needs more than
       one person (someone sharing a video with sound, someone talking,
       someone listening). Ryan will run it with others.
+- [ ] SI4 and SI8 (server name and icon reaching *other* people's
+      tabs and desktop panes live): need a second signed-in account
+      (SI8 a second administrator, or any account watching while an
+      administrator saves).
 
 ### Security and protocol gaps
 

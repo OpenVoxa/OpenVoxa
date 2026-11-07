@@ -6,12 +6,15 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { applyAppearance } from "./appearance";
 import { startTrafficMeter } from "./AboutSettings";
+import { refreshServerInfo } from "./serverInfo";
 import "./styles.css";
 
 // Before the first paint, so saved colours never flash the defaults.
 applyAppearance();
 // Before anything is fetched, so the About tab's bandwidth counts it all.
 startTrafficMeter();
+// The tab title and icon, and the name on the sign-in page.
+void refreshServerInfo();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

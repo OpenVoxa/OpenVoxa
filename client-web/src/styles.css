@@ -1119,3 +1119,39 @@ a.channel-chip:hover { background: var(--mention-me-bg); color: var(--text); }
   white-space: pre-wrap; overflow-wrap: anywhere; max-height: 200px; overflow: auto;
   font-family: ui-monospace, monospace; font-size: 12px;
 }
+
+/* Sign-in pages: the server's icon and name first, "OpenVoxa" small under it. */
+.auth-brand { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
+.auth-brand h1 { overflow-wrap: anywhere; }
+.auth-icon { width: 96px; height: 96px; border-radius: 50%; display: block; margin-bottom: 4px; }
+.auth-app { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+
+/* Server settings, General (GeneralTab.tsx). */
+.server-name-input { max-width: 360px; }
+.icon-row { display: flex; align-items: center; gap: 16px; }
+/* The preview matches the desktop pane's 48 px circle. */
+.icon-preview {
+  flex: none; width: 48px; height: 48px; border-radius: 50%; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--panel); color: var(--text); font-size: 20px; font-weight: 700;
+  box-shadow: 0 0 0 8px var(--input);
+  margin: 8px;
+}
+.icon-preview img { width: 100%; height: 100%; display: block; }
+.icon-crop { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.icon-crop-area {
+  position: relative; width: 256px; height: 256px; overflow: hidden;
+  border-radius: var(--radius); background: var(--input);
+  cursor: grab; touch-action: none; user-select: none;
+}
+.icon-crop-area:active { cursor: grabbing; }
+.icon-crop-area:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.icon-crop-area img { position: absolute; left: 0; top: 0; max-width: none; transform-origin: 0 0; pointer-events: none; }
+/* Darkens what falls outside the circle the pane shows. */
+.icon-crop-mask {
+  position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
+  box-shadow: 0 0 0 200px color-mix(in srgb, var(--input) 65%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--text) 50%, transparent);
+}
+.icon-crop-zoom { display: flex; align-items: center; gap: 10px; width: 256px; }
+.icon-crop-zoom input { flex: 1; }
