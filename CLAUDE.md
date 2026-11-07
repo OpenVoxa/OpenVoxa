@@ -46,7 +46,7 @@ server/            Go (module root; go.mod says go 1.26)
   Dockerfile          client-core -> client-web -> Go -> distroless
   internal/httpapi/   HTTP + WS, one file per feature; livekitapi.go = LiveKit
                       admin calls; webui/ = embedded client-web build
-  internal/db/        Postgres; migrations/00NN_*.sql embedded, ordered (latest 0032)
+  internal/db/        Postgres; migrations/00NN_*.sql embedded, ordered (latest 0034)
   internal/{auth,blob,config,gif,hub,keystore,password,perm,ratelimit,sealedfile,totp,unfurl}
 client-core/       TypeScript protocol + crypto, no UI. src/: mls/ (ts-mls,
                    pinned 1.6.2), identity, groups (MLS lifecycle), chat
@@ -155,16 +155,18 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 
 ## Current state (rewrite every session)
 
-_2026-11-07._ Done: **server name and icon** (SI1-SI12 passed except
-SI4/SI8, which need a second account). Server settings, General (admins;
-`GeneralTab.tsx`, crop tool); `serverinfo.go`, migration 0033 (icon bytes
-in `server_settings`); public `/api/v1/server-info` + `/server-icon`;
-`serverInfo.tsx` sets title/favicon and the sign-in heading (icon, name
-largest, "OpenVoxa" small). Desktop shell fetches info itself
-(`fetchServerInfo`), pane gets a data: URL; nudged via
-`serverInfoChanged()` in `viewPreload.ts`. New `events_reconnected`
-refetches server-wide state after a socket drop. Desktop app 0.1.9.
-Earlier: replies, links, code blocks; DK1-DK9 still **untested**.
+_2026-11-07._ Done: **Home page and community rules** (HP1-HP14
+passed). Home item atop the channel list (`home.tsx`: HomePane,
+RulesGate, store), edited in Server settings, General (banner cropper
+with shapes 16:9-4:1, Welcome, Rules, enforcement, "ask everyone" with a
+red warning). Server `home.go`, migration 0034; the rules hold sits in
+`requireAuth` after the two-factor hold; client `accountGate` (was
+`twoFactorGate`) reloads into either screen. Banner also on the sign-in
+card. Earlier: server name and icon (SI4/SI8 need a second account);
+DK1-DK9 still **untested**.
+Open question for Ryan: should "Require everyone to accept the rules"
+get the same red warning (it also disconnects people)? Also offered:
+`#` headings in Home text, server name in the sidebar header.
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts (kept until a sweep before beta):
@@ -178,8 +180,6 @@ Earlier: replies, links, code blocks; DK1-DK9 still **untested**.
   backed up daily 03:30 to `~/openvoxa-key-backups`. Ryan is the only
   user. `docker builder prune` when disk passes ~80%.
 - Untested and gaps: decisions.md Open items.
-- **Next:** the **Home page** (decisions.md Open items, Next up: answers
-  so far recorded; still to design: banner on the sign-in page, rules
-  re-acceptance, rules section vs whole page, what a non-accepted
-  account can do). Others: avatars, channel groups, DMs, desktop status
-  icon. Later: code signing, "needs app version X".
+- **Next:** Ryan picks from decisions.md Open items, Next up: avatars,
+  channel groups and ordering, DMs and whispers, desktop status icon.
+  Later: code signing, "needs app version X".
