@@ -155,26 +155,31 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 
 ## Current state (rewrite every session)
 
-_2026-11-06._ Done: all three stages of replies, links and code blocks.
-Last: **replies** (RP1-RP11; `client-core/src/replies.ts`: a first-line
-token `[reply:<msg>:<author>:<name>] <preview>` split off into
-`ChatMessage.reply`; Reply button, reply bar with @ toggle and reply
-line in `ChannelPane.tsx`). Before that: **code blocks** (CB1-CB8;
-`codeHighlight.ts`) and **channel and message links** (LK1-LK9;
-`links.ts`). Earlier today: bug reports, QR login, two-factor, ducking
-share sound (DK1-DK9 **untested**). Desktop app 0.1.8.
+_2026-11-07._ Done: **server name and icon** (SI1-SI12 passed except
+SI4/SI8, which need a second account). Server settings, General (admins;
+`GeneralTab.tsx`, crop tool); `serverinfo.go`, migration 0033 (icon bytes
+in `server_settings`); public `/api/v1/server-info` + `/server-icon`;
+`serverInfo.tsx` sets title/favicon and the sign-in heading (icon, name
+largest, "OpenVoxa" small). Desktop shell fetches info itself
+(`fetchServerInfo`), pane gets a data: URL; nudged via
+`serverInfoChanged()` in `viewPreload.ts`. New `events_reconnected`
+refetches server-wide state after a socket drop. Desktop app 0.1.9.
+Earlier: replies, links, code blocks; DK1-DK9 still **untested**.
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts (kept until a sweep before beta):
-  tuckilufigus (Ryan), staff, openvoxaadmin, test0user. Text channels:
-  general (plain), secret (encrypted) and some test ones. Voice
-  channels: voice-general, vip-voice (admins only).
+  tuckilufigus (Ryan), staff, openvoxaadmin (Ryan locked it down),
+  test0user. Server name "Ryan Industries". Text channels: general
+  (plain), secret (encrypted) and some test ones. Voice channels:
+  voice-general, vip-voice (admins only).
 - Docker deploy: LiveKit v1.13.11, host networking, `update-node-ip.sh`
   on cron. Blobs on `/mnt/openvoxa-blobs`. Account keys (also sealing
   TOTP secrets) in volume `deploy_key-data` under a KEK only Ryan holds,
   backed up daily 03:30 to `~/openvoxa-key-backups`. Ryan is the only
   user. `docker builder prune` when disk passes ~80%.
 - Untested and gaps: decisions.md Open items.
-- **Next** (Ryan picks; discuss first; Open items, Next up): avatars,
-  server icons, channel groups, DMs, desktop status icon. Later: code
-  signing, "needs app version X".
+- **Next:** the **Home page** (decisions.md Open items, Next up: answers
+  so far recorded; still to design: banner on the sign-in page, rules
+  re-acceptance, rules section vs whole page, what a non-accepted
+  account can do). Others: avatars, channel groups, DMs, desktop status
+  icon. Later: code signing, "needs app version X".
