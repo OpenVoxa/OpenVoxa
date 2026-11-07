@@ -157,17 +157,21 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 
 ## Current state (rewrite every session)
 
-_2026-11-07._ Home page and rules done (HP1-HP18). Now: **beta v1, DEV
-and PROD** (decisions.md Next up; agreed, nothing built). This stack =
-DEV (test data kept, later a LAN-only `dev.` name). Clean PROD VM is
-built (Debian 13, NAS blob share mounted, no Docker yet): `ssh prod`
-from Docker; Ryan runs anything needing sudo. PROD takes the domain, forwards, IP cron and
-desktop updates; moves only to tags when Ryan says "release".
-**Next, stage 1:** `deploy/setup.sh` (asks address, TLS path, media IP;
-generates all secrets; writes `.env`; starts; prints the setup code) and
-a shorter install guide. Stage 2: install PROD with it. Stage 3:
-release routine. Waiting on Ryan: the desktop icon PNG (Open items). Offered: `#` headings in Home, server
-name in the sidebar header. Untested: DK1-DK9, SI4/SI8.
+_2026-11-07._ **Beta v1, DEV and PROD** (decisions.md Next up). This stack
+= DEV (test data kept, later a LAN-only `dev.` name). PROD VM is built
+(Debian 13, NAS uploads share mounted, no Docker or git yet): `ssh prod`
+from Docker; Ryan runs anything needing sudo in its console. PROD takes
+the domain, forwards, IP cron and desktop updates; moves only to tags
+when Ryan says "release". Repo history was rewritten 2026-11-07: reset
+older clones to origin/main, never pull or merge them.
+**Stage 1 done:** `deploy/setup.sh` + README Quick start (decisions.md,
+beta entry). **Next, stage 2:** on PROD Ryan runs `sudo apt install git`,
+clones, `./setup.sh` (Cloudflare path, port 8443, uploads folder
+`/mnt/openvoxa-blobs`, internet), reports SU1-SU8; then the network
+cutover (DNS, forwards, IP cron off on DEV, desktop-updates folder,
+DEV to its `dev.` name). Stage 3: release routine. Waiting on Ryan: the
+desktop icon PNG. Offered: `#` headings in Home, server name in the
+sidebar header. Untested: DK1-DK9, SI4/SI8.
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts, server name, IPs and the domain: private

@@ -3293,13 +3293,34 @@ verified; the section named holds the design.
         `dev.` name, LAN only:
         `Caddyfile.dns` still gets it a real certificate without inbound
         ports, and `LIVEKIT_NODE_IP` becomes the LAN address.
-      - **Setup gotchas** (for setup.sh / install guide): Debian 13
-        netinst writes `allow-hotplug` for the NIC, so `_netdev` NFS
-        mounts run before DHCP and fail at boot; fix with `auto <nic>` and
-        `systemctl enable ifupdown-wait-online`. Docker must not start
-        before the blob mount, or uploads land on the local disk: add a
-        docker.service drop-in `RequiresMountsFor=/mnt/openvoxa-blobs`.
-        mount.nfs prints a harmless `AF_VSOCK CID` warning on Debian 13.
+      - **Stage 1 built 2026-11-07: `deploy/setup.sh`** (Ryan's picks).
+        Runs as the normal user, sudo only where needed; refuses if
+        `.env` or the override exists. Installs Docker from Docker's apt
+        repo on Debian/Ubuntu (and curl), adds the docker group and
+        continues via `sg`. Asks: TLS path (http / Cloudflare dns / internal),
+        domain + Let's Encrypt email (+ token), HTTPS port (override
+        `ports: !override` when not 443), internet or LAN (media IP
+        detected: 1.1.1.1 trace or the route's src), uploads folder
+        (Enter = volume; a path is write-tested as 65532, gets the server
+        volume override and a docker.service drop-in
+        `RequiresMountsFor`; NFS/CIFS on an `allow-hotplug` NIC offers
+        `auto` + `ifupdown-wait-online`, found on PROD), and the two
+        crons. KEK always generated, shown once, continues only after
+        typing `saved`. Secrets are hex (URL-safe in the database URL).
+        Starts, waits for the setup code and `/health` (curl `--resolve`
+        to 127.0.0.1, no hairpin), prints address, code and forwards.
+        `--dry-run` writes to a temp dir. Tested: shellcheck, dry runs
+        on Debian 13 (dns + 8443 + folder; internal), `compose config`
+        on the override, refusal on DEV. Real run = stage 2: SU1 git +
+        clone; SU2 Docker installed, carries on after the group change
+        without a new login; SU3 questions (dns path, 8443, internet,
+        detected public IP right); SU4 uploads folder passes the write
+        test, drop-in written; SU5 key shown, `saved` gate; SU6 build,
+        setup code and HTTPS health reported; SU7 (after cutover)
+        register the first account at the domain; SU8 reboot: share
+        mounted before Docker, stack back up.
+        README Requirements/Quick start now use it; the manual path and
+        the boot-order traps are documented.
       - **Releases:** DEV runs work in progress; PROD only moves to a
         tagged version (e.g. `v1.0.0-beta.1`) when Ryan says "release".
       - **Stages:** (1) setup script and rewritten install docs; (2)

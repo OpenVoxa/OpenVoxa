@@ -8,31 +8,44 @@ Contents: [Quick start](#quick-start) · [First account](#first-account-and-admi
 
 ## Requirements
 
-- Docker and Docker Compose v2
-- A machine with room for a few GB of images and build cache. 20 GB of disk is not enough if you build Caddy from source.
-- UDP ports 50000-50100 reachable from your clients (and TCP 7881 for clients that can't use UDP)
-- Disk for attachments, which can be local or network storage
+- A 64-bit Linux machine or VM. Debian 13 or Ubuntu is easiest: the setup script installs Docker there for you. Elsewhere, install Docker Engine with the Compose plugin first.
+- 2 CPU cores and 4 GB of RAM at least; 4 cores and 8 GB are comfortable. The containers themselves use little, but building the server takes a few GB of RAM.
+- 32 GB of disk at least (64 GB is comfortable), for the images and the build cache, plus room for uploaded files unless they go to network storage.
+- For people outside your network: a domain name and access to your router's port forwarding.
 
 ## Quick start
+
+On the machine that will run the server, as your normal user:
 
 ```bash
 git clone https://github.com/OpenVoxa/OpenVoxa.git
 cd OpenVoxa/deploy
+./setup.sh
+```
+
+Clone with git rather than downloading a zip: the build reads `.git` to stamp the server's version (shown to staff in Settings, About). On a minimal Debian, install git first: `sudo apt install git`.
+
+The script asks a few questions, then does the rest:
+
+1. **Docker:** installs it if missing (Debian and Ubuntu; asks for your password).
+2. **Address and certificate:** a public domain with ports 80 and 443 forwarded, a public domain on Cloudflare DNS (no inbound ports needed for the certificate), or no domain at all, LAN only. See [Choosing a TLS path](#choosing-a-tls-path). It also asks for the HTTPS port, in case your router forwards something other than 443.
+3. **Voice:** whether people connect from the internet or only your network, and the matching IP (it detects both). See [LIVEKIT_NODE_IP](#livekit_node_ip-is-the-setting-that-breaks-things).
+4. **Uploaded files:** this machine, or a folder that's already mounted, such as a NAS share ([Using network storage](#using-network-storage) covers mounting it). It checks the server can write there and makes Docker wait for the mount at boot.
+5. **Account key protection:** generates the key that encrypts every account's key at rest and shows it once. Store it somewhere safe and separate from your backups before you continue ([Account keys](#account-keys-and-backups)).
+6. **Upkeep:** a nightly backup of the account keys, and, for internet-facing servers, a check that follows your public IP when it changes.
+7. **Start:** generates every other secret, writes `.env` (and `docker-compose.override.yml` when needed), builds and starts the server, and prints the address and the **setup code** for the first account.
+
+`./setup.sh --dry-run` asks the same questions and shows what it would do and write, without changing anything. The script refuses to run where `.env` already exists, so it can never replace the secrets of a working server.
+
+When it's done, open the address it printed, choose Register and enter the setup code: the first account becomes the administrator ([next section](#first-account-and-administrator-recovery)). Internet-facing servers also need the router forwards it lists: TCP 80 (the first TLS path only), your HTTPS port, UDP 50000-50100 and TCP 7881.
+
+### Setting up by hand
+
+Everything the script does can be done manually. Copy the example settings and edit them; the comments explain each value:
+
+```bash
 cp .env.example .env
-```
-
-Clone with git rather than downloading a zip: the build reads `.git`
-to stamp the server's version (shown to staff in Settings, About).
-
-Generate a LiveKit key pair and put both values in `.env`:
-
-```bash
-docker run --rm livekit/livekit-server generate-keys
-```
-
-Then edit the rest of `.env` and start it:
-
-```bash
+docker run --rm livekit/livekit-server generate-keys   # LIVEKIT_API_KEY and LIVEKIT_API_SECRET
 docker compose --profile tls up -d
 ```
 
@@ -209,6 +222,19 @@ nas.example:/export/openvoxa  /mnt/openvoxa-blobs  nfs  defaults,_netdev,soft,ti
 ```
 
 `_netdev` stops boot hanging before networking is up. `soft,timeo=100` makes the mount fail fast rather than blocking forever when the NAS is unreachable; without it a NAS reboot can wedge the server.
+
+Two boot-order traps, both handled by `setup.sh` when you give it the mounted folder:
+
+- **Debian's installer brings the network card up in the background** (`allow-hotplug` in `/etc/network/interfaces`), so the share is tried before there is an address, fails, and is never retried. Change that line to `auto <card>` and run `sudo systemctl enable ifupdown-wait-online`.
+- **Docker can start before the share is mounted**, and the server then writes uploads into the empty folder underneath. Make Docker wait for it:
+
+  ```bash
+  sudo mkdir -p /etc/systemd/system/docker.service.d
+  printf '[Unit]\nRequiresMountsFor=/mnt/openvoxa-blobs\n' | sudo tee /etc/systemd/system/docker.service.d/openvoxa-blobs.conf
+  sudo systemctl daemon-reload
+  ```
+
+On Debian 13, `mount` may print `failed to query local AF_VSOCK CID`. It is harmless.
 
 Confirm the container's UID can write through a Docker mount:
 
