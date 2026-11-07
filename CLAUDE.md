@@ -155,17 +155,25 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 
 ## Current state (rewrite every session)
 
-_2026-11-07._ Done: **Home page and community rules** (HP1-HP18
-passed). Home item atop the channel list (`home.tsx`: HomePane,
-RulesGate, store), edited in Server settings, General (banner cropper
-with shapes 16:9-4:1, Welcome, Rules, enforcement and "ask everyone",
-both with red warnings). Server `home.go`, migration 0034; the rules hold sits in
-`requireAuth` after the two-factor hold; client `accountGate` (was
-`twoFactorGate`) reloads into either screen. Banner also on the sign-in
-card. Earlier: server name and icon (SI4/SI8 need a second account);
-DK1-DK9 still **untested**.
-Offered, not asked for yet: `#` headings in Home text, server name in
-the sidebar header.
+_2026-11-07._ Home page and community rules done (HP1-HP18). Now
+starting **beta v1: DEV and PROD** (decisions.md Open items, Next up,
+"Beta v1: DEV and PROD"; design agreed, nothing built). Today's Docker
+stack becomes DEV (test data kept, later renamed to a LAN-only
+`dev.` name); a clean PROD goes on a new VM Ryan is creating
+(Debian, >= 40 GB disk, fixed LAN IP, sudo user). Docker reaches it by
+SSH with `a dedicated SSH key` (made 2026-11-07; Ryan adds `the public key`
+to the VM; the GitHub key `claude_key` is separate). PROD takes the
+domain, router forwards (8443, UDP 50000-50100, TCP 7881), the
+public-IP cron and desktop updates. PROD moves only to tagged
+releases, when Ryan says "release".
+**Next, stage 1:** `deploy/setup.sh` (asks address, TLS path, media IP;
+generates Postgres password, LiveKit keys and KEK; writes `.env`;
+starts; prints the setup code) plus a shorter install guide. Stage 2:
+install PROD with it from scratch (needs the VM's IP and username from
+Ryan) and cut the network over. Stage 3: release/update routine.
+Waiting on Ryan: the VM; the desktop icon PNG (Open items, "Desktop app
+icon"). Offered, not asked for: `#` headings in Home text, server name
+in the sidebar header. DK1-DK9, SI4/SI8 still untested.
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts (kept until a sweep before beta):
@@ -179,6 +187,6 @@ the sidebar header.
   backed up daily 03:30 to `~/openvoxa-key-backups`. Ryan is the only
   user. `docker builder prune` when disk passes ~80%.
 - Untested and gaps: decisions.md Open items.
-- **Next:** Ryan picks from decisions.md Open items, Next up: avatars,
-  channel groups and ordering, DMs and whispers, desktop status icon.
-  Later: code signing, "needs app version X".
+- **Next:** beta stage 1 above. After the beta: avatars, channel groups
+  and ordering, DMs and whispers, desktop status icon. Later: code
+  signing, "needs app version X".
