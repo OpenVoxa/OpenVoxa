@@ -155,18 +155,17 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 
 ## Current state (rewrite every session)
 
-_2026-11-07._ Done: **Home page and community rules** (HP1-HP14
+_2026-11-07._ Done: **Home page and community rules** (HP1-HP18
 passed). Home item atop the channel list (`home.tsx`: HomePane,
 RulesGate, store), edited in Server settings, General (banner cropper
-with shapes 16:9-4:1, Welcome, Rules, enforcement, "ask everyone" with a
-red warning). Server `home.go`, migration 0034; the rules hold sits in
+with shapes 16:9-4:1, Welcome, Rules, enforcement and "ask everyone",
+both with red warnings). Server `home.go`, migration 0034; the rules hold sits in
 `requireAuth` after the two-factor hold; client `accountGate` (was
 `twoFactorGate`) reloads into either screen. Banner also on the sign-in
 card. Earlier: server name and icon (SI4/SI8 need a second account);
 DK1-DK9 still **untested**.
-Open question for Ryan: should "Require everyone to accept the rules"
-get the same red warning (it also disconnects people)? Also offered:
-`#` headings in Home text, server name in the sidebar header.
+Offered, not asked for yet: `#` headings in Home text, server name in
+the sidebar header.
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts (kept until a sweep before beta):
