@@ -26,11 +26,16 @@ function host(origin) {
   return new URL(origin).host;
 }
 
-// Until administrators can set a name and icon (a later step), a server
-// shows the first letter of its address, skipping a leading "openvoxa.".
-function letter(origin) {
-  const h = new URL(origin).hostname.replace(/^openvoxa\./i, "");
-  return (h[0] || "?").toUpperCase();
+// A server without an icon shows the first letter of its name, or of its
+// address (skipping a leading "openvoxa.") when it has no name either.
+function letter(s) {
+  const src = s.name || new URL(s.origin).hostname.replace(/^openvoxa\./i, "");
+  return (Array.from(src)[0] || "?").toUpperCase();
+}
+
+// The hover text: the name and the address, or just the address.
+function label(s) {
+  return s.name ? `${s.name} (${host(s.origin)})` : host(s.origin);
 }
 
 function render() {
@@ -40,9 +45,19 @@ function render() {
       if (s.origin === selected) li.className = "active";
       const b = document.createElement("button");
       b.className = "server-icon";
-      b.textContent = letter(s.origin);
-      b.title = host(s.origin);
-      b.setAttribute("aria-label", host(s.origin));
+      // s.icon is a data: URL of a PNG or WebP that the main process
+      // fetched and checked itself (fetchServerInfo).
+      if (s.icon && /^data:image\/(png|webp);base64,/.test(s.icon)) {
+        const img = document.createElement("img");
+        img.src = s.icon;
+        img.alt = "";
+        b.classList.add("has-icon");
+        b.append(img);
+      } else {
+        b.textContent = letter(s);
+      }
+      b.title = label(s);
+      b.setAttribute("aria-label", label(s));
       b.addEventListener("click", () => {
         cancelPick();
         if (adding) closeForm();

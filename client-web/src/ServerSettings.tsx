@@ -33,6 +33,7 @@ import { VoiceTab } from "./shareLimit";
 import { SignupTab } from "./SignupTab";
 import { SecurityTab } from "./SecurityTab";
 import { BugReportsTab } from "./BugReports";
+import { GeneralTab } from "./GeneralTab";
 import { MUTE_DURATIONS } from "./VoiceUI";
 import { stickerIdOf } from "@core/stickers";
 import { splitReply } from "@core/replies";
@@ -138,7 +139,7 @@ function useUserList(call: ApiCall, reload: number) {
 
 const when = (at: string) => new Date(at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
-export type ServerTab = "groups" | "members" | "reports" | "bugs" | "bans" | "log" | "stickers" | "voice" | "signup" | "security";
+export type ServerTab = "general" | "groups" | "members" | "reports" | "bugs" | "bans" | "log" | "stickers" | "voice" | "signup" | "security";
 
 /**
  * reload changes whenever the server says permissions moved, so the lists
@@ -156,8 +157,9 @@ export function ServerSettingsDialog({ call, me, reload, openReports, openBugRep
 }) {
   const has = (p: string) => me.permissions.includes(p);
   const [tab, setTab] = useState<ServerTab>(() => (openReports > 0 && has("view_reports") ? "reports"
-    : openBugReports > 0 && has("view_reports") ? "bugs" : "groups"));
-  const tabs: [ServerTab, string][] = [["groups", "Groups"], ["members", "Members"]];
+    : openBugReports > 0 && has("view_reports") ? "bugs" : has("administrator") ? "general" : "groups"));
+  const tabs: [ServerTab, string][] = has("administrator") ? [["general", "General"]] : [];
+  tabs.push(["groups", "Groups"], ["members", "Members"]);
   if (has("view_reports")) tabs.push(["reports", openReports ? `Reports (${openReports})` : "Reports"]);
   if (has("view_reports")) tabs.push(["bugs", openBugReports ? `Bug Reports (${openBugReports})` : "Bug Reports"]);
   if (has("ban")) tabs.push(["bans", "Bans"]);
@@ -173,7 +175,8 @@ export function ServerSettingsDialog({ call, me, reload, openReports, openBugRep
             onClick={() => setTab(id)}>{label}</button>
         ))}
       </div>
-      {tab === "voice" ? <VoiceTab call={call} onClose={onClose} />
+      {tab === "general" ? <GeneralTab call={call} onClose={onClose} />
+        : tab === "voice" ? <VoiceTab call={call} onClose={onClose} />
         : tab === "signup" ? <SignupTab call={call} onClose={onClose} />
         : tab === "security" ? <SecurityTab call={call} onClose={onClose} /> : (<>
       <div className="modal-body">
@@ -1427,6 +1430,12 @@ function describe(e: LogEntry): { text: string; note?: string } {
       return { text: `renamed the channel ${e.detail}` };
     case "delete_channel":
       return { text: `deleted the channel ${e.detail}` };
+    case "set_server_name":
+      return { text: e.detail ? `named the server ${e.detail}` : "removed the server's name" };
+    case "set_server_icon":
+      return { text: "changed the server icon" };
+    case "remove_server_icon":
+      return { text: "removed the server icon" };
     case "add_sticker":
       return { text: `added the sticker :${e.detail}:` };
     case "delete_sticker":

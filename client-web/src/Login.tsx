@@ -9,6 +9,7 @@ import { unlockWithPassword, type PasswordUnlock } from "./unlock";
 import { setStaySignedIn, staySignedInChoice } from "./session";
 import { LinkSignIn, parseLink } from "./SignInLink";
 import type { LinkParts } from "@core/signinlink";
+import { AuthHeading } from "./serverInfo";
 
 /** A note for the first screen after sign-in, when unlocking changed something. */
 function unlockNote(how: PasswordUnlock): string | undefined {
@@ -170,7 +171,7 @@ export function Login({ onSession, notice, link: openedLink = null }: {
     return (
       <div className="auth-page">
         <form className="auth-card" onSubmit={submitPasted}>
-          <h1>OpenVoxa</h1>
+          <AuthHeading />
           <p className="muted">Sign in with a link</p>
           <label>
             Link from your other device
@@ -197,7 +198,7 @@ export function Login({ onSession, notice, link: openedLink = null }: {
     return (
       <div className="auth-page">
         <form className="auth-card" onSubmit={submitCode}>
-          <h1>OpenVoxa</h1>
+          <AuthHeading />
           <p className="muted">Two-factor sign-in</p>
           <label>
             Code from your authenticator app
@@ -220,7 +221,7 @@ export function Login({ onSession, notice, link: openedLink = null }: {
   return (
     <div className="auth-page">
       <form className="auth-card" onSubmit={submit}>
-        <h1>OpenVoxa</h1>
+        <AuthHeading />
         <p className="muted">{registering ? "Create an account" : "Welcome back"}</p>
         {notice && <p className="muted" role="status">{notice}</p>}
 

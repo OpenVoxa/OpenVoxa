@@ -8,7 +8,7 @@
 
 import { contextBridge, ipcRenderer } from "electron";
 
-type ServerList = { servers: { origin: string }[]; selected: string | null };
+type ServerList = { servers: { origin: string; name?: string; icon?: string }[]; selected: string | null };
 type ServerError = { origin: string; message: string | null };
 type ShareOpen = { host: string; audio: boolean; screenSound: boolean; windowSound: boolean };
 type UpdateState = { current: string; ready: string | null };

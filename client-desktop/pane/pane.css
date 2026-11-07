@@ -77,6 +77,9 @@ body { display: flex; background: var(--bg); color: var(--text); user-select: no
 }
 .server-icon:hover, li.active .server-icon { border-radius: 16px; background: var(--accent); color: var(--on-accent); }
 .server-icon.add { color: var(--accent); font-size: 26px; font-weight: 400; }
+/* An administrator's icon fills the circle (and the rounded square on hover). */
+.server-icon.has-icon { overflow: hidden; }
+.server-icon.has-icon img { width: 100%; height: 100%; display: block; pointer-events: none; }
 .server-icon.add:hover { color: var(--on-accent); }
 /* Update ready: at the bottom of the pane, in the save green. */
 .server-icon.update { margin-top: auto; flex: none; background: var(--save); color: var(--on-save); font-size: 24px; }

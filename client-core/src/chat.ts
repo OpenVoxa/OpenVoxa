@@ -246,6 +246,11 @@ export type ChatEvent =
   /** Someone's name colour may have changed (group colours, membership,
    * or the server-wide switch): fetch /name-colours again. */
   | { type: "names_changed" }
+  /** The server's name or icon changed: fetch /server-info again. */
+  | { type: "server_info_changed" }
+  /** The event socket came back after a drop: server-wide events may
+   * have been missed meanwhile, so fetch what they would have changed. */
+  | { type: "events_reconnected" }
   /** Who is in each voice call (channels you can see, non-empty only). */
   | { type: "voice"; presence: VoicePresence }
   | { type: "error"; message: string };
@@ -301,7 +306,7 @@ const GLOBAL_EVENTS = new Set([
   "user_purged", "access_changed", "channel_changed", "channel_deleted",
   "perms_changed", "channel_activity", "voice_changed", "reports_changed",
   "bug_reports_changed",
-  "mention", "stickers_changed", "names_changed",
+  "mention", "stickers_changed", "names_changed", "server_info_changed",
   "archive_message_gone", "archive_channel_expired",
 ]);
 
@@ -381,6 +386,7 @@ export class Chat {
   #listeners = new Set<(e: ChatEvent) => void>();
   #events: WebSocket | null = null;
   #eventsOpen = false;
+  #eventsEverOpen = false;
   /** When the event socket last opened (Date.now()), null while it is down. */
   #eventsSince: number | null = null;
   #closed = false;
@@ -719,6 +725,8 @@ export class Chat {
       this.#eventsSince = Date.now();
       // Anything missed while it was down.
       this.refreshChannels().catch(() => {});
+      if (this.#eventsEverOpen) this.#emit({ type: "events_reconnected" });
+      this.#eventsEverOpen = true;
     };
     ws.onmessage = (e) => {
       let frame: { type?: string };
@@ -782,6 +790,9 @@ export class Chat {
         break;
       case "names_changed":
         this.#emit({ type: "names_changed" });
+        break;
+      case "server_info_changed":
+        this.#emit({ type: "server_info_changed" });
         break;
       case "archive_message_gone":
         // A message deleted in any encrypted channel this account can see.

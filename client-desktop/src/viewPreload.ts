@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Preload for server views: the only thing a server's page gets from the
-// desktop app. It offers two calls: the app's versions, for the About tab,
-// and the sound for the window share the user just picked (decisions.md, "Per-app share sound"). The page can't choose
+// desktop app. It offers three calls: the app's versions, for the About tab;
+// a nudge that the server's name or icon changed (the app fetches them
+// itself); and the sound for the window share the user just picked (decisions.md, "Per-app share sound"). The page can't choose
 // what is recorded, nor start a recording without the user's pick: the
 // main process only answers within a few seconds of a pick in our own
 // picker, once, and only to that server's own page. No raw ipcRenderer.
@@ -39,6 +40,8 @@ contextBridge.exposeInMainWorld("openvoxaDesktop", {
     if (!ok) onData = onEnd = null;
     return ok;
   },
+  /** The server said its name or icon changed: the app fetches them itself. */
+  serverInfoChanged: (): Promise<void> => ipcRenderer.invoke("view:server-info-changed"),
   stopShareSound: (): Promise<void> => {
     onData = onEnd = null;
     return ipcRenderer.invoke("view:share-sound-stop");

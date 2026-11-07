@@ -23,6 +23,7 @@ import { ApiError, call, guessDeviceName, type Session } from "./api";
 import { QrCode } from "./Recovery";
 import { unlockForLink } from "./unlock";
 import { staySignedInChoice, setStaySignedIn } from "./session";
+import { AuthHeading } from "./serverInfo";
 
 const POLL_MS = 1500;
 
@@ -168,7 +169,7 @@ export function LinkSignIn({ parts, onSession, onCancel }: {
   return (
     <div className="auth-page">
       <div className="auth-card">
-        <h1>OpenVoxa</h1>
+        <AuthHeading />
         <p className="muted">Sign in with a link</p>
         {body}
         <button type="button" className="link" onClick={onCancel} disabled={state.k === "finishing"}>
