@@ -155,25 +155,18 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 
 ## Current state (rewrite every session)
 
-_2026-11-07._ Home page and community rules done (HP1-HP18). Now
-starting **beta v1: DEV and PROD** (decisions.md Open items, Next up,
-"Beta v1: DEV and PROD"; design agreed, nothing built). Today's Docker
-stack becomes DEV (test data kept, later renamed to a LAN-only
-`dev.` name); a clean PROD goes on a new VM Ryan is creating
-(Debian, >= 40 GB disk, fixed LAN IP, sudo user). Docker reaches it by
-SSH with `a dedicated SSH key` (made 2026-11-07; Ryan adds `the public key`
-to the VM; the GitHub key `claude_key` is separate). PROD takes the
-domain, router forwards (8443, UDP 50000-50100, TCP 7881), the
-public-IP cron and desktop updates. PROD moves only to tagged
-releases, when Ryan says "release".
+_2026-11-07._ Home page and rules done (HP1-HP18). Now: **beta v1, DEV
+and PROD** (decisions.md Next up; agreed, nothing built). This stack =
+DEV (test data kept, later a LAN-only `dev.` name). Clean PROD on a new
+VM Ryan is making; reach it by SSH with `a dedicated SSH key` (not
+the GitHub `claude_key`). PROD takes the domain, forwards, IP cron and
+desktop updates; moves only to tags when Ryan says "release".
 **Next, stage 1:** `deploy/setup.sh` (asks address, TLS path, media IP;
-generates Postgres password, LiveKit keys and KEK; writes `.env`;
-starts; prints the setup code) plus a shorter install guide. Stage 2:
-install PROD with it from scratch (needs the VM's IP and username from
-Ryan) and cut the network over. Stage 3: release/update routine.
-Waiting on Ryan: the VM; the desktop icon PNG (Open items, "Desktop app
-icon"). Offered, not asked for: `#` headings in Home text, server name
-in the sidebar header. DK1-DK9, SI4/SI8 still untested.
+generates all secrets; writes `.env`; starts; prints the setup code) and
+a shorter install guide. Stage 2: install PROD with it (needs the VM's
+IP and user). Stage 3: release routine. Waiting on Ryan: the VM, the
+desktop icon PNG (Open items). Offered: `#` headings in Home, server
+name in the sidebar header. Untested: DK1-DK9, SI4/SI8.
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts (kept until a sweep before beta):
@@ -187,6 +180,5 @@ in the sidebar header. DK1-DK9, SI4/SI8 still untested.
   backed up daily 03:30 to `~/openvoxa-key-backups`. Ryan is the only
   user. `docker builder prune` when disk passes ~80%.
 - Untested and gaps: decisions.md Open items.
-- **Next:** beta stage 1 above. After the beta: avatars, channel groups
-  and ordering, DMs and whispers, desktop status icon. Later: code
-  signing, "needs app version X".
+- After the beta: avatars, channel groups, DMs, desktop status icon;
+  later code signing, "needs app version X".
