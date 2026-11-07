@@ -1230,7 +1230,7 @@ Decided with Ryan, 2026-11-07; built the same day (desktop 0.1.9).
 #### Home page and community rules
 
 Decided with Ryan, 2026-11-07 (two design talks); built the same day
-(HP1-HP14 passed).
+(HP1-HP18 passed).
 
 - **What:** a Home item at the top of the channel list (server icon and
   name) opens a page with an optional wide **banner**, a **Welcome**
@@ -1267,7 +1267,10 @@ Decided with Ryan, 2026-11-07 (two design talks); built the same day
   again", takes effect at once: affected accounts' sockets are closed
   and they're removed from voice calls; their app then shows the rules
   screen. One click puts them back. The "ask everyone" checkbox carries
-  a bold red warning saying so (Ryan, HP14).
+  a bold red warning saying so (Ryan, HP14), and so does "Require
+  everyone to accept the rules" while it is off (HP15). Emptying the
+  rules unticks and greys out the enforcement box (saving then turns
+  enforcement off); typing rules back restores the tick (HP16-HP18).
 - **Server:** `home.go`, migration 0034 (`server_settings` home_* /
   rules_* / banner* columns; `users.home_seen_version`,
   `users.rules_accepted_version`). `GET /api/v1/home`, `POST
@@ -3270,7 +3273,7 @@ verified; the section named holds the design.
   decisions, "Server name and icon").
 - 2026-11-07 Home page and community rules (Home item, banner with a
   chosen shape also on the sign-in card, welcome and rules, enforced
-  acceptance with a server-side hold; migration 0034), HP1-HP14
+  acceptance with a server-side hold; migration 0034), HP1-HP18
   (Feature decisions, "Home page and community rules").
 
 ## Open items
@@ -3308,7 +3311,7 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
       how moderators handle DM reports, DMs between servers (no
       federation in v1, so none). The biggest of these.
 - [x] **Home page** and community rules: built 2026-11-07 (Feature
-      decisions, "Home page and community rules"; HP1-HP14).
+      decisions, "Home page and community rules"; HP1-HP18).
 - [ ] **Desktop status icon:** your status on the taskbar button
       (overlay icon: online, in voice, muted, deafened), maybe a tray
       icon with Mute/Deafen. Needs the status from the server view

@@ -103,11 +103,15 @@ export function GeneralTab({ call, onClose }: { call: ApiCall; onClose: () => vo
   const homeLoaded = savedHome !== null && welcome !== null && rules !== null && enforce !== null;
   const rulesTrim = (rules ?? "").trim();
   const rulesChanged = homeLoaded && rulesTrim !== savedHome.rules;
-  const homeDirty = homeLoaded && ((welcome ?? "").trim() !== savedHome.welcome || rulesChanged
-    || enforce !== savedHome.rules_enforced);
-  // Asking again only means something for changed rules that are enforced.
-  const canAskAgain = homeLoaded && rulesChanged && !!enforce;
+  // Enforcement needs rules: with the rules emptied, the box shows
+  // unticked and greyed out (and saving turns enforcement off), but the
+  // tick itself is kept, so typing rules back brings it back.
   const enforceBlocked = !rulesTrim;
+  const enforceOn = !!enforce && !enforceBlocked;
+  const homeDirty = homeLoaded && ((welcome ?? "").trim() !== savedHome.welcome || rulesChanged
+    || enforceOn !== savedHome.rules_enforced);
+  // Asking again only means something for changed rules that are enforced.
+  const canAskAgain = homeLoaded && rulesChanged && enforceOn;
   const tooLong = (welcome ?? "").length > HOME_TEXT_MAX || (rules ?? "").length > HOME_TEXT_MAX;
 
   function pick(files: FileList | null, input: HTMLInputElement | null, open: (url: string) => void) {
@@ -145,7 +149,7 @@ export function GeneralTab({ call, onClose }: { call: ApiCall; onClose: () => vo
         await call("/api/v1/home", {
           method: "PUT",
           body: JSON.stringify({
-            welcome: (welcome ?? "").trim(), rules: rulesTrim, rules_enforced: !!enforce,
+            welcome: (welcome ?? "").trim(), rules: rulesTrim, rules_enforced: enforceOn,
             ask_again: canAskAgain && askAgain,
           }),
         });
@@ -258,17 +262,25 @@ export function GeneralTab({ call, onClose }: { call: ApiCall; onClose: () => vo
           placeholder={homeLoaded ? "1. Be kind.\n2. No spam." : "Loading…"}
           aria-label="Rules" onChange={(e) => { setRules(e.target.value); setNote(null); }} />
         <p className="muted small">Shown on Home under their own heading. {charsLeft(rules)}</p>
-        <label className={`check${enforceBlocked && !enforce ? " disabled" : ""}`}>
-          <input type="checkbox" checked={!!enforce} disabled={!homeLoaded || (enforceBlocked && !enforce)}
+        <label className={`check${enforceBlocked ? " disabled" : ""}`}>
+          <input type="checkbox" checked={enforceOn} disabled={!homeLoaded || enforceBlocked}
             onChange={(e) => { setEnforce(e.target.checked); setNote(null); }} />
           <span>
             Require everyone to accept the rules
             <span className="muted small block">
               {enforceBlocked
-                ? "Write the rules first."
+                ? homeLoaded && savedHome.rules_enforced
+                  ? "Write the rules first. Saving with no rules turns this off."
+                  : "Write the rules first."
                 : "Anyone who hasn't accepted them sees only the rules until they do, and new accounts accept them " +
-                  "when they join. Turning this on applies at once, to everyone signed in (but not to you)."}
+                  "when they join."}
             </span>
+            {homeLoaded && !savedHome.rules_enforced && !enforceBlocked && (
+              <span className="error small block ask-again-warning">
+                Warning: turning this on disconnects everyone currently signed in (except you) at once, including
+                from voice calls, and they can't use the server until they accept the rules.
+              </span>
+            )}
           </span>
         </label>
         <label className={`check${canAskAgain ? "" : " disabled"}`}>
@@ -289,13 +301,12 @@ export function GeneralTab({ call, onClose }: { call: ApiCall; onClose: () => vo
             )}
           </span>
         </label>
-        {enforce && rulesChanged && enforceBlocked && <p className="error">The rules can't be empty while everyone must accept them.</p>}
         {error && <p className="error" role="alert">{error}</p>}
         {note && !error && <p className="muted small" role="status">{note}</p>}
       </div>
       <div className="modal-actions modal-foot">
         <button className="save" onClick={() => void save()}
-          disabled={busy || cropSrc !== null || bannerSrc !== null || tooLong || (!!enforce && enforceBlocked)
+          disabled={busy || cropSrc !== null || bannerSrc !== null || tooLong
             || !(nameDirty || iconDirty || bannerDirty || homeDirty)}>
           {busy ? "Saving…" : "Save"}
         </button>
