@@ -6,7 +6,6 @@
   "license": "AGPL-3.0-or-later",
   "description": "OpenVoxa desktop app: an Electron shell with a server pane; each server's own web client runs in an isolated view.",
   "main": "out/main.js",
-  "openvoxaUpdateUrl": "https://openvoxa.example.com/desktop-updates/",
   "scripts": {
     "build": "tsc -p . && node scripts/copy-pane.mjs",
     "start": "npm run build && electron .",

@@ -8,9 +8,11 @@ import { packager } from "@electron/packager";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { updateUrl } from "./updateUrl.mjs";
 
 const platform = process.argv[2] ?? "win32";
 const pkg = JSON.parse(readFileSync("package.json", "utf8"));
+const url = updateUrl();
 
 // Windows builds carry the window share sound helper next to the app
 // (resources/openvoxa-audio.exe), built by audio-helper/build-windows.sh.
@@ -20,18 +22,18 @@ if (platform === "win32" && !existsSync(helper)) {
   process.exit(1);
 }
 
-// The updater's settings (src/updater.ts): where to look, and the name of
+// The updater's settings (src/updater.ts): where to look (scripts/updateUrl.mjs), and the name of
 // its download cache folder. electron-updater reads them from
 // resources/app-update.yml, which electron-builder writes only when it
 // packages the app itself; we package with @electron/packager, so it is
 // written here. Without it the update check works but the download never
 // starts (found by experiment, DU3).
 const updateConfig = "release/app-update.yml";
-if (platform === "win32" && pkg.openvoxaUpdateUrl) {
+if (platform === "win32" && url) {
   mkdirSync("release", { recursive: true });
   writeFileSync(updateConfig, [
     "provider: generic",
-    `url: ${pkg.openvoxaUpdateUrl}`,
+    `url: ${url}`,
     "updaterCacheDirName: openvoxa-updater",
     "",
   ].join("\n"));
@@ -50,7 +52,7 @@ const [dir] = await packager({
   // Only the compiled app, package.json and the runtime dependencies
   // (electron-updater; prune drops the dev ones) go in.
   ignore: (p) => p !== "" && !/^\/(out|node_modules|package\.json)(\/|$)/.test(p),
-  extraResource: platform === "win32" ? [helper, ...(pkg.openvoxaUpdateUrl ? [updateConfig] : [])] : [],
+  extraResource: platform === "win32" ? [helper, ...(url ? [updateConfig] : [])] : [],
   win32metadata: { CompanyName: "The OpenVoxa Authors", ProductName: "OpenVoxa", FileDescription: "OpenVoxa" },
 });
 

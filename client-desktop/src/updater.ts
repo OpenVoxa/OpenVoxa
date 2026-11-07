@@ -50,7 +50,7 @@ export function updateState(): UpdateState {
 
 // startUpdates does nothing in development, outside Windows, or in a
 // build without update settings. The settings (the folder's address, from
-// "openvoxaUpdateUrl" in package.json, and the download cache's name) are
+// scripts/updateUrl.mjs, and the download cache's name) are
 // resources/app-update.yml, written by scripts/package.mjs.
 export function startUpdates(onChange: (s: UpdateState) => void) {
   notify = onChange;

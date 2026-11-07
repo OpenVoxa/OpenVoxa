@@ -20,11 +20,18 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { updateUrl } from "./updateUrl.mjs";
 
 const KEEP = 5;
 const IMAGE = "openvoxa-desktop-builder";
 const args = new Set(process.argv.slice(2));
 const run = (cmd, argv, opts = {}) => execFileSync(cmd, argv, { stdio: "inherit", ...opts });
+
+const url = updateUrl();
+if (!url) {
+  console.error("No update address: put it in client-desktop/update-url.local (e.g. https://openvoxa.example.com/desktop-updates/) or set OPENVOXA_UPDATE_URL.");
+  process.exit(1);
+}
 
 if (!args.has("--no-bump")) run("npm", ["version", "patch", "--no-git-tag-version"]);
 const pkg = JSON.parse(readFileSync("package.json", "utf8"));
@@ -33,8 +40,8 @@ console.log(`\nOpenVoxa desktop ${version}\n`);
 
 run("npm", ["run", "package:win"]);
 
-// The address the installed app checks is package.json's
-// openvoxaUpdateUrl; latest.yml is written for the same place.
+// The address the installed app checks (scripts/updateUrl.mjs);
+// latest.yml is written for the same place.
 const config = {
   appId: "net.openvoxa.desktop",
   productName: "OpenVoxa",
@@ -52,7 +59,7 @@ const config = {
     deleteAppDataOnUninstall: false,
     artifactName: "OpenVoxa-Setup-${version}.${ext}",
   },
-  publish: { provider: "generic", url: pkg.openvoxaUpdateUrl },
+  publish: { provider: "generic", url },
 };
 rmSync("release/installer", { recursive: true, force: true });
 // electron-builder names things after the package name: the install folder

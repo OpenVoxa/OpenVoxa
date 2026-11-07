@@ -1162,7 +1162,9 @@ that.
   `/desktop-updates/`. Fast for frequent patches, no GitHub token, and
   update checks reach only a host we run, never a third party (GitHub
   would see every installed app's IP). The address is a build setting,
-  `openvoxaUpdateUrl` in client-desktop's package.json, so it can move.
+  so it can move: `client-desktop/update-url.local` (gitignored) or
+  `OPENVOXA_UPDATE_URL`, read by `scripts/updateUrl.mjs`; it was in
+  package.json until 2026-11-07, moved out so the repo names no server.
 - **Installing (Ryan's pick):** a green arrow at the bottom of the pane
   opens "Update Ready" (the new and current version, "Some features may
   not work properly, or at all, until you update.") with **Restart to
@@ -3081,7 +3083,7 @@ the Dockerfile's Go version at or above the directive.
 ## Build order
 
 What was built when, with test IDs. Design detail lives in the sections
-named; Docker is Ryan's homelab test server.
+named; Docker is the test server.
 
 1. ✅ Server skeleton, auth, one text channel
 2. ✅ Permissions: Administrator, Moderator, User, Guest (replaced in 12)
@@ -3096,7 +3098,7 @@ named; Docker is Ryan's homelab test server.
    device identity, key package storage, group state, epoch-ordered
    commits, handshake log, welcome delivery; client identity in
    IndexedDB; tree and state serialisation; encrypted messages.
-   Two-party test on Docker 2026-10-30 (ryan + staff): welcome path and
+   Two-party test on Docker 2026-10-30 (admin + staff): welcome path and
    forward-secrecy boundary. Encrypted attachments verified the same day
    (image, mp3, PDF; stored blob opaque, row shows `encrypted` /
    octet-stream).
@@ -3107,7 +3109,7 @@ named; Docker is Ryan's homelab test server.
     refused; adding it rotates the key; audio and screen share both ways.
 11. ✅ Automatic group membership from channel access (Encryption, "Group
     membership follows channel access"). All verified on Docker
-    2026-10-31 with ryan + staff:
+    2026-10-31 with admin + staff:
     - ts-mls external commit and removal behaviour proven in Node.
     - Server: one access rule (`access.go`), allowed-devices endpoint,
       welcome recipients checked, key package claims scoped to a channel
@@ -3129,7 +3131,7 @@ named; Docker is Ryan's homelab test server.
       rejoining.
     - "Forget this device" revokes it on the server first.
 12. ✅ Custom permission groups replacing the fixed roles (migration 0012,
-    `groups.go`, `perm`). Verified on Docker 2026-10-31 (ryan, staff,
+    `groups.go`, `perm`). Verified on Docker 2026-10-31 (admin, staff,
     tester): upgrade kept every account's access; removal and re-add
     while connected; losing access mid-call removed staff via the LiveKit
     sweep; a ban-only group at rank 12 acted on a Member but not on staff.
@@ -3191,7 +3193,7 @@ After step 14 the work went feature by feature. Dates are when Ryan
 verified; the section named holds the design.
 
 - 2026-11-04 Emoji (Feature decisions, "Emoji").
-- 2026-11-04 Custom stickers, ST1-ST7 (ST6 as a plain Member, testuser);
+- 2026-11-04 Custom stickers, ST1-ST7 (ST6 as a plain Member);
   `:name:` suggestions SC1-SC5.
 - 2026-11-04 Reactions ("Reactions are metadata the server sees").
 - 2026-11-04 Sign out and erase, E1-E5 (Encryption, "Local storage").
@@ -3282,15 +3284,22 @@ verified; the section named holds the design.
 
 - [ ] **Beta v1: DEV and PROD** (Ryan, 2026-11-07). Instead of wiping
       the current server, set up a clean PROD beside it:
-      - **PROD** on a new VM (Debian, Docker), reached from
-        Docker over SSH (`a dedicated SSH key`, key only for this). It takes
-        `openvoxa.example.com`, the router forwards (8443, UDP
-        50000-50100, TCP 7881), the public-IP cron and the desktop
-        update folder, so installed apps and bookmarks keep working.
+      - **PROD** on a new VM (Debian, Docker), reached from Docker over
+        SSH with a key used only for this. It takes the public domain,
+        the router forwards (8443, UDP 50000-50100, TCP 7881), the
+        public-IP cron and the desktop update folder, so installed apps
+        and bookmarks keep working.
       - **DEV** is today's Docker stack, test data kept, moved to a new
-        name (e.g. `dev.openvoxa.example.com`), LAN only:
+        `dev.` name, LAN only:
         `Caddyfile.dns` still gets it a real certificate without inbound
         ports, and `LIVEKIT_NODE_IP` becomes the LAN address.
+      - **Setup gotchas** (for setup.sh / install guide): Debian 13
+        netinst writes `allow-hotplug` for the NIC, so `_netdev` NFS
+        mounts run before DHCP and fail at boot; fix with `auto <nic>` and
+        `systemctl enable ifupdown-wait-online`. Docker must not start
+        before the blob mount, or uploads land on the local disk: add a
+        docker.service drop-in `RequiresMountsFor=/mnt/openvoxa-blobs`.
+        mount.nfs prints a harmless `AF_VSOCK CID` warning on Debian 13.
       - **Releases:** DEV runs work in progress; PROD only moves to a
         tagged version (e.g. `v1.0.0-beta.1`) when Ryan says "release".
       - **Stages:** (1) setup script and rewritten install docs; (2)
@@ -3368,7 +3377,7 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
       command).
 - [ ] VA7c: lifting a channel's forced push-to-talk sometimes left the
       *other* device stuck in it (crossed-out mic, not orange, can't
-      unmute; seen twice, staff on the iPad, quillbrook in the desktop
+      unmute; seen twice, staff on the iPad, an admin in the desktop
       app). `#applyMic` now redraws before and after the mute switch and
       reports failures; Ryan couldn't reproduce afterwards. Possibly
       Safari. If it returns: what the voice bar says, and any notice.

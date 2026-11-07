@@ -69,13 +69,15 @@ never in the media path) · Caddy optional for TLS · MLS ciphersuite 1.
 - `cd client-core && npm run build` (and `npx tsc --noEmit`: the build
   doesn't type-check)
 - `cd client-web && npm run build` (runs tsc)
-- `cd client-desktop && npm run release:win`: bumps the patch version,
+- `cd client-desktop && npm run release:win` (update address in the
+  gitignored `update-url.local`, already on Docker): bumps the patch version,
   builds the NSIS installer (Wine container) and publishes it to
   `deploy/desktop-updates` (served at `/desktop-updates/`); installed apps
   update from there. `npm run package:win` alone: zip in `release/`.
   Smoke-test in a throwaway `node:22-bookworm` container with Xvfb
   (`--remote-debugging-port` to eval JS). For Ryan: `python3 -m
-  http.server 8099 --bind 192.168.1.9`, new file name per build, check he fetched it.
+  http.server 8099` bound to Docker's LAN IP (private memory), new file
+  name per build, check he fetched it.
 - Go is not installed on Docker. Quick compile, vet and tests from
   `server/`:
   `docker run --rm -v "$PWD":/src -v ovx-gomod:/go/pkg/mod -w /src golang:1.26 sh -c 'go vet ./internal/httpapi/ && go test ./internal/<pkg>/ && go build ./...'`
@@ -100,7 +102,7 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 ## Workflow (important)
 
 - **Check `hostname` first.** `docker` = this session runs on the Docker
-  host (Debian 12 VM on Ryan's homelab; repo `~/OpenVoxa`, live
+  host (Debian 12 VM; repo `~/OpenVoxa`, live
   stack `~/OpenVoxa/deploy`). Claude edits, builds, rebuilds, commits and
   pushes from here and runs host commands itself: Ryan's only terminal is
   this chat. Elsewhere (Git-terminal, `~/Documents/openvoxa`; cloud
@@ -157,21 +159,20 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 
 _2026-11-07._ Home page and rules done (HP1-HP18). Now: **beta v1, DEV
 and PROD** (decisions.md Next up; agreed, nothing built). This stack =
-DEV (test data kept, later a LAN-only `dev.` name). Clean PROD on a new
-VM Ryan is making; reach it by SSH with `a dedicated SSH key` (not
-the GitHub `claude_key`). PROD takes the domain, forwards, IP cron and
+DEV (test data kept, later a LAN-only `dev.` name). Clean PROD VM is
+built (Debian 13, NAS blob share mounted, no Docker yet): `ssh prod`
+from Docker; Ryan runs anything needing sudo. PROD takes the domain, forwards, IP cron and
 desktop updates; moves only to tags when Ryan says "release".
 **Next, stage 1:** `deploy/setup.sh` (asks address, TLS path, media IP;
 generates all secrets; writes `.env`; starts; prints the setup code) and
-a shorter install guide. Stage 2: install PROD with it (needs the VM's
-IP and user). Stage 3: release routine. Waiting on Ryan: the VM, the
-desktop icon PNG (Open items). Offered: `#` headings in Home, server
+a shorter install guide. Stage 2: install PROD with it. Stage 3:
+release routine. Waiting on Ryan: the desktop icon PNG (Open items). Offered: `#` headings in Home, server
 name in the sidebar header. Untested: DK1-DK9, SI4/SI8.
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
-  Everyone 0. Test accounts (kept until a sweep before beta):
-  quillbrook (Ryan), staff, secondadmin (Ryan locked it down),
-  testuser. Server name "Example Server". Text channels: general
+  Everyone 0. Test accounts, server name, IPs and the domain: private
+  memory only. **Never put personal network or account details in the
+  repo (it's public).** Text channels: general
   (plain), secret (encrypted) and some test ones. Voice channels:
   voice-general, vip-voice (admins only).
 - Docker deploy: LiveKit v1.13.11, host networking, `update-node-ip.sh`

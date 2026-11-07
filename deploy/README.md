@@ -150,7 +150,7 @@ LiveKit advertises this address as the destination for RTP. Media travels over U
 
 | Deployment | Value |
 | --- | --- |
-| LAN only | The server's LAN address, e.g. `192.168.1.9` |
+| LAN only | The server's LAN address, e.g. `192.168.1.10` |
 | Internet facing | Your public IP, with UDP 50000-50100 forwarded |
 
 Getting it wrong gives you a connection that establishes successfully and then carries no audio. Signalling works, the participant list populates, and nobody hears anything. It is the most common self-hosted LiveKit failure by a wide margin.
@@ -353,7 +353,7 @@ GIFs count against `OPENVOXA_MAX_ATTACHMENT_MB` and against your storage. A coup
 
 ## Desktop app updates
 
-Optional, and only for whoever publishes desktop builds. Caddy serves `deploy/desktop-updates/` at `/desktop-updates/` (read-only, no directory listing); an empty folder just answers 404. The desktop app checks the address built into it (`openvoxaUpdateUrl` in `client-desktop/package.json`).
+Optional, and only for whoever publishes desktop builds. Caddy serves `deploy/desktop-updates/` at `/desktop-updates/` (read-only, no directory listing); an empty folder just answers 404. The desktop app checks the address built into it. Put that address, e.g. `https://openvoxa.example.com/desktop-updates/`, on the first line of `client-desktop/update-url.local` (not committed) or in `OPENVOXA_UPDATE_URL`; the release script stops if neither is set.
 
 To publish a release from this host (needs Docker and Node 22):
 
