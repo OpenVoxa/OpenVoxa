@@ -401,6 +401,9 @@ type meResponse struct {
 	Username string `json:"username"`
 	accountPerms
 	TwoFactorSetupRequired bool `json:"two_factor_setup_required"`
+	// RulesAcceptanceRequired: the server enforces its rules and this
+	// account hasn't accepted the current ones (home.go).
+	RulesAcceptanceRequired bool `json:"rules_acceptance_required"`
 }
 
 func (a *API) me(w http.ResponseWriter, r *http.Request) {
@@ -417,11 +420,18 @@ func (a *API) me(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not load account")
 		return
 	}
+	rules, err := a.rulesAcceptanceNeeded(r.Context(), session.UserID)
+	if err != nil {
+		slog.Error("checking rules acceptance", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not load account")
+		return
+	}
 	writeJSON(w, http.StatusOK, meResponse{
-		UserID:                 session.UserID,
-		Username:               session.Username,
-		accountPerms:           perms,
-		TwoFactorSetupRequired: setup,
+		UserID:                  session.UserID,
+		Username:                session.Username,
+		accountPerms:            perms,
+		TwoFactorSetupRequired:  setup,
+		RulesAcceptanceRequired: rules,
 	})
 }
 

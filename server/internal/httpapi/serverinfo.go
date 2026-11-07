@@ -36,6 +36,8 @@ type serverInfo struct {
 	Name string `json:"name"`
 	// Icon is a path on this server, with the version in it, or null.
 	Icon *string `json:"icon"`
+	// Banner is the Home banner (home.go), shown on the sign-in page too.
+	Banner *string `json:"banner"`
 }
 
 type serverInfoChangedEvent struct {
@@ -47,11 +49,19 @@ func (a *API) loadServerInfo(ctx context.Context) (serverInfo, error) {
 		out     serverInfo
 		version int
 		hasIcon bool
+
+		bannerVersion int
+		hasBanner     bool
 	)
 	if err := a.pool.QueryRow(ctx,
-		`SELECT server_name, icon IS NOT NULL, icon_version FROM server_settings`,
-	).Scan(&out.Name, &hasIcon, &version); err != nil {
+		`SELECT server_name, icon IS NOT NULL, icon_version, banner IS NOT NULL, banner_version
+		   FROM server_settings`,
+	).Scan(&out.Name, &hasIcon, &version, &hasBanner, &bannerVersion); err != nil {
 		return out, err
+	}
+	if hasBanner {
+		p := bannerPath(bannerVersion)
+		out.Banner = &p
 	}
 	if hasIcon {
 		p := "/api/v1/server-icon?v=" + strconv.Itoa(version)

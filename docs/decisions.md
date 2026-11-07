@@ -1227,6 +1227,58 @@ Decided with Ryan, 2026-11-07; built the same day (desktop 0.1.9).
   pane a `data:` URL; name, icon and `iconSrc` are kept in
   `servers.json` so offline servers keep their icon.
 
+#### Home page and community rules
+
+Decided with Ryan, 2026-11-07 (two design talks); built the same day
+(HP1-HP14 passed).
+
+- **What:** a Home item at the top of the channel list (server icon and
+  name) opens a page with an optional wide **banner**, a **Welcome**
+  text and a separate **Rules** section (its own heading). Both texts
+  use the same markdown as messages (#channel links work). Not
+  encrypted. Edited in Server settings, General (administrators).
+- **Landing:** you land on Home on first visit and whenever an
+  administrator has changed it since you last saw it (a dot on Home
+  until seen; seen is per account, on the server, so it follows you
+  across devices); otherwise where you left off. A change made while
+  you're signed in shows the dot, it doesn't pull you away.
+- **News** goes in a read-only #announcements channel (channel access
+  already allows view without post), not on Home.
+- **Members only**, except the banner: the banner also shows at the top
+  of the sign-in page (always, when set; Ryan wants branding there).
+- **Banner shape (Ryan: not one fixed ratio):** the crop tool offers
+  16:9, 2:1, 3:1, 4:1 and the whole picture; the banner shows at the
+  chosen shape. The server accepts anything from 16:9 (tallest) to 4:1
+  (thinnest), so a tall photo can't push Home or the sign-in card off
+  the screen. Uploaded as WebP (PNG fallback), 1600 px wide.
+- **Community rules** (server option "Require everyone to accept the
+  rules", needs rules text): an account that hasn't accepted the
+  current rules can do **nothing** until it does. After signing in it
+  sees only the banner, the rules, and Accept / Sign out; the server
+  refuses everything else (the two-factor setup hold's pattern: a
+  short allowlist, error code `rules_acceptance_required`). New
+  accounts meet it right after creating the account. The order at
+  sign-in is two-factor setup, then rules, then recovery screens.
+- **Changed rules:** the administrator chooses per save. When the rules
+  text changed and enforcement is on, a checkbox (off by default) "Ask
+  everyone to accept the changed rules". Typo fixes bother nobody. The
+  administrator who saves counts as having accepted.
+- **Mid-session:** turning enforcement on, or saving with "ask everyone
+  again", takes effect at once: affected accounts' sockets are closed
+  and they're removed from voice calls; their app then shows the rules
+  screen. One click puts them back. The "ask everyone" checkbox carries
+  a bold red warning saying so (Ryan, HP14).
+- **Server:** `home.go`, migration 0034 (`server_settings` home_* /
+  rules_* / banner* columns; `users.home_seen_version`,
+  `users.rules_accepted_version`). `GET /api/v1/home`, `POST
+  /home/seen`, `POST /home/accept-rules` (a stale version gets 409),
+  admin `PUT /home`; public `GET /server-banner` (bytes in the row,
+  like the icon), admin `PUT`/`DELETE`; server info gains `banner`.
+  Event `home_changed`. The hold sits in `requireAuth` after the
+  two-factor hold (`rulesHoldAllowed`); the client's `accountGate`
+  reloads into either screen. Log actions `set_home`, `enforce_rules`,
+  `ask_rules_again`, `set_server_banner`, `remove_server_banner`.
+
 ### Planned: server icons, updates, bug reports, channel menus, avatars
 
 Ryan's list, 2026-11-04. Recorded, not designed in detail yet: each gets
@@ -3216,6 +3268,10 @@ verified; the section named holds the design.
   crop tool; desktop pane, tab title and favicon, sign-in branding;
   migration 0033; desktop 0.1.9), SI1-SI3, SI5-SI7, SI9-SI12 (Feature
   decisions, "Server name and icon").
+- 2026-11-07 Home page and community rules (Home item, banner with a
+  chosen shape also on the sign-in card, welcome and rules, enforced
+  acceptance with a server-side hold; migration 0034), HP1-HP14
+  (Feature decisions, "Home page and community rules").
 
 ## Open items
 
@@ -3251,24 +3307,8 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
       hearing. Open: who may DM whom (blocking, server-wide off switch),
       how moderators handle DM reports, DMs between servers (no
       federation in v1, so none). The biggest of these.
-- [ ] **Home page** (Ryan, 2026-11-07; first answers given, details
-      still to design): a Home item at the top of the channel list
-      (server icon and name) opening a page with a wide banner image and
-      administrator-written formatted text (welcome, rules, links; same
-      markdown as messages, #channel links), edited in Server settings,
-      General, reusing the icon upload and crop (wide crop). Not
-      encrypted. Answers so far: **lands on Home** on first visit and
-      whenever an administrator changes it (a dot on Home until seen),
-      otherwise where you left off; **news** goes in a read-only
-      #announcements channel (channel access already allows view without
-      post), not on Home; **members only**, not on the sign-in page,
-      except the banner: Ryan wants branding at sign-in, so the banner
-      may show there too (decide in the design talk);
-      **rules acceptance** is a server option ("enforce community
-      rules"): when on, people must accept on their next sign-in. Open:
-      whether a rules change asks everyone to accept again; whether the
-      rules are a separate section of Home or the whole text; what an
-      account that hasn't accepted can do (nothing, or read only).
+- [x] **Home page** and community rules: built 2026-11-07 (Feature
+      decisions, "Home page and community rules"; HP1-HP14).
 - [ ] **Desktop status icon:** your status on the taskbar button
       (overlay icon: online, in voice, muted, deafened), maybe a tray
       icon with Mute/Deafen. Needs the status from the server view

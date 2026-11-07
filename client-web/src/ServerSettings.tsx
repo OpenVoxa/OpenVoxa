@@ -145,7 +145,7 @@ export type ServerTab = "general" | "groups" | "members" | "reports" | "bugs" | 
  * reload changes whenever the server says permissions moved, so the lists
  * follow changes made elsewhere (another admin, the CLI).
  */
-export function ServerSettingsDialog({ call, me, reload, openReports, openBugReports, onClose }: {
+export function ServerSettingsDialog({ call, me, reload, openReports, openBugReports, initialTab, onClose }: {
   call: ApiCall;
   me: Me;
   reload: number;
@@ -153,10 +153,12 @@ export function ServerSettingsDialog({ call, me, reload, openReports, openBugRep
   openReports: number;
   /** Shown on the Bug Reports tab; opens there when no message reports wait. */
   openBugReports: number;
+  /** Open on this tab instead (Home's Edit button opens General). */
+  initialTab?: ServerTab;
   onClose: () => void;
 }) {
   const has = (p: string) => me.permissions.includes(p);
-  const [tab, setTab] = useState<ServerTab>(() => (openReports > 0 && has("view_reports") ? "reports"
+  const [tab, setTab] = useState<ServerTab>(() => initialTab ?? (openReports > 0 && has("view_reports") ? "reports"
     : openBugReports > 0 && has("view_reports") ? "bugs" : has("administrator") ? "general" : "groups"));
   const tabs: [ServerTab, string][] = has("administrator") ? [["general", "General"]] : [];
   tabs.push(["groups", "Groups"], ["members", "Members"]);
@@ -1436,6 +1438,17 @@ function describe(e: LogEntry): { text: string; note?: string } {
       return { text: "changed the server icon" };
     case "remove_server_icon":
       return { text: "removed the server icon" };
+    case "set_server_banner":
+      return { text: "changed the Home banner" };
+    case "remove_server_banner":
+      return { text: "removed the Home banner" };
+    case "set_home":
+      return { text: e.detail === "rules" ? "changed the rules"
+        : e.detail === "welcome" ? "changed the Home welcome" : "changed the Home welcome and the rules" };
+    case "enforce_rules":
+      return { text: e.detail === "on" ? "required everyone to accept the rules" : "stopped requiring the rules to be accepted" };
+    case "ask_rules_again":
+      return { text: "asked everyone to accept the changed rules" };
     case "add_sticker":
       return { text: `added the sticker :${e.detail}:` };
     case "delete_sticker":

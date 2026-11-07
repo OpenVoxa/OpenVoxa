@@ -196,6 +196,14 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 	mux.HandleFunc("PUT /api/v1/server-info/name", api.requirePerm(perm.Administrator, api.putServerName))
 	mux.HandleFunc("PUT /api/v1/server-icon", api.requirePerm(perm.Administrator, api.putServerIcon))
 	mux.HandleFunc("DELETE /api/v1/server-icon", api.requirePerm(perm.Administrator, api.deleteServerIcon))
+	mux.HandleFunc("GET /api/v1/server-banner", api.getServerBanner)
+	mux.HandleFunc("PUT /api/v1/server-banner", api.requirePerm(perm.Administrator, api.putServerBanner))
+	mux.HandleFunc("DELETE /api/v1/server-banner", api.requirePerm(perm.Administrator, api.deleteServerBanner))
+	// Home and community rules (home.go).
+	mux.HandleFunc("GET /api/v1/home", api.requireAuth(api.getHome))
+	mux.HandleFunc("PUT /api/v1/home", api.requirePerm(perm.Administrator, api.putHome))
+	mux.HandleFunc("POST /api/v1/home/seen", api.requireAuth(api.markHomeSeen))
+	mux.HandleFunc("POST /api/v1/home/accept-rules", api.requireAuth(api.acceptRules))
 	// Sign-up mode and server password (signup.go), administrators only.
 	mux.HandleFunc("GET /api/v1/signup-settings", api.requirePerm(perm.Administrator, api.getSignupSettings))
 	mux.HandleFunc("PUT /api/v1/signup-settings", api.requirePerm(perm.Administrator, api.putSignupSettings))

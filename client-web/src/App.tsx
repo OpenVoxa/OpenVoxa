@@ -14,6 +14,7 @@ import { eraseIdentity, forgetIdentity } from "@core/index";
 import { apiCall, cryptoSession, dropCryptoSession } from "./core";
 import { lockStorage, unlockOnRefresh } from "./unlock";
 import { TwoFactorRequired } from "./TwoFactor";
+import { RulesGate } from "./home";
 import { takeHandover, takeLinkFromLocation } from "./SignInLink";
 import { handoverBytes } from "@core/signinlink";
 import { storage } from "@core/storage";
@@ -59,6 +60,7 @@ type Phase =
   | { k: "loading" }
   | { k: "failed"; error: string }
   | { k: "twofactor" }
+  | { k: "rules" }
   | { k: "setup"; skippable: boolean; replacing: boolean; rotating?: boolean }
   | { k: "restore" }
   | { k: "ready" };
@@ -77,7 +79,7 @@ function Home({ session, justRegistered, initialNotice, onLoggedOut, onLocked }:
   // Shown on the recovery-key screen instead of its usual text.
   const [restoreReason, setRestoreReason] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  // Bumped when two-factor setup finishes, to carry on loading.
+  // Bumped when two-factor setup or the rules screen finishes, to carry on loading.
   const [gatePassed, setGatePassed] = useState(0);
 
   // Decide which recovery screen, if any, this sign-in needs.
@@ -92,9 +94,15 @@ function Home({ session, justRegistered, initialNotice, onLoggedOut, onLocked }:
       }
       // The server requires two-factor and this account has none: set it
       // up before anything else (the server refuses the rest until then).
-      const me = await call<{ two_factor_setup_required?: boolean }>("/api/v1/me", { token: session.token });
+      const me = await call<{ two_factor_setup_required?: boolean; rules_acceptance_required?: boolean }>(
+        "/api/v1/me", { token: session.token });
       if (me.two_factor_setup_required) {
         if (live) setPhase({ k: "twofactor" });
+        return;
+      }
+      // Then the server's rules, when it enforces them (home.tsx).
+      if (me.rules_acceptance_required) {
+        if (live) setPhase({ k: "rules" });
         return;
       }
       // Start this browser's device before choosing a recovery screen. A
@@ -286,6 +294,14 @@ function Home({ session, justRegistered, initialNotice, onLoggedOut, onLocked }:
   }
   if (phase.k === "twofactor") {
     return <TwoFactorRequired session={session}
+      onDone={() => { setPhase({ k: "loading" }); setGatePassed((n) => n + 1); }}
+      onSignOut={() => {
+        void call("/api/v1/auth/logout", { method: "POST", token: session.token }).catch(() => {});
+        onLoggedOut();
+      }} />;
+  }
+  if (phase.k === "rules") {
+    return <RulesGate session={session}
       onDone={() => { setPhase({ k: "loading" }); setGatePassed((n) => n + 1); }}
       onSignOut={() => {
         void call("/api/v1/auth/logout", { method: "POST", token: session.token }).catch(() => {});

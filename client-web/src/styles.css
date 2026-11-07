@@ -1155,3 +1155,44 @@ a.channel-chip:hover { background: var(--mention-me-bg); color: var(--text); }
 }
 .icon-crop-zoom { display: flex; align-items: center; gap: 10px; width: 256px; }
 .icon-crop-zoom input { flex: 1; }
+
+/* Home page and rules (home.tsx; GeneralTab.tsx). */
+.home-row { margin-bottom: 4px; }
+.channel.home { font-weight: 700; }
+.home-icon {
+  flex: none; width: 20px; height: 20px; border-radius: 50%; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--panel); color: var(--text); font-size: 11px; font-weight: 700;
+}
+.home-icon img { width: 100%; height: 100%; display: block; }
+.home-pane .home-edit { margin-left: auto; }
+.home-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+.home-body { max-width: 900px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+.home-banner { width: 100%; height: auto; display: block; border-radius: 8px; }
+.home-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; }
+.home-rules { border-top: 1px solid var(--line); padding-top: 12px; }
+.home-rules h2 {
+  margin: 0 0 8px; font-size: 12px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.02em; color: var(--accent);
+}
+/* The sign-in card's banner runs to the card's edges (its padding is 32px). */
+.auth-banner {
+  width: calc(100% + 64px); max-width: none; height: auto; display: block;
+  margin: -32px -32px 8px; border-radius: 8px 8px 0 0;
+}
+.rules-card .rules-title { margin: 4px 0 0; font-size: 18px; text-align: center; }
+.rules-card .rules-intro { margin: 0; text-align: center; }
+.rules-box {
+  max-height: 45vh; overflow-y: auto; padding: 12px 14px; border-radius: var(--radius);
+  background: var(--input); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45;
+}
+.banner-edit { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.banner-preview { width: 480px; max-width: 100%; height: auto; display: block; border-radius: var(--radius); }
+.banner-preview.empty {
+  height: 120px; display: flex; align-items: center; justify-content: center;
+  background: var(--input); font-size: 14px;
+}
+.home-textarea { width: 100%; max-width: 720px; min-height: 100px; }
+.icon-crop-area.banner { max-width: none; }
+.banner-shapes { flex-wrap: wrap; }
+.ask-again-warning { font-weight: 700; margin-top: 4px; }

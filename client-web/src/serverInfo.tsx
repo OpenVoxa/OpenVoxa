@@ -18,9 +18,11 @@ export interface ServerInfo {
   name: string;
   /** A path on this server, with the version in it, or null. */
   icon: string | null;
+  /** The Home banner (home.tsx), shown at the top of the sign-in card too. */
+  banner: string | null;
 }
 
-let info: ServerInfo = { name: "", icon: null };
+let info: ServerInfo = { name: "", icon: null, banner: null };
 const listeners = new Set<() => void>();
 
 function apply(next: ServerInfo): void {
@@ -49,6 +51,7 @@ export async function refreshServerInfo(): Promise<void> {
     apply({
       name: typeof body.name === "string" ? body.name : "",
       icon: typeof body.icon === "string" ? body.icon : null,
+      banner: typeof body.banner === "string" ? body.banner : null,
     });
   } catch {
     /* offline: keep what is shown */
@@ -73,14 +76,16 @@ export function useServerInfo(): ServerInfo {
 }
 
 /**
- * The sign-in pages' heading. Branding first: the server's icon and name,
+ * The sign-in pages' heading. Branding first: the Home banner across the
+ * top of the card, if there is one, then the server's icon and name,
  * largest, so people know at once which server they are signing in to,
  * with "OpenVoxa" small under it. Without a name: OpenVoxa, as before.
  */
 export function AuthHeading() {
-  const { name, icon } = useServerInfo();
+  const { name, icon, banner } = useServerInfo();
   return (
     <div className="auth-brand">
+      {banner && <img className="auth-banner" src={banner} alt="" />}
       {icon && <img className="auth-icon" src={icon} alt="" />}
       <h1>{name || "OpenVoxa"}</h1>
       {name && <span className="auth-app">OpenVoxa</span>}

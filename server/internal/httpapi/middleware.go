@@ -62,6 +62,7 @@ func (a *API) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		var permNames []string
 		var twoFactorOn bool
 		var twoFactorPolicy string
+		var rulesPending bool
 
 		// The ban check runs on every request rather than only at login.
 		// Banning deletes existing sessions, but a token issued in the
@@ -70,7 +71,9 @@ func (a *API) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			`SELECT s.id, s.user_id, u.username, s.expires_at,
 			        `+userPermsSQL+`,
 			        u.totp_enabled_at IS NOT NULL,
-			        (SELECT two_factor_required FROM server_settings)
+			        (SELECT two_factor_required FROM server_settings),
+			        (SELECT rules_enforced AND u.rules_accepted_version < rules_version
+			           FROM server_settings)
 			   FROM sessions s
 			   JOIN users u ON u.id = s.user_id
 			  WHERE s.token_hash = $1
@@ -82,7 +85,7 @@ func (a *API) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			    )`,
 			auth.HashSessionToken(token),
 		).Scan(&s.SessionID, &s.UserID, &s.Username, &expiresAt, &permNames, &s.Rank,
-			&twoFactorOn, &twoFactorPolicy)
+			&twoFactorOn, &twoFactorPolicy, &rulesPending)
 
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
@@ -96,9 +99,17 @@ func (a *API) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 
 		s.Perms = perm.NewSet(permNames)
 
-		// Held at the setup screen until two-factor is on (twofactor.go).
-		if !twoFactorOn && policyCovers(twoFactorPolicy, s.Perms) && !twoFactorSetupAllowed(r) {
-			writeTwoFactorSetupRequired(w)
+		// Held at the setup screen until two-factor is on (twofactor.go),
+		// then at the rules until they are accepted (home.go). The
+		// two-factor hold comes first: its setup requests are not on the
+		// rules hold's list.
+		if !twoFactorOn && policyCovers(twoFactorPolicy, s.Perms) {
+			if !twoFactorSetupAllowed(r) {
+				writeTwoFactorSetupRequired(w)
+				return
+			}
+		} else if rulesPending && !rulesHoldAllowed(r) {
+			writeRulesAcceptanceRequired(w)
 			return
 		}
 

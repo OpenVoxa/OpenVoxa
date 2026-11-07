@@ -22,13 +22,15 @@ export interface Session {
 }
 
 /**
- * The server refused a request because this account must set up
- * two-factor first (Server settings, Security). Reload: the app then
- * starts at the setup screen (App.tsx). Once per page.
+ * The server refused a request because this account is held: it must
+ * set up two-factor first (Server settings, Security), or accept the
+ * server's rules (home.go). Reload: the app then starts at that screen
+ * (App.tsx). Once per page.
  */
 let gateHit = false;
-export function twoFactorGate(status: number, data: any): void {
-  if (status === 403 && data?.code === "two_factor_setup_required" && !gateHit) {
+const HOLDS = new Set(["two_factor_setup_required", "rules_acceptance_required"]);
+export function accountGate(status: number, data: any): void {
+  if (status === 403 && HOLDS.has(data?.code) && !gateHit) {
     gateHit = true;
     location.reload();
   }
@@ -65,7 +67,7 @@ export async function call<T>(
     /* not JSON */
   }
   if (!res.ok) {
-    twoFactorGate(res.status, data);
+    accountGate(res.status, data);
     throw new ApiError(res.status, data?.error ?? `request failed (${res.status})`);
   }
   return data as T;

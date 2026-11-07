@@ -32,9 +32,13 @@ import { ServerSettingsDialog } from "./ServerSettings";
 import { configureStickers, refreshStickers } from "./stickers";
 import { configureNames, refreshNames } from "./names";
 import { channelLink, LinksContext, onAddressTarget, takePendingTarget, type LinkTarget, type Links } from "./links";
-import { serverInfoChanged } from "./serverInfo";
+import { serverInfoChanged, useServerInfo } from "./serverInfo";
+import { configureHome, HomeIcon, HomePane, markHomeSeen, refreshHome, useHome } from "./home";
+import type { ServerTab } from "./ServerSettings";
 
 const LAST_CHANNEL = (userId: string) => `lastChannel.${userId}`;
+/** "1" when Home was the last thing open: you come back to it. */
+const LAST_HOME = (userId: string) => `lastHome.${userId}`;
 
 export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBackUpNow, onSetUpKey, onEnterKey, onNewKey, onDeleteAccount, onEraseAndLogout, onExpired }: {
   session: Session;
@@ -60,6 +64,15 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   const channelsRef = useRef<readonly ChannelInfo[]>([]);
   channelsRef.current = channels;
   const [openId, setOpenId] = useState<string | null>(null);
+  // Home in the main pane instead of the open channel. null: not decided
+  // yet (waits for the first /home answer, to know whether it changed).
+  const [homeOpen, setHomeOpenState] = useState<boolean | null>(null);
+  const setHomeOpen = (on: boolean) => {
+    setHomeOpenState(on);
+    localStore.set(LAST_HOME(session.user_id), on ? "1" : "0");
+  };
+  const home = useHome();
+  const serverInfo = useServerInfo();
   // Message sound cooldown (sounds.ts, MESSAGE_COOLDOWNS): when each
   // channel last played the message or mention sound. Looking at a
   // channel clears its entry, so its next message plays again.
@@ -101,7 +114,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
     | { k: "settings"; id: string; focus?: "name" | "delete" }
     | { k: "share" }
     | { k: "prefs"; tab: SettingsTab }
-    | { k: "server" }
+    | { k: "server"; tab?: ServerTab }
     | null
   >(null);
   // The right-click (or long-press) menu on a channel in the sidebar.
@@ -128,6 +141,8 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   useEffect(() => configureStickers(call, session.token), [call, session.token]);
   // Username colours by group (names.tsx).
   useEffect(() => configureNames(call), [call]);
+  // The Home page (home.tsx).
+  useEffect(() => configureHome(call), [call]);
 
   // Start the crypto session (this tab takes over the account's device)
   // and the chat on top of it.
@@ -203,6 +218,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
               n.onclick = () => {
                 window.focus();
                 setOpenId(e.channelId);
+                setHomeOpen(false);
                 setStage(null);
                 setCallView(false);
                 n.close();
@@ -215,9 +231,11 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           else if (e.type === "stickers_changed") void refreshStickers();
           else if (e.type === "names_changed") refreshNames();
           else if (e.type === "server_info_changed") serverInfoChanged();
+          else if (e.type === "home_changed") void refreshHome();
           else if (e.type === "events_reconnected") {
             // Server-wide events sent while the socket was down are lost.
             serverInfoChanged();
+            void refreshHome();
             void refreshStickers();
             refreshNames();
             refreshMe();
@@ -352,6 +370,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
       return false;
     }
     setOpenId(c.id);
+    setHomeOpen(false);
     setStage(null);
     setCallView(false);
     setJump(t.messageId ? { channelId: c.id, messageId: t.messageId } : null);
@@ -365,6 +384,20 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
 
   // Pick a channel: the one a link the page was opened with goes to, the
   // open one if it still exists, else the last one used, else the first.
+  // Land on Home or not, once: Home if an administrator changed it since
+  // you last saw it, or if it was the last thing open; else the channel
+  // below. A link the page was opened with leaves Home (go). If /home
+  // doesn't answer in a few seconds, the channel.
+  useEffect(() => {
+    if (!chat || homeOpen !== null) return;
+    if (home) {
+      setHomeOpenState(home.version > home.seen_version || localStore.get(LAST_HOME(session.user_id)) === "1");
+      return;
+    }
+    const t = setTimeout(() => setHomeOpenState((v) => v ?? false), 4000);
+    return () => clearTimeout(t);
+  }, [chat, home, homeOpen, session.user_id]);
+
   useEffect(() => {
     if (!chat || !text.length) return;
     const opened = takePendingTarget();
@@ -389,6 +422,22 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
       /* gone from the list meanwhile; the effect above picks another */
     }
   }, [chat, openId, session.user_id]);
+
+  // Home open and in view counts as seen (the dot goes).
+  const homeShown = homeOpen === true && !stage && !(callView && !!vsnap && vsnap.state !== "idle");
+  useEffect(() => {
+    if (!homeShown || !home || home.seen_version >= home.version) return;
+    const mark = () => {
+      if (document.visibilityState === "visible" && document.hasFocus()) markHomeSeen();
+    };
+    mark();
+    window.addEventListener("focus", mark);
+    document.addEventListener("visibilitychange", mark);
+    return () => {
+      window.removeEventListener("focus", mark);
+      document.removeEventListener("visibilitychange", mark);
+    };
+  }, [homeShown, home]);
 
   if (failed) {
     return (
@@ -523,20 +572,35 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           )}
         </header>
         <div className="channel-list">
+          <div className="channel-row home-row">
+            <button className={`channel home${homeShown ? " active" : ""}${home && home.version > home.seen_version ? " unread" : ""}`}
+              onClick={() => {
+                setHomeOpen(true);
+                setStage(null);
+                setCallView(false);
+              }}
+              aria-current={homeShown ? "page" : undefined}
+              title="Home: welcome and rules">
+              <HomeIcon />
+              <span className="name">{serverInfo.name || "Home"}</span>
+              {home && home.version > home.seen_version && <span className="dot" aria-label="changed since you last looked" />}
+            </button>
+          </div>
           {heading("Text channels", "text")}
           <ul>
             {text.map((c) => (
               <li key={c.id} className="channel-row">
                 <button
-                  className={`channel${c.id === openId ? " active" : ""}${unread.has(c.id) || mentions.has(c.id) ? " unread" : ""}`}
+                  className={`channel${c.id === openId && !homeOpen ? " active" : ""}${unread.has(c.id) || mentions.has(c.id) ? " unread" : ""}`}
                   {...menuTrigger.handlers(c.id)}
                   onClick={() => {
                     if (menuTrigger.consumeLongPress()) return;
                     setOpenId(c.id);
+                    setHomeOpen(false);
                     setStage(null);
                     setCallView(false);
                   }}
-                  aria-current={c.id === openId ? "page" : undefined}
+                  aria-current={c.id === openId && !homeOpen ? "page" : undefined}
                   title={c.encrypted ? "End-to-end encrypted" : "Not encrypted"}
                 >
                   <span className="hash" aria-hidden>#</span>
@@ -618,6 +682,10 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           <CallView voice={voiceClient} snap={vsnap}
             channelName={voiceChannels.find((c) => c.id === vsnap.channelId)?.name ?? ""}
             onWatch={(id) => setStage({ focus: id })} />
+        ) : homeOpen ? (
+          <HomePane isAdmin={can("administrator")} onEdit={() => setDialog({ k: "server", tab: "general" })} />
+        ) : homeOpen === null ? (
+          <div className="pane-empty muted">Opening…</div>
         ) : view ? (
           <ChannelPane key={view.channel.id} view={view} call={call} userId={session.user_id} username={session.username} canDeleteAny={canDeleteAny}
             canManageStickers={can("manage_stickers")}
@@ -637,6 +705,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
             void chat.refreshChannels().then(() => {
               if (c.kind === "text") {
                 setOpenId(c.id);
+                setHomeOpen(false);
                 setCallView(false);
               }
             });
@@ -654,6 +723,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
       {dialog?.k === "server" && isStaff && (
         <ServerSettingsDialog call={call} me={{ userId: session.user_id, permissions: perms, rank }}
           reload={permsTick + reportsTick + bugsTick} openReports={openReports} openBugReports={openBugs}
+          initialTab={dialog.tab}
           onClose={() => {
             setDialog(null);
             setReportsTick((t) => t + 1);

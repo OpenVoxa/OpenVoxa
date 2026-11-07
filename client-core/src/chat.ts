@@ -248,6 +248,8 @@ export type ChatEvent =
   | { type: "names_changed" }
   /** The server's name or icon changed: fetch /server-info again. */
   | { type: "server_info_changed" }
+  /** Home (welcome, rules, banner) or rule enforcement changed: fetch /home again. */
+  | { type: "home_changed" }
   /** The event socket came back after a drop: server-wide events may
    * have been missed meanwhile, so fetch what they would have changed. */
   | { type: "events_reconnected" }
@@ -306,7 +308,7 @@ const GLOBAL_EVENTS = new Set([
   "user_purged", "access_changed", "channel_changed", "channel_deleted",
   "perms_changed", "channel_activity", "voice_changed", "reports_changed",
   "bug_reports_changed",
-  "mention", "stickers_changed", "names_changed", "server_info_changed",
+  "mention", "stickers_changed", "names_changed", "server_info_changed", "home_changed",
   "archive_message_gone", "archive_channel_expired",
 ]);
 
@@ -793,6 +795,9 @@ export class Chat {
         break;
       case "server_info_changed":
         this.#emit({ type: "server_info_changed" });
+        break;
+      case "home_changed":
+        this.#emit({ type: "home_changed" });
         break;
       case "archive_message_gone":
         // A message deleted in any encrypted channel this account can see.

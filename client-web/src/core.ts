@@ -10,7 +10,7 @@
 import { startSession, type Session as CryptoSession } from "@core/index";
 import type { ApiCall } from "@core/identity";
 import type { KeyValueStore } from "@core/chat";
-import { ApiError, guessDeviceName, twoFactorGate } from "./api";
+import { ApiError, guessDeviceName, accountGate } from "./api";
 
 /**
  * client-core's ApiCall: JSON in and out, the session token added, and
@@ -35,7 +35,7 @@ export function apiCall(token: string, onUnauthorized?: () => void): ApiCall {
     }
     if (!res.ok) {
       if (res.status === 401) onUnauthorized?.();
-      twoFactorGate(res.status, data);
+      accountGate(res.status, data);
       // Some refusals carry `reason` (an epoch conflict on commit).
       throw new ApiError(res.status, data?.error ?? data?.reason ?? `request failed (${res.status})`);
     }
