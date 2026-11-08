@@ -3532,6 +3532,33 @@ verified; the section named holds the design.
 
 ### Next up (Ryan picks; each gets a design talk first)
 
+- [ ] **Self-host audit, whole repo** (Ryan, 2026-11-08; next
+      session): make sure nothing in the repo is particular to Ryan's
+      setup and anyone can clone it and host their own OpenVoxa (server,
+      web client, desktop app pointed at their server). Go through every
+      tracked file (`git ls-files`), not samples:
+      1. Personal details: IPs, hostnames, domains, account and channel
+         names, usernames, NAS paths, emails beyond the DCO author.
+         Compare against private memory (DEV/PROD details) with grep.
+      2. DEV/PROD-specific content: two-stack routines, `ssh prod`,
+         hand-copy steps, defaults that assume a NAS, a LAN, Cloudflare,
+         port 8443 or Ryan's router. Each find: remove, generalise
+         (option with a sensible default), or move to private memory.
+      3. The self-host path end to end: README, deploy/README,
+         `setup.sh`, `.env.example` (every variable the code reads is
+         listed and explained), compose profiles, Caddyfiles, crons,
+         backup script. A newcomer on a fresh Linux box should need
+         nothing outside the repo.
+      4. Desktop app for someone else's server: how they build it, set
+         their update address and publish updates; what `release:win`
+         assumes (Docker, Wine image, a Linux host).
+      5. Dev notes (CLAUDE.md, decisions.md): decide with Ryan whether
+         they stay public as the project's notes, and strip Ryan's
+         environment out of them either way.
+      First give Ryan the findings list grouped by these five, with a
+      proposed fix each; change nothing before he picks. Then fix in
+      small commits, and finish with `setup.sh --dry-run` plus a fresh
+      clone install in a throwaway container or VM if feasible.
 - [ ] **Beta v1: DEV and PROD** (Ryan, 2026-11-07). Instead of wiping
       the current server, set up a clean PROD beside it:
       - **PROD** on a new VM (Debian, Docker), reached from Docker over

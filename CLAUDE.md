@@ -174,8 +174,8 @@ no call rejoin, no desktop install and doesn't touch voice/share/LiveKit. Repo
 history was rewritten 2026-11-07: reset older clones to origin/main,
 never pull or merge them. Desktop updates reach PROD via a private script
 (memory, not in the repo: **the repo serves single-server self-hosters;
-nothing DEV/PROD-specific goes in it**). **Next:** Ryan picks from Open
-items, Next up. Waiting on Ryan: the desktop icon PNG. Offered: `#`
+nothing DEV/PROD-specific goes in it**). **Next:** the whole-repo self-host
+audit (decisions.md Open items, Next up, first entry): findings first. Waiting on Ryan: the desktop icon PNG. Offered: `#`
 headings in Home, server name in the sidebar header, a single-copy
 hardware (H.264) share mode, "Message" on @mention chips. Untested:
 DK1-DK9, SI4/SI8.
