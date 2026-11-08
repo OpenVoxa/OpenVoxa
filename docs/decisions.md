@@ -1379,6 +1379,24 @@ that.
 - **Later:** a server saying "this server needs app version X or later"
   (for features that need a newer shell, such as new preload calls).
 
+#### Login page download link
+
+Built 2026-11-08 (`client-web/src/appDownload.tsx`; Ryan's picks).
+
+- **A quiet text link under the login card**, "Get the desktop app for
+  Windows", on the main login/register screen only. Clicking it saves
+  the installer and shows, under the link: "Downloading <file>. If
+  Windows says "Windows protected your PC", choose More info, then Run
+  anyway." (the installer is unsigned, see Desktop updates).
+- **Only where an app exists for the browser's platform**: Windows
+  browsers today, never inside the desktop app (its preload adds
+  `window.openvoxaDesktop`). Built as a per-platform table (`APPS`) so
+  Android and iOS store links slot in later with their own label and hint.
+- **The link follows the newest release by itself**: it reads the
+  top-level `path:` line of `/desktop-updates/latest.yml` (the file the
+  installed apps check), so nothing in Caddy or the server changes per
+  release. A server without an update folder shows no link.
+
 #### Server name and icon
 
 Decided with Ryan, 2026-11-07; built the same day (desktop 0.1.9).

@@ -10,6 +10,7 @@ import { setStaySignedIn, staySignedInChoice } from "./session";
 import { LinkSignIn, parseLink } from "./SignInLink";
 import type { LinkParts } from "@core/signinlink";
 import { AuthHeading } from "./serverInfo";
+import { AppDownload } from "./appDownload";
 
 /** A note for the first screen after sign-in, when unlocking changed something. */
 function unlockNote(how: PasswordUnlock): string | undefined {
@@ -287,6 +288,7 @@ export function Login({ onSession, notice, link: openedLink = null }: {
           </button>
         )}
       </form>
+      <AppDownload />
     </div>
   );
 }

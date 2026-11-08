@@ -52,8 +52,13 @@ a { color: var(--link); }
   min-height: 100%;
   display: grid;
   place-items: center;
+  /* A second child (the app download link) sits just under the card. */
+  align-content: center;
+  row-gap: 16px;
   padding: 16px;
 }
+.app-download { max-width: 400px; text-align: center; }
+.app-download p { margin: 6px 0 0; }
 .auth-card {
   width: 100%;
   max-width: 400px;
