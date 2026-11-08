@@ -698,6 +698,62 @@ Disconnect is not a ban: they can join again.
   over it). A refused drop shows the server's reason at the drop point.
   The menu stays for touch screens, where HTML drag and drop is unreliable.
 
+#### Direct messages
+
+Designed with Ryan 2026-11-08; **not built yet** (stages below). "Whisper"
+means the same thing as a DM: no separate voice whisper.
+
+- **One-to-one only.** No group DMs; group chat stays in channels.
+- **Always end-to-end encrypted, readable only by the two people.**
+  Administrators get no access: they can't read DMs and aren't in their
+  MLS groups.
+- **Same abilities as an encrypted text channel:** attachments,
+  reactions, replies, edits, deletes, stickers, GIFs, mentions, reports.
+  A report sends the text as shown, as in encrypted channels.
+- **Who may DM:** a new `direct_messages` switch, on for Member by
+  default, so administrators can take it from new or problem accounts.
+  Staff (anyone ranked above Member: Moderator, Administrator) can always
+  DM. The UI calls them **Direct Messages**, and the
+  name menus say **Message**.
+- **Block** (per person, silent; they aren't told): they can't DM you,
+  the DM leaves your list, and their messages in channels collapse to
+  "Blocked message (show)". Voice is unaffected (Mute for me covers that).
+  Settings lists who you've blocked, with Unblock.
+- **Losing access** (switch removed, or either side blocks): the DM turns
+  **read-only** for both, with the message box greyed out and a reason.
+  It isn't hidden, except from the person who blocked.
+- **Alerts like a mention:** a red count on the DM button and on the
+  conversation, plus the mention sound. A desktop pop-up only with
+  mention notifications on (default off).
+- **Layout (Discord-style):** a button at the top of the sidebar switches
+  the Text and Voice channel lists to a list of your DMs (newest first,
+  unread counts, "+ New Message" picker). Clicking one opens it in the
+  right pane, like a channel. Another button switches back. Start one
+  from anyone's name anywhere: "Message".
+- **Accounts:** deleting an account crypto-shreds its messages as
+  anywhere else; its DMs remain with tombstones. A banned account's DMs
+  turn read-only.
+
+**Implementation plan.** A DM is a `channels` row with a new kind `dm`
+(widen the `kind` CHECK; `encrypted = true`), plus a `dm_members` table
+(channel, two users; the pair unique as an ordered pair). Then:
+
+- **Access:** in `canViewSQL` / `canPostSQL` / `viewerFilter`, a DM is
+  visible only to its two members. It must **not** take the
+  `isAdminSQL` path: `allowed-devices` (which MLS reconciles against)
+  comes from the same rule. Posting needs both members still able to
+  DM and no block either way.
+- **Lists:** `listChannels` and every "all channels" sweep (voice,
+  retention, archives) skip `dm`. New `GET /dms` (other user, last
+  activity, unread, read-only reason), `POST /dms {user_id}` (get or
+  create), `PUT/DELETE /blocks/{user_id}`, `GET /blocks`.
+- **Events:** activity and mention events reach exactly the two members.
+- **Stages:** (1) server: migration, access, endpoints, events, Go
+  tests for access (admin excluded, block, switch). (2) web client: the
+  sidebar switch, DM list, New Message, "Message" in name menus,
+  read-only box, alerts. (3) Block UI: menus, the Settings list, and
+  collapsed blocked messages in channels.
+
 #### Receiving shares on demand
 
 Ryan, 2026-11-04: a share's sound played for everyone in the call the
@@ -3396,6 +3452,13 @@ verified; the section named holds the design.
         ticket twice, about 3 s apart, after the restart (Open items).
       - **Releases:** DEV runs work in progress; PROD only moves to a
         tagged version (e.g. `v1.0.0-beta.1`) when Ryan says "release".
+        **Hotfixes** (Ryan, 2026-11-08): a change that has passed on DEV
+        goes to PROD at once, same routine, if it needs nobody to end or
+        rejoin a call, needs no desktop app install or update, and
+        doesn't affect voice (voice client, voice UI, screen share,
+        LiveKit). Tagged `v1.0.0-beta.N.M` (`v1.0.0-beta.1.1`, ...):
+        semver orders that between beta.N and beta.N+1, where a
+        `-hotfix` suffix would sort after beta.N+1.
       - **Stages:** (1) setup script and rewritten install docs; (2)
         install PROD with them from scratch (the real test of the
         self-host path) and cut the network over; (3) the release and
@@ -3436,13 +3499,9 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
       (categories) that collapse, and drag-to-reorder for channels and
       groups (`manage_channels`). Open: voice channels in the same
       groups, per-group permissions.
-- [ ] **Direct messages and whispers:** one-to-one and small-group
-      messages; always E2EE (Blocking decisions: DMs will be). Probably
-      an MLS group per conversation on the existing machinery. Whisper:
-      talk to one person in voice without the rest of the channel
-      hearing. Open: who may DM whom (blocking, server-wide off switch),
-      how moderators handle DM reports, DMs between servers (no
-      federation in v1, so none). The biggest of these.
+- [ ] **Direct messages** ("whispers" = DMs): designed 2026-11-08
+      (Feature decisions, "Direct messages", with the 3-stage plan).
+      Next: stage 1, server.
 - [x] **Home page** and community rules: built 2026-11-07 (Feature
       decisions, "Home page and community rules"; HP1-HP18).
 - [ ] **Desktop status icon:** your status on the taskbar button
@@ -3452,13 +3511,6 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
 
 ### Features not built yet
 
-        **Hotfixes** (Ryan, 2026-11-08): a change that has passed on DEV
-        goes to PROD at once, same routine, if it needs nobody to end or
-        rejoin a call, needs no desktop app install or update, and
-        doesn't affect voice (voice client, voice UI, screen share,
-        LiveKit). Tagged `v1.0.0-beta.N.M` (`v1.0.0-beta.1.1`, ...):
-        semver orders that between beta.N and beta.N+1, where a
-        `-hotfix` suffix would sort after beta.N+1.
 - [ ] Guest accounts: the Everyone group exists, but there is no
       anonymous or invite flow to create one.
 - [ ] `@everyone` / `@group` mentions, mention counts, notifications

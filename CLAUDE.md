@@ -169,8 +169,11 @@ PROD for work in progress:** build and test on this stack (DEV, LAN-only
 passed on DEV, at once as a **hotfix** (tag `v1.0.0-beta.N.M`) if it needs
 no call rejoin, no desktop install and doesn't touch voice/share/LiveKit. Repo
 history was rewritten 2026-11-07: reset older clones to origin/main,
-never pull or merge them. **Next:** design talk on a desktop download
-link on the login page; then release-routine gaps: `release:win` still
+never pull or merge them. **Next:** **Direct messages stage 1
+(server)**, designed with Ryan (decisions.md Feature decisions, "Direct
+messages": plan, stages, and the admin-path trap). After DMs: the login
+page download link (suggested: quiet text link, browsers only, Windows,
+SmartScreen hint); then release-routine gaps: `release:win` still
 writes DEV's `deploy/desktop-updates` (copy to PROD by hand), a DNS
 updater for the public A record, the double reconnect after a restart
 (Open items). Waiting on Ryan: the desktop icon PNG. Offered: `#`
