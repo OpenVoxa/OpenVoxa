@@ -299,14 +299,16 @@ function shareOptions(s: ShareSettings): TrackPublishOptions {
     videoEncoding: encoding,
     // Two layers: full quality, and half resolution, which the call
     // view's tiles show (adaptiveStream picks it from their size) and
-    // anyone who can't keep up falls back to. VP8, because H.264
+    // anyone who can't keep up falls back to. Both at the chosen frame
+    // rate: a 30 fps cap here made a 60 fps game share look locked at 30
+    // whenever every viewer was on a tile (2026-11-08). VP8, because H.264
     // simulcast is poorly supported (decisions.md, "Voice channel
     // view"); watching costs a little more CPU where VP8 isn't
     // hardware-decoded.
     simulcast: !WEBKIT,
     screenShareSimulcastLayers: [
       new VideoPreset(Math.round(s.width / 2), Math.round(s.height / 2),
-        Math.round(s.kbps * 1000 * 0.3), Math.min(s.fps, 30)),
+        Math.round(s.kbps * 1000 * 0.3), s.fps),
     ],
     videoCodec: WEBKIT ? "h264" : "vp8",
     degradationPreference: s.priority === "motion" ? "maintain-framerate" : "maintain-resolution",

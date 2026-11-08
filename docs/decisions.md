@@ -694,6 +694,12 @@ with Hide (stop showing it), Listen and Fullscreen. Decided the same day:
   Cheap for viewers, a little more upload and CPU for the sharer. H.264
   simulcast is poorly supported, so this means VP8 (see Implementation
   notes on simulcast).
+  **Changed 2026-11-08 (Ryan):** the small copy runs at the share's
+  chosen frame rate, not capped at 30. With every viewer on a tile the
+  full copy is paused, so a 60 fps game share went out as 30 (found on
+  PROD with WoW). Gaming is the point of the project: smooth for every
+  viewer beats saving upload. Own share's Stats line also shows the
+  capture (asked / agreed / got fps).
 - **Letter circles for now**, as in the sidebar; uploaded avatars
   replace them later (Open items, "User avatars").
 - **Only while you are in the call.** No looking into a channel before
