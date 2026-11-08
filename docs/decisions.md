@@ -666,6 +666,38 @@ Decided with Ryan, 2026-11-04, instead of enforcing force-PTT.
 - **UI:** "Server Mute" in the right-click menu on a person in a call;
   Mute / Unmute and a "Muted" tag in Server settings > Members.
 
+#### Move and disconnect
+
+Ryan, 2026-11-08 (urgent request). A new switch, **Move members**
+(`move_members`, migration 0035: on for Moderator; Administrator implies
+it), lets staff move someone **already in a call** to another voice
+channel, or disconnect them from voice. Nobody is pulled into a call
+they didn't join (their mic would go live without their choice).
+Disconnect is not a ban: they can join again.
+
+- **Rank:** only people below your rank, as with bans and server mute.
+  The target must be allowed in the destination channel; the moderator
+  must see both channels.
+- **Why the client moves itself:** each voice channel has its own MLS
+  group and media key, so LiveKit's MoveParticipant would land them in
+  the new room unable to hear anyone. The server sends `voice_moved` to
+  that account's sockets; the device in that call leaves and joins the
+  new channel. A device that doesn't (a tab on an older build) is removed
+  from the old call after 10 s, so leaving is enforced regardless.
+  Disconnect sends the event, then removes them from LiveKit 0.3 s later.
+- **What they see:** "<name> moved you to <channel>." under the voice bar,
+  or "<name> disconnected you from the call." Both go to the moderation
+  log (`voice_move` with the channel name, `voice_disconnect`).
+- **Where:** a Move section (channel picker, Move, Disconnect) in the
+  person menu of the call you're in, and a menu on names under the other
+  voice channels in the sidebar (click or right-click) for holders of the
+  switch. `POST /users/{id}/voice-move {from_channel_id, to_channel_id}`
+  (`to` empty: disconnect).
+- **Drag and drop** (same day): holders drag a name under any voice
+  channel onto another voice channel's row (outlined in the accent while
+  over it). A refused drop shows the server's reason at the drop point.
+  The menu stays for touch screens, where HTML drag and drop is unreliable.
+
 #### Receiving shares on demand
 
 Ryan, 2026-11-04: a share's sound played for everyone in the call the

@@ -8,7 +8,7 @@
  * All media logic is client-core's VoiceClient (loaded on first join).
  */
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type DragEvent, type ReactNode, type RefObject } from "react";
 import type {
   AudioDevices, AudioSettings, MicLevel, MicMode, NoiseMode, ScreenShare, ShareSettings, VoiceClient, VoiceParticipant,
   VoiceSnapshot,
@@ -245,18 +245,33 @@ function CogIcon() {
  * you are in this is live (speaking, mic, sharing); for others it is the
  * server's list.
  */
-export function VoiceRoster({ live, others, onWatch, onPerson }: {
+export function VoiceRoster({ live, others, onWatch, onPerson, onOther, onDrag }: {
   live: readonly VoiceParticipant[] | null;
   others: readonly { user_id: string; username: string }[];
   onWatch: (participantId: string) => void;
   onPerson: (p: VoiceParticipant, at: { x: number; y: number }) => void;
+  /** Set for holders of move_members: a menu on people in calls you're not in. */
+  onOther?: (p: { user_id: string; username: string }, at: { x: number; y: number }) => void;
+  /** Set for holders of move_members: names can be dragged to another
+   * voice channel. Called with the person on drag start, null at the end. */
+  onDrag?: (p: { user_id: string; username: string } | null) => void;
 }) {
+  const drag = (p: { user_id: string; username: string }) => onDrag && {
+    draggable: true,
+    onDragStart: (e: DragEvent) => {
+      e.dataTransfer.setData(MOVE_DRAG_TYPE, p.user_id);
+      e.dataTransfer.effectAllowed = "move";
+      onDrag(p);
+    },
+    onDragEnd: () => onDrag(null),
+  };
   if (live) {
     if (!live.length) return null;
     return (
       <ul className="roster">
         {live.map((p) => (
           <li key={p.id}
+            {...(!p.isLocal && drag({ user_id: p.id, username: p.name }))}
             className={`${p.speaking && !p.micOff ? "speaking" : ""}${p.localMuted ? " local-muted" : ""}`}
             onContextMenu={(e) => {
               if (p.isLocal) return;
@@ -284,9 +299,19 @@ export function VoiceRoster({ live, others, onWatch, onPerson }: {
   return (
     <ul className="roster">
       {others.map((p) => (
-        <li key={p.user_id}>
+        <li key={p.user_id}
+          {...drag(p)}
+          onContextMenu={onOther && ((e) => {
+            e.preventDefault();
+            onOther(p, { x: e.clientX, y: e.clientY });
+          })}>
           <span className="avatar" aria-hidden>{p.username.slice(0, 1).toUpperCase()}</span>
-          <ColouredName userId={p.user_id} className="who">{p.username}</ColouredName>
+          {onOther ? (
+            <button className="who" title="Move or disconnect (or right-click)"
+              onClick={(e) => onOther(p, { x: e.clientX, y: e.clientY })}>
+              <ColouredName userId={p.user_id}>{p.username}</ColouredName>
+            </button>
+          ) : <ColouredName userId={p.user_id} className="who">{p.username}</ColouredName>}
         </li>
       ))}
     </ul>
@@ -301,16 +326,137 @@ export const MUTE_DURATIONS: [string, string][] = [
   ["1 day", "1 day"],
 ];
 
+/** Close a pop-up menu on a click outside it or Escape. */
+function useMenuClose(ref: RefObject<HTMLDivElement | null>, onClose: () => void) {
+  useEffect(() => {
+    const off = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && onClose();
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("mousedown", off);
+    window.addEventListener("keydown", esc);
+    return () => {
+      window.removeEventListener("mousedown", off);
+      window.removeEventListener("keydown", esc);
+    };
+  }, [ref, onClose]);
+}
+
+/** The drag data type for a person dragged to another voice channel. */
+export const MOVE_DRAG_TYPE = "application/x-openvoxa-move";
+
+/** A short message at a position, closed by clicking elsewhere (a refused drag-and-drop move). */
+export function MenuNote({ title, text, at, onClose }: {
+  title: string;
+  text: string;
+  at: { x: number; y: number };
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useMenuClose(ref, onClose);
+  const left = Math.min(at.x, window.innerWidth - 240);
+  const top = Math.max(8, Math.min(at.y, window.innerHeight - 120));
+  return (
+    <div ref={ref} className="menu" style={{ left, top }} role="alertdialog" aria-label={title}>
+      <strong>{title}</strong>
+      <p className="error small">{text}</p>
+    </div>
+  );
+}
+
+/** A voice channel someone can be moved to. */
+export type MoveTarget = { id: string; name: string };
+
+/** How much height the Move section adds to a menu. */
+const MOVE_SECTION_HEIGHT = 190;
+
+/**
+ * Move someone in a call to another voice channel, or disconnect them
+ * (holders of move_members). The server checks rank and whether they may
+ * enter the channel; its refusal is shown here.
+ */
+function MoveSection({ userId, from, channels, call, onDone }: {
+  userId: string;
+  from: string;
+  channels: readonly MoveTarget[];
+  call: ApiCall;
+  onDone: () => void;
+}) {
+  const targets = channels.filter((c) => c.id !== from);
+  const [to, setTo] = useState(targets[0]?.id ?? "");
+  const [busy, setBusy] = useState<"move" | "disconnect" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  async function go(dest: string) {
+    setBusy(dest ? "move" : "disconnect");
+    setError(null);
+    try {
+      await call(`/api/v1/users/${userId}/voice-move`, {
+        method: "POST",
+        body: JSON.stringify({ from_channel_id: from, to_channel_id: dest }),
+      });
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+  return (
+    <div className="menu-section">
+      <strong className="small">Move</strong>
+      <label>
+        To
+        <select value={to} onChange={(e) => setTo(e.target.value)} disabled={!targets.length || !!busy}>
+          {!targets.length && <option value="">No other voice channels</option>}
+          {targets.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+      </label>
+      <div className="menu-buttons">
+        <button className="outline" disabled={!to || !!busy} onClick={() => void go(to)}>
+          {busy === "move" ? "Moving…" : "Move"}
+        </button>
+        <button className="outline" disabled={!!busy} onClick={() => void go("")}>
+          {busy === "disconnect" ? "Disconnecting…" : "Disconnect"}
+        </button>
+      </div>
+      <p className="muted small">Disconnect drops them out of voice. It isn't a ban: they can join again.</p>
+      {error && <p className="error small" role="alert">{error}</p>}
+    </div>
+  );
+}
+
+/** For holders of move_members: someone in a call you're not in. */
+export function MoveMenu({ person, from, channels, at, call, onClose }: {
+  person: { user_id: string; username: string };
+  from: string;
+  channels: readonly MoveTarget[];
+  at: { x: number; y: number };
+  call: ApiCall;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useMenuClose(ref, onClose);
+  const left = Math.min(at.x, window.innerWidth - 240);
+  const top = Math.max(8, Math.min(at.y, window.innerHeight - MOVE_SECTION_HEIGHT - 40));
+  return (
+    <div ref={ref} className="menu" style={{ left, top }} role="dialog" aria-label={`Move ${person.username}`}>
+      <strong>{person.username}</strong>
+      <MoveSection userId={person.user_id} from={from} channels={channels} call={call} onDone={onClose} />
+    </div>
+  );
+}
+
 /**
  * Volume and "mute for me" for one person, at the click position; for
- * holders of server_mute, the server mute too.
+ * holders of server_mute, the server mute too, and for holders of
+ * move_members, Move and Disconnect.
  */
-export function PersonMenu({ voice, person, at, call, canServerMute, onClose }: {
+export function PersonMenu({ voice, person, at, call, canServerMute, move, onClose }: {
   voice: VoiceClient;
   person: VoiceParticipant;
   at: { x: number; y: number };
   call: ApiCall;
   canServerMute: boolean;
+  /** Set for holders of move_members: the call they're in and where they can go. */
+  move?: { from: string; channels: readonly MoveTarget[] };
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -333,19 +479,11 @@ export function PersonMenu({ voice, person, at, call, canServerMute, onClose }: 
       setBusy(false);
     }
   }
-  useEffect(() => {
-    const off = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && onClose();
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("mousedown", off);
-    window.addEventListener("keydown", esc);
-    return () => {
-      window.removeEventListener("mousedown", off);
-      window.removeEventListener("keydown", esc);
-    };
-  }, [onClose]);
+  useMenuClose(ref, onClose);
   const share = voice.snapshot().screens.find((s) => s.participantId === person.id && s.hasAudio);
   const left = Math.min(at.x, window.innerWidth - 240);
-  const top = Math.min(at.y, window.innerHeight - (canServerMute ? 330 : 140) - (share ? 32 : 0));
+  const top = Math.max(8, Math.min(at.y, window.innerHeight - (canServerMute ? 330 : 140)
+    - (share ? 32 : 0) - (move ? MOVE_SECTION_HEIGHT : 0)));
   return (
     <div ref={ref} className="menu" style={{ left, top }} role="dialog" aria-label={`${person.name} volume`}>
       <strong>{person.name}</strong>
@@ -398,6 +536,7 @@ export function PersonMenu({ voice, person, at, call, canServerMute, onClose }: 
           {muteError && <p className="error small" role="alert">{muteError}</p>}
         </div>
       )}
+      {move && <MoveSection userId={person.id} from={move.from} channels={move.channels} call={call} onDone={onClose} />}
     </div>
   );
 }

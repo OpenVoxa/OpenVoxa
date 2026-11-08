@@ -340,6 +340,9 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 		withUUIDPath(api.requirePerm(perm.ServerMute, api.muteVoice)))
 	mux.HandleFunc("DELETE /api/v1/users/{id}/voice-mute",
 		withUUIDPath(api.requirePerm(perm.ServerMute, api.unmuteVoice)))
+	// Move someone in a call to another voice channel, or disconnect them.
+	mux.HandleFunc("POST /api/v1/users/{id}/voice-move",
+		withUUIDPath(api.requirePerm(perm.MoveMembers, api.moveVoice)))
 
 	// MLS identity. The server stores and routes this material and never
 	// parses it; see docs/decisions.md.

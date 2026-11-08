@@ -448,6 +448,11 @@ export class VoiceClient {
   #test: { stream: MediaStream; chain: MicChain; el: HTMLAudioElement } | null = null;
   #audioBlocked = false;
   #endReason: string | null = null;
+  /** Replaces the end-of-call line when we know better (a moderator
+   * disconnected you), whatever LiveKit gives as the reason. */
+  #endNote: string | null = null;
+  /** The call that ended last, so a late explanation finds it. */
+  #endedChannel: string | null = null;
   #lastEnd: string | null = null;
   #notices: string[] = [];
   #audioEls = new Map<string, HTMLMediaElement>();
@@ -623,6 +628,8 @@ export class VoiceClient {
     await this.stopMicTest(); // the call's mic takes over
     this.#lastEnd = null;
     this.#endReason = null;
+    this.#endNote = null;
+    this.#endedChannel = null;
     this.#notices = [];
 
     if (!isE2EESupported()) {
@@ -788,6 +795,23 @@ export class VoiceClient {
     }, 20_000);
   }
 
+  /**
+   * A moderator disconnected you from a call: end it (if the server
+   * hasn't already) and say who did it instead of the usual reason.
+   * Ignored for a call you are not in.
+   */
+  async endedBy(channelId: string, text: string): Promise<void> {
+    if (this.#state !== "idle" && this.#channelId === channelId) {
+      this.#endNote = text;
+      await this.leave();
+      return;
+    }
+    // The server's removal can beat the event here: fix the line shown.
+    if (this.#state === "idle" && this.#endedChannel === channelId && this.#lastEnd) {
+      this.#setLastEnd(text);
+    }
+  }
+
   /** Leave the call. */
   async leave(): Promise<void> {
     const room = this.#room;
@@ -851,6 +875,7 @@ export class VoiceClient {
   }
 
   #describeEnd(reason?: DisconnectReason): string {
+    if (this.#endNote) return this.#endNote;
     if (reason === DisconnectReason.PARTICIPANT_REMOVED) {
       return "You were removed from the call (no longer allowed in this channel).";
     }
@@ -1001,6 +1026,8 @@ export class VoiceClient {
         const channelId = this.#channelId;
         const why = this.#describeEnd(reason) || null;
         this.#endReason = null;
+        this.#endNote = null;
+        this.#endedChannel = channelId;
         this.#cleanup();
         if (channelId) this.#hint(channelId, 1000);
         this.#setLastEnd(why);

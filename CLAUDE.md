@@ -48,7 +48,7 @@ server/            Go (module root; go.mod says go 1.26)
   Dockerfile          client-core -> client-web -> Go -> distroless
   internal/httpapi/   HTTP + WS, one file per feature; livekitapi.go = LiveKit
                       admin calls; webui/ = embedded client-web build
-  internal/db/        Postgres; migrations/00NN_*.sql embedded, ordered (latest 0034)
+  internal/db/        Postgres; migrations/00NN_*.sql embedded, ordered (latest 0035)
   internal/{auth,blob,config,gif,hub,keystore,password,perm,ratelimit,sealedfile,totp,unfurl}
 client-core/       TypeScript protocol + crypto, no UI. src/: mls/ (ts-mls,
                    pinned 1.6.2), identity, groups (MLS lifecycle), chat
@@ -174,6 +174,9 @@ updater for the public A record, the double reconnect after a restart
 (Open items). Waiting on Ryan: the desktop icon PNG. Offered: `#`
 headings in Home, server name in the sidebar header, a single-copy
 hardware (H.264) share mode. Untested: DK1-DK9, SI4/SI8.
+**Built 2026-11-08, on DEV only:** Move members (move or disconnect
+people in calls, menu and drag and drop; passed MV1-MV7, DD1-DD5).
+PROD gets it at the next release.
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts, server name, IPs and the domain: private

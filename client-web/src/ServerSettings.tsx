@@ -85,6 +85,7 @@ const SWITCHES: { id: string; label: string; help: string }[] = [
   { id: "ban", label: "Ban", help: "Ban and unban people below their rank." },
   { id: "force_ptt", label: "Force push-to-talk", help: "Require push-to-talk in a voice channel." },
   { id: "server_mute", label: "Server mute", help: "Take away the microphone of people below their rank, in every voice channel." },
+  { id: "move_members", label: "Move members", help: "Move people below their rank who are in a call to another voice channel, or disconnect them from voice." },
   { id: "manage_stickers", label: "Manage stickers", help: "Add, rename and remove the server's stickers." },
 ];
 const switchLabel = (id: string) => SWITCHES.find((s) => s.id === id)?.label ?? id;
@@ -165,7 +166,7 @@ export function ServerSettingsDialog({ call, me, reload, openReports, openBugRep
   if (has("view_reports")) tabs.push(["reports", openReports ? `Reports (${openReports})` : "Reports"]);
   if (has("view_reports")) tabs.push(["bugs", openBugReports ? `Bug Reports (${openBugReports})` : "Bug Reports"]);
   if (has("ban")) tabs.push(["bans", "Bans"]);
-  if (has("ban") || has("view_reports") || has("delete_messages") || has("server_mute")) tabs.push(["log", "Log"]);
+  if (has("ban") || has("view_reports") || has("delete_messages") || has("server_mute") || has("move_members")) tabs.push(["log", "Log"]);
   // Every staff member can see the set; managing it needs the switch.
   tabs.push(["stickers", "Stickers"]);
   if (has("administrator")) tabs.push(["voice", "Voice and Video"], ["signup", "Sign-Up"], ["security", "Security"]);
@@ -1401,6 +1402,10 @@ function describe(e: LogEntry): { text: string; note?: string } {
       return { text: `server-muted ${who}`, note: e.detail ? `For ${e.detail}` : "Until unmuted" };
     case "voice_unmute":
       return { text: `unmuted ${who}` };
+    case "voice_move":
+      return { text: `moved ${who} to ${e.detail || "another voice channel"}` };
+    case "voice_disconnect":
+      return { text: `disconnected ${who} from voice` };
     case "delete_message":
       return { text: `deleted a message by ${e.subject_user || "a deleted account"}${where}` };
     case "resolve_report":

@@ -37,7 +37,7 @@ const modLogPage = 100
 // and moderators do that.
 func canReadModLog(s perm.Set) bool {
 	return s.Has(perm.Ban) || s.Has(perm.ViewReports) || s.Has(perm.DeleteMessages) ||
-		s.Has(perm.ServerMute)
+		s.Has(perm.ServerMute) || s.Has(perm.MoveMembers)
 }
 
 // listModerationLog returns the log newest first, a page at a time:

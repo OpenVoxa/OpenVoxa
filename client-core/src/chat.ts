@@ -255,6 +255,9 @@ export type ChatEvent =
   | { type: "events_reconnected" }
   /** Who is in each voice call (channels you can see, non-empty only). */
   | { type: "voice"; presence: VoicePresence }
+  /** A moderator moved you from one voice channel to another (`to`), or
+   * disconnected you (`to` empty). `username`: who did it. */
+  | { type: "voice_moved"; from: string; to: string; username: string }
   | { type: "error"; message: string };
 
 /** Voice channel ID -> the people in its call. */
@@ -309,7 +312,7 @@ const GLOBAL_EVENTS = new Set([
   "perms_changed", "channel_activity", "voice_changed", "reports_changed",
   "bug_reports_changed",
   "mention", "stickers_changed", "names_changed", "server_info_changed", "home_changed",
-  "archive_message_gone", "archive_channel_expired",
+  "archive_message_gone", "archive_channel_expired", "voice_moved",
 ]);
 
 const EVENT_RETRY_MS = 5000;
@@ -781,6 +784,11 @@ export class Chat {
       case "voice_changed":
         this.#refreshVoiceSoon();
         break;
+      case "voice_moved":
+        // Sent to this account only; the device in that call acts on it.
+        this.#emit({ type: "voice_moved", from: frame.from_channel_id ?? "",
+          to: frame.to_channel_id ?? "", username: frame.username ?? "" });
+        break;
       case "reports_changed":
         this.#emit({ type: "reports_changed" });
         break;
@@ -896,6 +904,8 @@ interface GlobalFrame {
   username?: string;
   message_id?: string;
   created_at?: string;
+  from_channel_id?: string;
+  to_channel_id?: string;
 }
 
 // ---------------------------------------------------------- ChannelView

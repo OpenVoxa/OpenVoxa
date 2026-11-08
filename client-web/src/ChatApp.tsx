@@ -11,7 +11,7 @@
  * only draws their snapshots and forwards what the user does.
  */
 
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent } from "react";
 import { Chat, type ChannelView, type ChannelInfo, type VoicePresence } from "@core/chat";
 import type { VoiceClient, VoiceParticipant } from "@core/voice";
 import type { BackupStatus } from "@core/recovery";
@@ -22,7 +22,7 @@ import { BellIcon, ChannelPane } from "./ChannelPane";
 import { ChannelSettingsDialog, CreateChannelDialog } from "./ChannelDialogs";
 import { ChannelMenu, useMenuTrigger, type MenuItem } from "./ChannelMenu";
 import {
-  CallView, PersonMenu, ShareDialog, Stage, VoiceBar, VoiceRoster,
+  CallView, MenuNote, MOVE_DRAG_TYPE, MoveMenu, PersonMenu, ShareDialog, Stage, VoiceBar, VoiceRoster,
   usePushToTalk, useVoiceSnapshot,
 } from "./VoiceUI";
 import { messageCooldown, mutedChannels, playSound, setChannelMuted, useMutedChannels, useVoiceSounds } from "./sounds";
@@ -125,6 +125,9 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   // use never needs.
   const [voiceClient, setVoiceClient] = useState<VoiceClient | null>(null);
   const vsnap = useVoiceSnapshot(voiceClient);
+  // For the event handler, which is set up once per session.
+  const voiceRef = useRef<VoiceClient | null>(null);
+  voiceRef.current = voiceClient;
   const muted = useMutedChannels();
   usePushToTalk(voiceClient, vsnap);
   useVoiceSounds(vsnap);
@@ -133,6 +136,16 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   // on clicking the voice channel you're in; a text channel turns it off.
   const [callView, setCallView] = useState(false);
   const [person, setPerson] = useState<{ p: VoiceParticipant; at: { x: number; y: number } } | null>(null);
+  // Move or disconnect someone in a call you're not in (move_members).
+  const [moveMenu, setMoveMenu] = useState<{
+    p: { user_id: string; username: string }; from: string; at: { x: number; y: number };
+  } | null>(null);
+  // Drag and drop moves (move_members): who is being dragged and from
+  // where (drag data can't be read until the drop), the channel it's
+  // over, and why a drop was refused.
+  const dragging = useRef<{ p: { user_id: string; username: string }; from: string } | null>(null);
+  const [dropOn, setDropOn] = useState<string | null>(null);
+  const [dropNote, setDropNote] = useState<{ title: string; text: string; at: { x: number; y: number } } | null>(null);
   const call = useMemo(() => apiCall(session.token, onExpired),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [session.token]);
@@ -226,6 +239,25 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
             }
           }
           else if (e.type === "voice") setPresence(e.presence);
+          else if (e.type === "voice_moved") {
+            // Sent to every device of this account; only the one in that
+            // call acts. The server takes a device that doesn't out of the
+            // old call anyway.
+            const v = voiceRef.current;
+            if (!v) return;
+            const who = e.username || "A moderator";
+            if (!e.to) {
+              void v.endedBy(e.from, `${who} disconnected you from the call.`);
+              return;
+            }
+            const snap = v.snapshot();
+            if (snap.state === "idle" || snap.channelId !== e.from) return;
+            const name = channelsRef.current.find((ch) => ch.id === e.to)?.name ?? "another channel";
+            void v.join(e.to).then(() => {
+              if (v.snapshot().channelId === e.to) v.showNotice(`${who} moved you to ${name}.`);
+              void c.refreshVoice();
+            });
+          }
           else if (e.type === "reports_changed") setReportsTick((t) => t + 1);
           else if (e.type === "bug_reports_changed") setBugsTick((t) => t + 1);
           else if (e.type === "stickers_changed") void refreshStickers();
@@ -498,6 +530,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   const canDeleteAny = can("delete_messages");
   const canManage = can("manage_channels");
   const canForcePTT = can("force_ptt");
+  const canMove = can("move_members");
   // Staff: anyone holding a switch. They see the member list; changing
   // groups needs manage_groups (checked inside the dialog).
   const isStaff = perms.length > 0;
@@ -623,7 +656,35 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
                 {voiceChannels.map((c) => {
                   const here = vsnap && vsnap.state !== "idle" && vsnap.channelId === c.id;
                   return (
-                    <li key={c.id} className="voice-item">
+                    <li key={c.id} className={`voice-item${dropOn === c.id ? " drop-target" : ""}`}
+                      {...(canMove && {
+                        onDragOver: (e: DragEvent) => {
+                          const d = dragging.current;
+                          if (!d || d.from === c.id || !e.dataTransfer.types.includes(MOVE_DRAG_TYPE)) return;
+                          e.preventDefault();
+                          e.dataTransfer.dropEffect = "move";
+                          if (dropOn !== c.id) setDropOn(c.id);
+                        },
+                        onDragLeave: (e: DragEvent) => {
+                          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropOn(null);
+                        },
+                        onDrop: (e: DragEvent) => {
+                          e.preventDefault();
+                          setDropOn(null);
+                          const d = dragging.current;
+                          dragging.current = null;
+                          if (!d || d.from === c.id) return;
+                          const at = { x: e.clientX, y: e.clientY };
+                          call(`/api/v1/users/${d.p.user_id}/voice-move`, {
+                            method: "POST",
+                            body: JSON.stringify({ from_channel_id: d.from, to_channel_id: c.id }),
+                          }).catch((err) => setDropNote({
+                            title: `Couldn't move ${d.p.username}`,
+                            text: err instanceof Error ? err.message : String(err),
+                            at,
+                          }));
+                        },
+                      })}>
                       <div className="channel-row">
                         <button className={`channel${here ? " active" : ""}`}
                           {...menuTrigger.handlers(c.id)}
@@ -648,6 +709,11 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
                           setStage({ focus: s?.id ?? null });
                         }}
                         onPerson={(p, at) => setPerson({ p, at })}
+                        onOther={canMove ? (p, at) => setMoveMenu({ p, from: c.id, at }) : undefined}
+                        onDrag={canMove ? (p) => {
+                          dragging.current = p && { p, from: c.id };
+                          if (!p) setDropOn(null);
+                        } : undefined}
                       />
                     </li>
                   );
@@ -734,7 +800,13 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
         <PersonMenu voice={voiceClient}
           person={vsnap?.participants.find((p) => p.id === person.p.id) ?? person.p}
           at={person.at} call={call} canServerMute={can("server_mute")}
+          move={canMove && vsnap?.channelId ? { from: vsnap.channelId, channels: voiceChannels } : undefined}
           onClose={() => setPerson(null)} />
+      )}
+      {dropNote && <MenuNote {...dropNote} onClose={() => setDropNote(null)} />}
+      {moveMenu && (
+        <MoveMenu person={moveMenu.p} from={moveMenu.from} channels={voiceChannels}
+          at={moveMenu.at} call={call} onClose={() => setMoveMenu(null)} />
       )}
       {chanMenu && menuChannel && (
         <ChannelMenu title={`${menuChannel.kind === "text" ? "#" : ""}${menuChannel.name}`} at={chanMenu.at}

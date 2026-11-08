@@ -44,11 +44,14 @@ const (
 	ServerMute Perm = "server_mute"
 	// ManageStickers: add, rename and remove the server's stickers.
 	ManageStickers Perm = "manage_stickers"
+	// MoveMembers: move people below your rank who are in a call to
+	// another voice channel, or disconnect them from voice.
+	MoveMembers Perm = "move_members"
 )
 
 // All lists every switch, in display order.
 var All = []Perm{Administrator, ManageGroups, ManageChannels,
-	DeleteMessages, ViewReports, Ban, ForcePTT, ServerMute, ManageStickers}
+	DeleteMessages, ViewReports, Ban, ForcePTT, ServerMute, MoveMembers, ManageStickers}
 
 // Valid reports whether s names a known switch.
 func Valid(s string) bool {

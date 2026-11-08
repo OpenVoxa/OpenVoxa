@@ -470,7 +470,10 @@ label input, label select { font-weight: 400; }
   --video-bg: #000000;
   --tile-label-bg: rgb(0 0 0 / 0.6);
 }
-.voice-item { display: flex; flex-direction: column; }
+.voice-item { display: flex; flex-direction: column; border-radius: var(--radius); }
+/* A name dragged over a voice channel it can be moved to. */
+.voice-item.drop-target { background: var(--sidebar-hover); box-shadow: inset 0 0 0 2px var(--accent); }
+.roster li[draggable="true"] { cursor: grab; }
 .voice-item .channel:disabled { opacity: 1; }
 .roster { list-style: none; margin: 0 0 4px; padding: 0 0 0 26px; }
 .roster li {
@@ -621,6 +624,8 @@ label.inline-select {
   box-shadow: 0 8px 24px rgb(0 0 0 / 0.45);
 }
 .menu p { margin: 0; }
+.menu-buttons { display: flex; gap: 8px; }
+.menu-buttons button { flex: 1; }
 .channel-menu { gap: 0; padding: 6px; }
 .channel-menu-title { padding: 6px 8px 8px; font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .menu-item { display: block; width: 100%; text-align: left; background: transparent; color: var(--text); font-size: 14px; padding: 6px 8px; border-radius: 4px; }
