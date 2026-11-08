@@ -37,7 +37,7 @@ The script asks a few questions, then does the rest:
 
 `./setup.sh --dry-run` asks the same questions and shows what it would do and write, without changing anything. The script refuses to run where `.env` already exists, so it can never replace the secrets of a working server.
 
-When it's done, open the address it printed, choose Register and enter the setup code: the first account becomes the administrator ([next section](#first-account-and-administrator-recovery)). Internet-facing servers also need the router forwards it lists: TCP 80 (the first TLS path only), your HTTPS port, UDP 50000-50100 and TCP 7881.
+When it's done, open the address it printed, choose Register and enter the setup code: the first account becomes the administrator ([next section](#first-account-and-administrator-recovery)). Internet-facing servers also need the router forwards it lists: TCP 80 (the first TLS path only), your HTTPS port, UDP 50000-50100 and TCP 7881. Your own terminal only gets Docker access at its next login (the script carries on without one), so log out and back in before running `docker compose` yourself.
 
 ### Setting up by hand
 
@@ -127,6 +127,8 @@ cp docker-compose.override.yml.example docker-compose.override.yml
 ```
 
 Compose merges that automatically. The copy is gitignored, so your local build choice never lands in a commit.
+
+**Internet-facing: public A record, DNS only.** Point an A record for the domain at your public IP and leave Cloudflare's proxy off (grey cloud): the proxy only carries web traffic, not voice. Many home routers can't reach their own public IP from inside the network (no NAT loopback), so people on your LAN also need a local DNS record (Pi-hole, your router) pointing the domain at the server's LAN IP. Symptom without it: the site works from outside but not from home.
 
 **Private IPs need local DNS.** A public A record pointing at `10.0.0.5` is both useless to outsiders and a small information leak. Better to add the record to your local resolver (Pi-hole, your router, an internal DNS server) and leave no public A record at all. The DNS challenge only needs TXT records, so the certificate works either way.
 
