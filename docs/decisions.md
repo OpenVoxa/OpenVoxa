@@ -3345,6 +3345,17 @@ verified; the section named holds the design.
         `release:win` still writes to DEV's `deploy/desktop-updates`
         (copied to PROD by hand); the public A record doesn't follow a
         changed WAN IP (the IP cron only updates LiveKit).
+      - **First release, v1.0.0-beta.1 (2026-11-08):** the 60 fps small
+        copy fix, shipped while friends were on. Routine used: tag on
+        Docker and push the tag; on PROD (over SSH, no sudo) `git fetch
+        --tags && git checkout <tag>`, `docker compose --profile tls
+        build` while the old containers serve, then `up -d`. Only the
+        changed server container was recreated (about 5 s); LiveKit and
+        Caddy kept running, so voice stayed up; clients reconnected by
+        themselves and pick up the new web client on reload. Confirmed
+        with the served `index-*.js` matching DEV's. SS32-SS33 passed
+        (over 30 fps on PROD). Seen: each client fetched a WebSocket
+        ticket twice, about 3 s apart, after the restart (Open items).
       - **Releases:** DEV runs work in progress; PROD only moves to a
         tagged version (e.g. `v1.0.0-beta.1`) when Ryan says "release".
       - **Stages:** (1) setup script and rewritten install docs; (2)
@@ -3416,6 +3427,11 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
 - [ ] Reproducible builds.
 
 ### Untested
+
+- [ ] **Double reconnect after a server restart** (2026-11-08, PROD
+      v1.0.0-beta.1): each of three clients fetched a WebSocket ticket
+      twice, about 3 s apart, all 200. Harmless; reproduce on DEV with a
+      server restart and find why the first connection is dropped.
 
 - [ ] K1 flows 2-5 (recovery screens other than sign-up; deferred by
       Ryan), G2-G4 (GIFs), P3 (password), D1 (`delete-user` host

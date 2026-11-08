@@ -159,21 +159,21 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 
 ## Current state (rewrite every session)
 
-_2026-11-08._ **Beta v1, DEV and PROD** (decisions.md Next up).
-**Stage 2 done:** PROD (Debian 13 VM, `ssh prod` from Docker; Ryan runs
-sudo in its console) now has the public domain, forwards, IP cron,
-desktop updates, its own GIPHY key and Cloudflare token. This stack =
-DEV at its LAN-only `dev.` name (LAN node IP, no IP cron, test data
-kept). PROD runs main as installed; it moves only to tags when Ryan says
-"release". Repo history was rewritten 2026-11-07: reset older clones to
-origin/main, never pull or merge them. **Next:** a design talk on a
-desktop download link on the login page (Ryan asked 2026-11-08), then
-stage 3, the release routine: tag, update PROD to the tag, desktop
-releases published to PROD (`release:win` still writes DEV's folder;
-copy by hand until then), and maybe a DNS updater for the public A
-record. Waiting on Ryan: the desktop icon PNG. Offered: `#` headings in
-Home, server name in the sidebar header. Untested: DK1-DK9, SI4/SI8,
-voice over mobile data to PROD (SU7b step 3).
+_2026-11-08._ **Beta v1 is live.** PROD (Debian 13 VM, `ssh prod` from
+Docker; Ryan runs sudo in its console) runs tag **v1.0.0-beta.1** with
+the public domain, forwards, IP cron, desktop updates, its own GIPHY key
+and Cloudflare token; friends use it (server password). **Never restart
+PROD for work in progress:** build and test on this stack (DEV, LAN-only
+`dev.` name, test data kept); PROD moves only to a new tag when Ryan says
+"release" (routine: decisions.md beta entry, "First release"). Repo
+history was rewritten 2026-11-07: reset older clones to origin/main,
+never pull or merge them. **Next:** design talk on a desktop download
+link on the login page; then release-routine gaps: `release:win` still
+writes DEV's `deploy/desktop-updates` (copy to PROD by hand), a DNS
+updater for the public A record, the double reconnect after a restart
+(Open items). Waiting on Ryan: the desktop icon PNG. Offered: `#`
+headings in Home, server name in the sidebar header, a single-copy
+hardware (H.264) share mode. Untested: DK1-DK9, SI4/SI8.
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts, server name, IPs and the domain: private
