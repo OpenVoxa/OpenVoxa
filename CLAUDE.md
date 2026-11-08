@@ -189,4 +189,4 @@ hardware (H.264) share mode. Untested: DK1-DK9, SI4/SI8.
   disk passes ~80%.
 - Untested and gaps: decisions.md Open items.
 - After the beta: avatars, channel groups, DMs, desktop status icon;
-  later code signing, "needs app version X".
+  later code signing (SignPath, parked), "needs app version X".

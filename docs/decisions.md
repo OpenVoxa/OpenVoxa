@@ -1181,9 +1181,15 @@ that.
   `%APPDATA%\OpenVoxa\updater.log`.
 - **Unsigned for now** (Ryan's pick): the first install shows Windows'
   "Windows protected your PC" (More info > Run anyway); updates
-  downloaded by the app normally don't. Revisit before anyone else
-  installs it: SignPath (free for open-source projects) or Azure Trusted
-  Signing (about $10 a month).
+  downloaded by the app normally don't. **Signing will be SignPath
+  Foundation** (Ryan, 2026-11-08; free for open-source projects, signed
+  under their name), parked for now. It needs the installer built in
+  public CI (GitHub Actions) instead of on Docker, and SignPath may want
+  a more established project first. SmartScreen reputation then
+  accumulates on the certificate across versions instead of starting
+  from zero per file; EV certificates no longer skip that (2024). Until
+  then the login page download link carries a "More info > Run anyway"
+  hint.
 - **Releasing:** `npm run release:win` in client-desktop bumps the patch
   version, packages, builds the installer, `latest.yml` and blockmap with
   electron-builder in a throwaway container with Wine
@@ -3383,8 +3389,9 @@ verified; the section named holds the design.
 - [ ] Desktop app, later: badges via a preload, voice handoff between
       servers, global push-to-talk, notifications, idle unload of
       background servers.
-- [ ] Desktop updates, later: code signing; "this server needs app
-      version X".
+- [ ] Desktop updates, later: code signing via SignPath Foundation
+      (parked; needs the installer built in GitHub Actions, see
+      Electron feature notes); "this server needs app version X".
 - [ ] Minimized windows are probably missing from our share picker, as
       from Edge's (RS3; unchecked).
 
