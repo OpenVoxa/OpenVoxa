@@ -1996,18 +1996,43 @@ export class VoiceClient {
    * rate and bitrate, sent (your own) or received. Call about once a
    * second; rates are measured between calls.
    */
-  async screenStats(id: string, el?: HTMLVideoElement): Promise<{ width: number; height: number; fps: number | null; kbps: number | null; dropped: number }> {
+  async screenStats(id: string, el?: HTMLVideoElement): Promise<{
+    width: number; height: number; fps: number | null; kbps: number | null; dropped: number;
+    /** Your own share only: the frame rate asked for, what the browser agreed to, and what it captures. */
+    capture?: { asked: number | null; agreed: number | null; actual: number | null };
+    /** Your own share only: each copy (full, small) with its frame rate cap and what it sends now (0 = paused). */
+    copies?: { name: string; width: number; maxFps: number | null; fps: number }[];
+  }> {
     const t = this.#screenTrack(id);
-    const out = { width: el?.videoWidth ?? 0, height: el?.videoHeight ?? 0, fps: null as number | null, kbps: null as number | null, dropped: 0 };
+    const out: Awaited<ReturnType<VoiceClient["screenStats"]>> =
+      { width: el?.videoWidth ?? 0, height: el?.videoHeight ?? 0, fps: null, kbps: null, dropped: 0 };
     if (!t) return out;
+    if (t === this.#shareVideo()) {
+      const agreed = t.mediaStreamTrack.getSettings().frameRate;
+      out.capture = { asked: this.#share?.fps ?? null, agreed: agreed ? Math.round(agreed) : null, actual: null };
+      out.copies = [];
+    }
+    // The sender's caps per layer (rid), to match up with the outbound stats.
+    const caps = new Map<string, number | null>();
+    for (const e of (t as LocalTrack).sender?.getParameters().encodings ?? []) {
+      caps.set(e.rid ?? "", e.maxFramerate ?? null);
+    }
     let bytes = 0;
     let frames = 0;
     try {
       const report = await (t as unknown as { getRTCStatsReport?: () => Promise<RTCStatsReport | undefined> }).getRTCStatsReport?.();
       // Simulcast reports one outbound-rtp per layer: sum before diffing.
-      report?.forEach((r: { type: string; kind?: string; bytesSent?: number; bytesReceived?: number; framesSent?: number; framesDecoded?: number; frameWidth?: number; frameHeight?: number }) => {
+      report?.forEach((r: { type: string; kind?: string; bytesSent?: number; bytesReceived?: number; framesSent?: number; framesDecoded?: number; frameWidth?: number; frameHeight?: number; framesPerSecond?: number }) => {
         if (r.kind !== "video") return;
+        // What the capture delivers, before the encoder.
+        if (r.type === "media-source" && out.capture && r.framesPerSecond !== undefined) {
+          out.capture.actual = Math.round(r.framesPerSecond);
+        }
         if (r.type === "outbound-rtp") {
+          if (out.copies) {
+            const rid = (r as { rid?: string }).rid ?? "";
+            out.copies.push({ name: rid, width: r.frameWidth ?? 0, maxFps: caps.get(rid) ?? null, fps: Math.round(r.framesPerSecond ?? 0) });
+          }
           bytes += r.bytesSent ?? 0;
           frames = Math.max(frames, r.framesSent ?? 0);
           if (!out.width && r.frameWidth) {

@@ -1207,7 +1207,11 @@ function ScreenTile({ voice, share, stats, onClick }: {
     const t = setInterval(async () => {
       const s = await voice.screenStats(share.id, video.current ?? undefined);
       setLine(`${s.width}×${s.height} · ${s.fps ?? "?"} fps · ${s.kbps ?? "?"} kbps` +
-        (s.dropped ? ` · ${s.dropped} dropped` : "") + (share.isLocal ? " (sending)" : ""));
+        (s.dropped ? ` · ${s.dropped} dropped` : "") + (share.isLocal ? " (sending)" : "") +
+        (s.capture ? ` · capture: asked ${s.capture.asked ?? "?"}, agreed ${s.capture.agreed ?? "?"}, got ${s.capture.actual ?? "?"} fps` : "") +
+        // LiveKit names the layers q (small) and h or f (full); one copy has no name.
+        (s.copies?.length ? " · " + [...s.copies].sort((a, b) => (a.name === "q" ? 1 : 0) - (b.name === "q" ? 1 : 0)).map((c) =>
+          `${c.name === "q" ? "small" : c.name ? "full" : "copy"}: max ${c.maxFps ?? "?"} fps, ${c.fps ? `sending ${c.fps}` : "paused"}`).join(" · ") : ""));
     }, 1000);
     return () => clearInterval(t);
   }, [stats, voice, share.id, share.isLocal]);
