@@ -172,9 +172,9 @@ PROD for work in progress:** build and test on this stack (DEV, LAN-only
 passed on DEV, at once as a **hotfix** (tag `v1.0.0-beta.N.M`) if it needs
 no call rejoin, no desktop install and doesn't touch voice/share/LiveKit. Repo
 history was rewritten 2026-11-07: reset older clones to origin/main,
-never pull or merge them. **Next:** the login
-page download link (suggested: quiet text link, browsers only, Windows,
-SmartScreen hint); then release-routine gaps: `release:win` still
+never pull or merge them. **Built on DEV
+(2f777e1, passed DL1-DL6):** the login page download link, a hotfix
+candidate (`v1.0.0-beta.2.1`) when Ryan says. **Next:** release-routine gaps: `release:win` still
 writes DEV's `deploy/desktop-updates` (copy to PROD by hand), a DNS
 updater for the public A record, the double reconnect after a restart
 (Open items). Waiting on Ryan: the desktop icon PNG. Offered: `#`
@@ -183,7 +183,8 @@ hardware (H.264) share mode, "Message" on @mention chips. Untested:
 DK1-DK9, SI4/SI8.
 **Released 2026-11-08 as beta.2** (server and web client only):
 Move members, direct messages with blocks, the DM and @mention sound
-cooldowns (decisions.md "v1.0.0-beta.2"). DEV and PROD now match.
+cooldowns (decisions.md "v1.0.0-beta.2"). DEV is ahead of PROD only by
+the download link.
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts, server name, IPs and the domain: private
