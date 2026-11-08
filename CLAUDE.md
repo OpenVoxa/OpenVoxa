@@ -48,7 +48,7 @@ server/            Go (module root; go.mod says go 1.26)
   Dockerfile          client-core -> client-web -> Go -> distroless
   internal/httpapi/   HTTP + WS, one file per feature; livekitapi.go = LiveKit
                       admin calls; webui/ = embedded client-web build
-  internal/db/        Postgres; migrations/00NN_*.sql embedded, ordered (latest 0035)
+  internal/db/        Postgres; migrations/00NN_*.sql embedded, ordered (latest 0036)
   internal/{auth,blob,config,gif,hub,keystore,password,perm,ratelimit,sealedfile,totp,unfurl}
 client-core/       TypeScript protocol + crypto, no UI. src/: mls/ (ts-mls,
                    pinned 1.6.2), identity, groups (MLS lifecycle), chat
@@ -84,6 +84,9 @@ never in the media path) · Caddy optional for TLS · MLS ciphersuite 1.
   `server/`:
   `docker run --rm -v "$PWD":/src -v ovx-gomod:/go/pkg/mod -w /src golang:1.26 sh -c 'go vet ./internal/httpapi/ && go test ./internal/<pkg>/ && go build ./...'`
   (`ovx-gomod` caches modules). The image build is the final check.
+  DB tests (`TestDMAccess`) skip unless `OPENVOXA_TEST_DATABASE_URL` is
+  set: start a throwaway `postgres:17-alpine` on a `docker network`, pass
+  `--network` and the URL to the golang container, remove both after.
 - Cloud container: go1.24; needs a temporary go.mod (handoff doc,
   "Working notes"), never committed. Don't let `go mod tidy` raise the
   `go` directive above golang:1.26.
@@ -169,9 +172,10 @@ PROD for work in progress:** build and test on this stack (DEV, LAN-only
 passed on DEV, at once as a **hotfix** (tag `v1.0.0-beta.N.M`) if it needs
 no call rejoin, no desktop install and doesn't touch voice/share/LiveKit. Repo
 history was rewritten 2026-11-07: reset older clones to origin/main,
-never pull or merge them. **Next:** **Direct messages stage 1
-(server)**, designed with Ryan (decisions.md Feature decisions, "Direct
-messages": plan, stages, and the admin-path trap). After DMs: the login
+never pull or merge them. **Next:** **Direct messages stage 2
+(web client)**: sidebar switch, DM list, New Message, "Message" in name
+menus, read-only box, alerts (decisions.md "Direct messages"). Then
+stage 3 (Block UI). After DMs: the login
 page download link (suggested: quiet text link, browsers only, Windows,
 SmartScreen hint); then release-routine gaps: `release:win` still
 writes DEV's `deploy/desktop-updates` (copy to PROD by hand), a DNS
@@ -179,9 +183,11 @@ updater for the public A record, the double reconnect after a restart
 (Open items). Waiting on Ryan: the desktop icon PNG. Offered: `#`
 headings in Home, server name in the sidebar header, a single-copy
 hardware (H.264) share mode. Untested: DK1-DK9, SI4/SI8.
-**Built 2026-11-08, on DEV only:** Move members (move or disconnect
-people in calls, menu and drag and drop; passed MV1-MV7, DD1-DD5).
-PROD gets it at the next release.
+**Built 2026-11-08, on DEV only:** Move members (passed MV1-MV7,
+DD1-DD5); **DMs stage 1 (server)**: migration 0036, `dms.go`, DM branch
+in access.go, `direct_messages` switch on Member, staff checks ignore it
+(decisions.md "Direct messages", "Stage 1 as built", incl. what stage 2
+must refetch on). PROD gets both at the next release.
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts, server name, IPs and the domain: private

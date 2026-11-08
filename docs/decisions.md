@@ -754,6 +754,42 @@ means the same thing as a DM: no separate voice whisper.
   read-only box, alerts. (3) Block UI: menus, the Settings list, and
   collapsed blocked messages in channels.
 
+**Stage 1 as built (2026-11-08).** Choices made while building:
+
+- Tables `dm_channels` (one row per DM: `user_low < user_high`, unique)
+  and `user_blocks`. The channel's name is `dm:<low>:<high>`, unique,
+  so two people starting a DM at once get the same one (`ON CONFLICT
+  (name) DO NOTHING`). `CHECK (kind <> 'dm' OR encrypted)`.
+- **"Staff can always DM"** is "holds any switch" (the same line as
+  requireStaff), not rank: `mayDMSQL` = not deleted, not banned, and a
+  group with any switch in perm.All (`TestDMSwitchList` keeps the SQL
+  list in step). `perm.Set.Staff()`, the two-factor "staff" policy and
+  the web client's staff checks (`isStaffPerms`, client-web perms.ts)
+  all ignore `direct_messages`: otherwise every Member became staff.
+- View = membership only, so a read-only DM keeps its MLS group and
+  comes back intact after an unblock. The blocker's `GET /dms` leaves it
+  out; `POST /dms` still returns it (reason `you_blocked`).
+- Read-only reasons, caller's side: `you_blocked`, `you_cannot`,
+  `deleted`, `unavailable` (no switch, banned, or they block you: one
+  reason, so a block stays silent). `POST /dms` to someone who blocks you
+  answers like someone without the switch. `GET /dm-candidates` (New
+  Message picker) lists accounts that may receive DMs, minus your own
+  blocks; people who block you stay listed.
+- The channel socket re-checks posting on every message in a DM (a block
+  changes no group or channel). Once refused it stays read-only; the
+  client reconnects on `dms_changed` (to both people on create, block,
+  unblock; carries nothing).
+- Every manage-channels endpoint (rename, delete, retention, history
+  sharing, access) skips `kind = 'dm'` (404). DMs keep history sharing
+  off and no retention.
+- Reports from a DM show "Direct message" as the channel (reports and the
+  log). A `delete_messages` holder can still delete a reported DM message
+  by id, as for any message: removes it, can't read it.
+- **Stage 2 must:** refetch `GET /dms` on `dms_changed`, `perms_changed`,
+  `access_changed` and `user_purged`, and on a `channel_activity` for an
+  unknown channel id (someone's first message); alert on
+  `last_incoming_at` like a mention.
+
 #### Receiving shares on demand
 
 Ryan, 2026-11-04: a share's sound played for everyone in the call the
@@ -3377,6 +3413,10 @@ verified; the section named holds the design.
   chosen shape also on the sign-in card, welcome and rules, enforced
   acceptance with a server-side hold; migration 0034), HP1-HP18
   (Feature decisions, "Home page and community rules").
+- 2026-11-08 Direct messages stage 1, server (migration 0036, dms.go,
+  the DM branch of access.go; `direct_messages` switch on Member; Go
+  tests `TestDMAccess` against a throwaway Postgres), DM1-DM4 regression
+  checks (Feature decisions, "Direct messages", "Stage 1 as built").
 
 ## Open items
 
@@ -3501,7 +3541,7 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
       groups, per-group permissions.
 - [ ] **Direct messages** ("whispers" = DMs): designed 2026-11-08
       (Feature decisions, "Direct messages", with the 3-stage plan).
-      Next: stage 1, server.
+      Stage 1 (server) built 2026-11-08; next: stage 2, web client.
 - [x] **Home page** and community rules: built 2026-11-07 (Feature
       decisions, "Home page and community rules"; HP1-HP18).
 - [ ] **Desktop status icon:** your status on the taskbar button
