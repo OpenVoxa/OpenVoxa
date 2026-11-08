@@ -3603,6 +3603,9 @@ verified; the section named holds the design.
         (all three stages, with blocks), the one-minute DM and @mention
         sound cooldowns; migrations 0035-0036. Server and web client
         only: no desktop app update. Same routine as beta.1.
+      - **v1.0.0-beta.2.1 (2026-11-08, hotfix):** the login page download
+        link and the public DNS record following the IP (Feature
+        decisions). Web client and a host script only; same routine.
       - **Releases:** DEV runs work in progress; PROD only moves to a
         tagged version (e.g. `v1.0.0-beta.1`) when Ryan says "release".
         **Hotfixes** (Ryan, 2026-11-08): a change that has passed on DEV
