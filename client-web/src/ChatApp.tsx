@@ -12,7 +12,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent } from "react";
-import { Chat, type ChannelView, type ChannelInfo, type VoicePresence } from "@core/chat";
+import { Chat, dmChannel, type ChannelView, type ChannelInfo, type DMInfo, type VoicePresence } from "@core/chat";
 import type { VoiceClient, VoiceParticipant } from "@core/voice";
 import type { BackupStatus } from "@core/recovery";
 import type { Session } from "./api";
@@ -36,10 +36,22 @@ import { serverInfoChanged, useServerInfo } from "./serverInfo";
 import { configureHome, HomeIcon, HomePane, markHomeSeen, refreshHome, useHome } from "./home";
 import type { ServerTab } from "./ServerSettings";
 import { isStaffPerms } from "./perms";
+import { DMList, NewMessageDialog } from "./dms";
+import { mayDM, NO_DM_REASON } from "./dmText";
 
 const LAST_CHANNEL = (userId: string) => `lastChannel.${userId}`;
 /** "1" when Home was the last thing open: you come back to it. */
 const LAST_HOME = (userId: string) => `lastHome.${userId}`;
+/** Least time between two alert sounds from one direct message. */
+const DM_SOUND_COOLDOWN_MS = 60_000;
+/** "dms" when the sidebar last showed Direct Messages. */
+const SIDE_TAB = (userId: string) => `sideTab.${userId}`;
+
+/** Someone whose name was clicked, for the name menu ("Message"). */
+export interface NamedUser {
+  id: string;
+  username: string;
+}
 
 export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBackUpNow, onSetUpKey, onEnterKey, onNewKey, onDeleteAccount, onEraseAndLogout, onExpired }: {
   session: Session;
@@ -59,6 +71,16 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   const [chat, setChat] = useState<Chat | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [channels, setChannels] = useState<readonly ChannelInfo[]>([]);
+  const [dms, setDms] = useState<readonly DMInfo[]>([]);
+  const dmsRef = useRef<readonly DMInfo[]>([]);
+  dmsRef.current = dms;
+  // Which list the sidebar shows: the channels or your direct messages.
+  const [sideTab, setSideTabState] = useState<"channels" | "dms">(
+    () => localStore.get(SIDE_TAB(session.user_id)) === "dms" ? "dms" : "channels");
+  const setSideTab = (t: "channels" | "dms") => {
+    setSideTabState(t);
+    localStore.set(SIDE_TAB(session.user_id), t);
+  };
   const [unread, setUnread] = useState<ReadonlySet<string>>(new Set());
   const [mentions, setMentions] = useState<ReadonlySet<string>>(new Set());
   // The chat listener is set up once; it reads the channel names from here.
@@ -116,10 +138,13 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
     | { k: "share" }
     | { k: "prefs"; tab: SettingsTab }
     | { k: "server"; tab?: ServerTab }
+    | { k: "newdm" }
     | null
   >(null);
   // The right-click (or long-press) menu on a channel in the sidebar.
   const [chanMenu, setChanMenu] = useState<{ id: string; at: { x: number; y: number } } | null>(null);
+  // The menu on someone's name (a message author, someone in a call).
+  const [nameMenu, setNameMenu] = useState<{ user: NamedUser; at: { x: number; y: number } } | null>(null);
   const menuTrigger = useMenuTrigger((id, at) => setChanMenu({ id, at }));
   const [presence, setPresence] = useState<VoicePresence>({});
   // Created on first join: loading it pulls in LiveKit, which text-only
@@ -193,6 +218,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
         const looking = () => document.visibilityState === "visible" && document.hasFocus();
         c.on((e) => {
           if (e.type === "channels") setChannels(e.channels);
+          else if (e.type === "dms") setDms(e.dms);
           else if (e.type === "unread") setUnread(e.unread);
           else if (e.type === "mentions") setMentions(e.mentions);
           else if (e.type === "message") {
@@ -211,8 +237,18 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           else if (e.type === "mentioned") {
             mentionedIds.add(e.messageId);
             setTimeout(() => mentionedIds.delete(e.messageId), 10_000);
-            // Quiet only when you're already looking at that channel.
+            // Quiet only when you're already looking at that channel, or
+            // for a direct message whose sounds you muted (every message
+            // in one alerts like a mention, so Mute Sounds has to cover it).
             if (e.open && looking()) return;
+            if (e.dm && mutedChannels().has(e.channelId)) return;
+            // A direct message plays at most once a minute per conversation
+            // (sound and pop-up), so a flood of messages can't be used to
+            // spam someone. Looking at the conversation resets it.
+            if (e.dm) {
+              const last = soundAt.current.get(e.channelId);
+              if (last !== undefined && Date.now() - last < DM_SOUND_COOLDOWN_MS) return;
+            }
             // The mention sound counts towards the channel's cooldown.
             soundAt.current.set(e.channelId, Date.now());
             void playSound("mention");
@@ -222,8 +258,10 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
               // Who and where only: in an encrypted channel the text isn't
               // decrypted until the channel is open, and a notification
               // can be seen by anyone near the screen.
-              const n = new Notification(`${e.username || "Someone"} mentioned you`, {
-                body: name ? `in #${name}` : undefined,
+              const n = new Notification(e.dm
+                ? `${e.username || "Someone"} sent you a message`
+                : `${e.username || "Someone"} mentioned you`, {
+                body: !e.dm && name ? `in #${name}` : undefined,
                 tag: `mention:${e.messageId}`,
                 // Our own mention tone already played; without this the
                 // OS adds its notification sound on top.
@@ -232,6 +270,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
               n.onclick = () => {
                 window.focus();
                 setOpenId(e.channelId);
+                if (e.dm) setSideTab("dms");
                 setHomeOpen(false);
                 setStage(null);
                 setCallView(false);
@@ -285,6 +324,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           return;
         }
         setChannels(c.channels);
+        setDms(c.dms);
         setUnread(c.unread);
         setMentions(c.mentions);
         setPresence(c.voicePresence);
@@ -403,6 +443,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
       return false;
     }
     setOpenId(c.id);
+    setSideTab("channels");
     setHomeOpen(false);
     setStage(null);
     setCallView(false);
@@ -432,13 +473,14 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   }, [chat, home, homeOpen, session.user_id]);
 
   useEffect(() => {
-    if (!chat || !text.length) return;
+    if (!chat || (!text.length && !dms.length)) return;
     const opened = takePendingTarget();
     if (opened && goRef.current(opened)) return;
-    if (openId && text.some((c) => c.id === openId)) return;
+    const known = (id: string | null) => !!id && (text.some((c) => c.id === id) || dms.some((d) => d.channel_id === id));
+    if (known(openId)) return;
     const last = localStore.get(LAST_CHANNEL(session.user_id));
-    setOpenId(text.find((c) => c.id === last)?.id ?? text[0].id);
-  }, [chat, text, openId, session.user_id]);
+    setOpenId(known(last) ? last : text[0]?.id ?? null);
+  }, [chat, text, dms, openId, session.user_id]);
 
   useEffect(() => {
     if (!chat || !openId) return;
@@ -521,6 +563,27 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
     void chat.refreshVoice();
   }
 
+  /** Open your direct message with someone, starting it if needed.
+   * Resolves to the server's refusal, or null once it is open. */
+  async function openDM(userId: string): Promise<string | null> {
+    if (!chat) return "Not connected yet.";
+    try {
+      const d = await chat.startDM(userId);
+      setOpenId(d.channel_id);
+      setSideTab("dms");
+      setHomeOpen(false);
+      setStage(null);
+      setCallView(false);
+      return null;
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+  }
+  /** "Message" from a name menu; a refusal shows where the menu was. */
+  const messageFrom = (u: NamedUser, at: { x: number; y: number }) => {
+    void openDM(u.id).then((err) => err && setDropNote({ title: `Couldn't message ${u.username}`, text: err, at }));
+  };
+
   const accountActions: AccountActions = {
     onBackUpNow, onSetUpKey, onEnterKey, onNewKey,
     onDeleteAccount: (password) => onDeleteAccount(chat, password),
@@ -535,6 +598,11 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   // Staff: anyone holding a switch (Direct messages aside). They see the
   // member list; changing groups needs manage_groups (checked inside the dialog).
   const isStaff = isStaffPerms(perms);
+  const canDM = mayDM(perms);
+  const dmAlerts = dms.filter((d) => mentions.has(d.channel_id)).length;
+  const onName = (u: NamedUser, at: { x: number; y: number }) => {
+    if (u.id && u.id !== session.user_id) setNameMenu({ user: u, at });
+  };
   const settingsFor = (c: ChannelInfo) => canManage || (c.kind === "voice" && canForcePTT);
   const dialogChannel = dialog?.k === "settings" ? channels.find((c) => c.id === dialog.id) : undefined;
 
@@ -569,6 +637,13 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
       ];
     }
     const isMuted = muted.has(c.id);
+    if (c.kind === "dm") {
+      return [
+        { label: "Mark as Read", onClick: () => chat.markRead(c.id, c.last_message_at ?? undefined),
+          disabled: !unread.has(c.id) && !mentions.has(c.id), reason: "Nothing unread" },
+        { label: isMuted ? "Unmute Sounds" : "Mute Sounds", onClick: () => setChannelMuted(c.id, !isMuted) },
+      ];
+    }
     return [
       { label: "Mark as Read", onClick: () => chat.markRead(c.id, c.last_message_at ?? undefined),
         disabled: !unread.has(c.id) && !mentions.has(c.id), reason: "Nothing unread" },
@@ -578,7 +653,11 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
       ...manage,
     ];
   };
-  const menuChannel = chanMenu ? channels.find((c) => c.id === chanMenu.id) : undefined;
+  const menuChannel = chanMenu ? channels.find((c) => c.id === chanMenu.id)
+    ?? (() => {
+      const d = dms.find((x) => x.channel_id === chanMenu.id);
+      return d && dmChannel(d);
+    })() : undefined;
 
   const heading = (label: string, kind: "text" | "voice") => (
     <div className="list-head">
@@ -605,7 +684,29 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
             </button>
           )}
         </header>
+        <div className="settings-tabs sidebar-tabs" role="tablist" aria-label="Sidebar">
+          <button role="tab" aria-selected={sideTab === "channels"} className={sideTab === "channels" ? "on" : undefined}
+            onClick={() => setSideTab("channels")}>Channels</button>
+          <button role="tab" aria-selected={sideTab === "dms"} className={sideTab === "dms" ? "on" : undefined}
+            onClick={() => setSideTab("dms")}
+            title={dmAlerts ? `Direct Messages: ${dmAlerts} with new messages` : "Direct Messages"}>
+            Messages
+            {dmAlerts > 0 && <span className="mention-badge" aria-label={`${dmAlerts} with new messages`}>{dmAlerts}</span>}
+          </button>
+        </div>
         <div className="channel-list">
+          {sideTab === "dms" ? (
+            <DMList dms={dms} openId={homeOpen ? null : openId} unread={unread} mentions={mentions} muted={muted}
+              canStart={canDM}
+              onOpen={(id) => {
+                setOpenId(id);
+                setHomeOpen(false);
+                setStage(null);
+                setCallView(false);
+              }}
+              onNew={() => setDialog({ k: "newdm" })}
+              menuHandlers={menuTrigger.handlers} consumeLongPress={menuTrigger.consumeLongPress} />
+          ) : (<>
           <div className="channel-row home-row">
             <button className={`channel home${homeShown ? " active" : ""}${home && home.version > home.seen_version ? " unread" : ""}`}
               onClick={() => {
@@ -710,7 +811,8 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
                           setStage({ focus: s?.id ?? null });
                         }}
                         onPerson={(p, at) => setPerson({ p, at })}
-                        onOther={canMove ? (p, at) => setMoveMenu({ p, from: c.id, at }) : undefined}
+                        onOther={canMove ? (p, at) => setMoveMenu({ p, from: c.id, at })
+                          : (p, at) => onName({ id: p.user_id, username: p.username }, at)}
                         onDrag={canMove ? (p) => {
                           dragging.current = p && { p, from: c.id };
                           if (!p) setDropOn(null);
@@ -723,6 +825,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
               </ul>
             </>
           )}
+          </>)}
         </div>
         {voiceClient && vsnap && (
           <VoiceBar voice={voiceClient} snap={vsnap}
@@ -756,6 +859,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
         ) : view ? (
           <ChannelPane key={view.channel.id} view={view} call={call} userId={session.user_id} username={session.username} canDeleteAny={canDeleteAny}
             canManageStickers={can("manage_stickers")}
+            onName={onName}
             jumpTo={jump?.channelId === view.channel.id ? jump.messageId : null}
             onJumped={() => setJump(null)} />
         ) : (
@@ -802,16 +906,33 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           person={vsnap?.participants.find((p) => p.id === person.p.id) ?? person.p}
           at={person.at} call={call} canServerMute={can("server_mute")}
           move={canMove && vsnap?.channelId ? { from: vsnap.channelId, channels: voiceChannels } : undefined}
+          message={{ disabled: !canDM, onClick: () => messageFrom({ id: person.p.id, username: person.p.name }, person.at) }}
           onClose={() => setPerson(null)} />
       )}
       {dropNote && <MenuNote {...dropNote} onClose={() => setDropNote(null)} />}
       {moveMenu && (
         <MoveMenu person={moveMenu.p} from={moveMenu.from} channels={voiceChannels}
-          at={moveMenu.at} call={call} onClose={() => setMoveMenu(null)} />
+          at={moveMenu.at} call={call}
+          message={{ disabled: !canDM, onClick: () => messageFrom({ id: moveMenu.p.user_id, username: moveMenu.p.username }, moveMenu.at) }}
+          onClose={() => setMoveMenu(null)} />
       )}
       {chanMenu && menuChannel && (
-        <ChannelMenu title={`${menuChannel.kind === "text" ? "#" : ""}${menuChannel.name}`} at={chanMenu.at}
+        <ChannelMenu title={`${menuChannel.kind === "text" ? "#" : menuChannel.kind === "dm" ? "@" : ""}${menuChannel.name}`} at={chanMenu.at}
           items={menuItems(menuChannel)} onClose={() => setChanMenu(null)} />
+      )}
+      {nameMenu && (
+        <ChannelMenu title={nameMenu.user.username} at={nameMenu.at}
+          items={[{ label: "Message", disabled: !canDM, reason: NO_DM_REASON,
+            onClick: () => messageFrom(nameMenu.user, nameMenu.at) }]}
+          onClose={() => setNameMenu(null)} />
+      )}
+      {dialog?.k === "newdm" && (
+        <NewMessageDialog call={call} onClose={() => setDialog(null)}
+          onPick={async (id) => {
+            const err = await openDM(id);
+            if (!err) setDialog(null);
+            return err;
+          }} />
       )}
       {dialogChannel && (
         <ChannelSettingsDialog

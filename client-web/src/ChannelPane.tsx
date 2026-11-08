@@ -25,6 +25,7 @@ import { setChannelMuted, useMutedChannels } from "./sounds";
 import { PlainAttachment, SealedAttachment, UploadTray, useUploads } from "./attachments";
 import { StickerMessage } from "./stickers";
 import { ColouredName, nameStyle, useNameColour } from "./names";
+import { readOnlyText } from "./dmText";
 import { stickerIdOf, stickerToken } from "@core/stickers";
 import { joinReply, previewOf, type ReplyRef } from "@core/replies";
 
@@ -37,7 +38,13 @@ function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export function ChannelPane({ view, call, userId, username, canDeleteAny, canManageStickers, jumpTo, onJumped }: {
+/** How a channel is named in the pane: #general, or @alice for a DM. */
+const paneName = (c: { kind: string; name: string }) => `${c.kind === "dm" ? "@" : "#"}${c.name}`;
+
+/** Someone whose name was clicked, and where. */
+type OnName = (u: { id: string; username: string }, at: { x: number; y: number }) => void;
+
+export function ChannelPane({ view, call, userId, username, canDeleteAny, canManageStickers, jumpTo, onJumped, onName }: {
   view: ChannelView;
   call: ApiCall;
   userId: string;
@@ -48,6 +55,8 @@ export function ChannelPane({ view, call, userId, username, canDeleteAny, canMan
   /** A message to scroll to (a message link), until onJumped. */
   jumpTo: string | null;
   onJumped: () => void;
+  /** A message author's name was clicked (the name menu: Message). */
+  onName?: OnName;
 }) {
   const snap = useSnapshot(view);
   const previewsEncrypted = useToggle(PREVIEWS_ENCRYPTED);
@@ -72,7 +81,7 @@ export function ChannelPane({ view, call, userId, username, canDeleteAny, canMan
   const hasFiles = (e: React.DragEvent) => e.dataTransfer.types.includes("Files");
 
   return (
-    <section className="channel-pane" aria-label={`#${c.name}`}
+    <section className="channel-pane" aria-label={paneName(c)}
       onDragEnter={(e) => {
         if (!hasFiles(e)) return;
         e.preventDefault();
@@ -100,15 +109,16 @@ export function ChannelPane({ view, call, userId, username, canDeleteAny, canMan
       }}>
       {dragging && (
         <div className="drop-overlay" aria-hidden>
-          {canAttach ? `Drop to attach to #${c.name}` : composeBlocker(snap)}
+          {canAttach ? `Drop to attach to ${paneName(c)}` : composeBlocker(snap)}
         </div>
       )}
       <header className="pane-head">
-        <h1><span className="hash" aria-hidden>#</span>{c.name}</h1>
+        <h1><span className="hash" aria-hidden>{c.kind === "dm" ? "@" : "#"}</span>{c.name}</h1>
         <CryptoBadge encrypted={c.encrypted} crypto={snap.crypto} />
         <span className="muted small">
-          kept {describeRetention(c.retention)}
-          {c.encrypted && c.history_sharing ? " · history shared with new members" : ""}
+          {c.dm ? "Direct message: only the two of you can read it"
+            : <>kept {describeRetention(c.retention)}
+              {c.encrypted && c.history_sharing ? " · history shared with new members" : ""}</>}
         </span>
         {snap.connection !== "open" && (
           <span className="conn small">{snap.connection === "connecting" ? "Connecting…" : "Disconnected, retrying…"}</span>
@@ -136,6 +146,7 @@ export function ChannelPane({ view, call, userId, username, canDeleteAny, canMan
         onError={setError}
         jumpTo={jumpTo}
         onJumped={onJumped}
+        onName={onName}
         onReply={(m) => setReplying({ to: replyRefTo(m), mention: !m.own, own: m.own })}
       />
 
@@ -198,7 +209,7 @@ const JUMP_PAGES = 20;
 /** How long the message jumped to stays highlighted. */
 const JUMP_FLASH_MS = 2000;
 
-function MessageList({ view, snap, call, previews, userId, username, canDeleteAny, editing, setEditing, onError, jumpTo: linkJump, onJumped: onLinkJumped, onReply }: {
+function MessageList({ view, snap, call, previews, userId, username, canDeleteAny, editing, setEditing, onError, jumpTo: linkJump, onJumped: onLinkJumped, onReply, onName }: {
   view: ChannelView;
   snap: ChannelSnapshot;
   call: ApiCall;
@@ -212,6 +223,7 @@ function MessageList({ view, snap, call, previews, userId, username, canDeleteAn
   jumpTo: string | null;
   onJumped: () => void;
   onReply: (m: ChatMessage) => void;
+  onName?: OnName;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   // A jump from a reply to its original; a message link's jump wins.
@@ -381,6 +393,7 @@ function MessageList({ view, snap, call, previews, userId, username, canDeleteAn
         canReact={snap.canPost && !m.pending && !m.deleted && !m.unreadable}
         canReply={snap.canPost && !m.pending && !m.deleted && !m.unreadable && !!m.authorId && !!m.username}
         onReply={() => onReply(m)}
+        onName={onName}
         onReact={(emoji, on) => void react(m, emoji, on)}
         onOpenReact={(el) => setReactingTo({ id: m.id, style: pickerBeside(el) })}
         onReport={() => setReporting(m)}
@@ -437,9 +450,11 @@ function MessageList({ view, snap, call, previews, userId, username, canDeleteAn
       <div className="history-top muted small">
         {snap.loadingOlder ? "Loading older messages…"
           : snap.hasMore ? <button className="link small" onClick={() => void view.loadOlder()}>Load older messages</button>
-          : snap.loaded ? (snap.channel.encrypted
+          : snap.loaded ? (snap.channel.dm
+            ? "Start of what this device can show of this conversation."
+            : snap.channel.encrypted
             ? "Start of what this device can show. Encrypted channels have no history from before you joined."
-            : `This is the start of #${snap.channel.name}.`)
+            : `This is the start of ${paneName(snap.channel)}.`)
           : null}
       </div>
       {!snap.loaded && <div className="muted small center">Loading…</div>}
@@ -619,7 +634,7 @@ function Reactions({ m, userId, canReact, onReact, onOpenReact }: {
   );
 }
 
-function Message({ m, link: address, jumped, original, onJumpToOriginal, call, encrypted, previews, compact, userId, username, members, canDelete, canEdit, canReport, canReact, canReply, onReply, editing, onEdit, onCancelEdit, onSaveEdit, onDelete, onReport, onReact, onOpenReact, onDismiss }: {
+function Message({ m, link: address, jumped, original, onJumpToOriginal, call, encrypted, previews, compact, userId, username, members, canDelete, canEdit, canReport, canReact, canReply, onReply, onName, editing, onEdit, onCancelEdit, onSaveEdit, onDelete, onReport, onReact, onOpenReact, onDismiss }: {
   m: ChatMessage;
   /** The message's link address; null while it's still being sent. */
   link: string | null;
@@ -650,6 +665,7 @@ function Message({ m, link: address, jumped, original, onJumpToOriginal, call, e
   onReact: (emoji: string, on: boolean) => void;
   onOpenReact: (el: HTMLElement) => void;
   onDismiss: () => void;
+  onName?: OnName;
 }) {
   // No author: the account was deleted (the server sends author_id "" and
   // username "[deleted]"; client-core does the same for the live view).
@@ -683,7 +699,18 @@ function Message({ m, link: address, jumped, original, onJumpToOriginal, call, e
         ? <time className="side-time small" dateTime={m.createdAt}>{formatTime(m.createdAt)}</time>
         : (
           <header>
-            <strong className={m.own ? "own" : gone ? "muted" : undefined} style={nameStyle(colour)}>{name}</strong>
+            <strong className={m.own ? "own" : gone ? "muted" : undefined} style={nameStyle(colour)}>
+              {onName && !m.own && !gone ? (
+                <button className="name-btn" title="Message (or right-click)"
+                  onClick={(e) => onName({ id: m.authorId, username: name }, { x: e.clientX, y: e.clientY })}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    onName({ id: m.authorId, username: name }, { x: e.clientX, y: e.clientY });
+                  }}>
+                  {name}
+                </button>
+              ) : name}
+            </strong>
             <time className="muted small" dateTime={m.createdAt} title={new Date(m.createdAt).toLocaleString()}>
               {formatTime(m.createdAt)}
             </time>
@@ -860,7 +887,7 @@ function EditBox({ initial, members, onSave, onCancel }: {
 
 /** Why nothing can be sent or attached right now, or null. */
 function composeBlocker(snap: ChannelSnapshot): string | null {
-  return !snap.canPost ? "You can't post in this channel."
+  return !snap.canPost ? (snap.channel.dm ? readOnlyText(snap.channel.dm) : "You can't post in this channel.")
     : snap.connection !== "open" ? "Connecting…"
     : snap.channel.encrypted && snap.crypto.kind !== "ready" ? "Waiting for encryption…"
     : null;
@@ -1025,8 +1052,8 @@ function Composer({ snap, call, uploads, canManageStickers, replying, setReplyin
           uploads.add(e.clipboardData.files);
         }}
         disabled={!!reason}
-        placeholder={reason ?? `Message #${snap.channel.name}`}
-        label={`Message #${snap.channel.name}`}
+        placeholder={reason ?? `Message ${paneName(snap.channel)}`}
+        label={`Message ${paneName(snap.channel)}`}
       />
       <button className="secondary code-btn" disabled={!!reason}
         onMouseDown={(e) => e.preventDefault()} // keep the selection

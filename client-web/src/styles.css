@@ -1201,3 +1201,28 @@ a.channel-chip:hover { background: var(--mention-me-bg); color: var(--text); }
 .icon-crop-area.banner { max-width: none; }
 .banner-shapes { flex-wrap: wrap; }
 .ask-again-warning { font-weight: 700; margin-top: 4px; }
+
+/* Direct messages (dms.tsx): the sidebar tabs, conversation rows, the
+ * New Message picker, and clickable author names. */
+.settings-tabs.sidebar-tabs { padding: 8px 8px 0; gap: 0; }
+.sidebar-tabs button { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.sidebar-tabs .mention-badge {
+  min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px;
+  background: var(--mention-badge); color: var(--on-accent);
+  font-size: 12px; font-weight: 700; line-height: 18px; text-align: center;
+}
+.channel .mention-badge.dot-badge { min-width: 10px; width: 10px; height: 10px; padding: 0; border-radius: 50%; }
+.channel .avatar, .pick-list .avatar {
+  width: 22px; height: 22px; flex: none; border-radius: 50%;
+  display: grid; place-items: center; font-size: 11px; font-weight: 700;
+  background: var(--sidebar-active); color: var(--text);
+}
+.pick-list { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow-y: auto; }
+.pick-list li.muted { padding: 6px 8px; }
+.pick-list .pick {
+  width: 100%; display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+  background: none; color: var(--text); text-align: left; font-size: 15px; border-radius: 4px;
+}
+.pick-list .pick:hover:not(:disabled) { background: var(--hover-row); }
+button.name-btn { background: none; padding: 0; border: 0; color: inherit; font: inherit; cursor: pointer; }
+button.name-btn:hover { text-decoration: underline; }

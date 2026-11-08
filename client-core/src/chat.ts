@@ -28,11 +28,12 @@ import { meterSocket } from "./traffic.js";
 
 // ----------------------------------------------------------------- types
 
-/** A channel as GET /api/v1/channels lists it. */
+/** A channel as GET /api/v1/channels lists it. A direct message is
+ * opened as one too (kind "dm", made from its DMInfo by dmChannel). */
 export interface ChannelInfo {
   readonly id: string;
   readonly name: string;
-  readonly kind: "text" | "voice";
+  readonly kind: "text" | "voice" | "dm";
   readonly encrypted: boolean;
   readonly retention: string;
   readonly force_ptt: boolean;
@@ -43,6 +44,44 @@ export interface ChannelInfo {
   readonly last_mention_at?: string;
   /** The allow-list: groups that may view, and whether they may post. */
   readonly access: readonly ChannelAccess[];
+  /** Set on a direct message: the conversation it is. */
+  readonly dm?: DMInfo;
+}
+
+/** Why a direct message is read-only, from your side (server dms.go). */
+export type DMReadOnlyReason = "you_blocked" | "you_cannot" | "deleted" | "unavailable";
+
+/** A direct message as GET /api/v1/dms lists it (decisions.md Feature
+ * decisions, "Direct messages"). */
+export interface DMInfo {
+  readonly channel_id: string;
+  /** The other person. username is "" once their account is deleted. */
+  readonly user: { readonly id: string; readonly username: string; readonly deleted?: boolean };
+  readonly can_post: boolean;
+  readonly read_only_reason?: DMReadOnlyReason;
+  readonly created_at: string;
+  /** Newest message, and the newest from the other person (alerts like a mention). */
+  readonly last_message_at?: string;
+  readonly last_incoming_at?: string;
+}
+
+/** A direct message as a channel, to open with Chat.open. Always
+ * encrypted; a message from the other person counts as a mention. */
+export function dmChannel(d: DMInfo): ChannelInfo {
+  return {
+    id: d.channel_id,
+    name: d.user.username || "Deleted user",
+    kind: "dm",
+    encrypted: true,
+    retention: "",
+    force_ptt: false,
+    history_sharing: false,
+    can_post: d.can_post,
+    last_message_at: d.last_message_at,
+    last_mention_at: d.last_incoming_at,
+    access: [],
+    dm: d,
+  };
 }
 
 export interface ChannelAccess {
@@ -226,14 +265,16 @@ export interface ChatOptions {
 /** Events a Chat reports that are not about the open channel. */
 export type ChatEvent =
   | { type: "channels"; channels: readonly ChannelInfo[] }
+  /** Your direct messages, newest activity first. */
+  | { type: "dms"; dms: readonly DMInfo[] }
   /** This account's groups or permissions may have changed: refetch /me. */
   | { type: "me_changed" }
   | { type: "unread"; unread: ReadonlySet<string> }
   /** Channels with a mention of you since you last read them. */
   | { type: "mentions"; mentions: ReadonlySet<string> }
-  /** Someone just mentioned you (for a sound or a notification).
-   * `open`: in the channel open right now. */
-  | { type: "mentioned"; channelId: string; messageId: string; authorId: string; username: string; open: boolean }
+  /** Someone just mentioned you (for a sound or a notification), or sent
+   * you a direct message (`dm`). `open`: in the channel open right now. */
+  | { type: "mentioned"; channelId: string; messageId: string; authorId: string; username: string; open: boolean; dm?: boolean }
   /** Someone else posted (for the message sound; the client decides how
    * often to play it). `open`: in the channel open right now. */
   | { type: "message"; channelId: string; messageId: string; open: boolean }
@@ -312,7 +353,7 @@ const GLOBAL_EVENTS = new Set([
   "perms_changed", "channel_activity", "voice_changed", "reports_changed",
   "bug_reports_changed",
   "mention", "stickers_changed", "names_changed", "server_info_changed", "home_changed",
-  "archive_message_gone", "archive_channel_expired", "voice_moved",
+  "archive_message_gone", "archive_channel_expired", "voice_moved", "dms_changed",
 ]);
 
 const EVENT_RETRY_MS = 5000;
@@ -388,6 +429,7 @@ export class Chat {
   readonly #opts: ChatOptions;
   readonly #store: KeyValueStore;
   #channels: ChannelInfo[] = [];
+  #dms: DMInfo[] = [];
   #listeners = new Set<(e: ChatEvent) => void>();
   #events: WebSocket | null = null;
   #eventsOpen = false;
@@ -422,6 +464,11 @@ export class Chat {
 
   get channels(): readonly ChannelInfo[] {
     return this.#channels;
+  }
+
+  /** Your direct messages, newest activity first. */
+  get dms(): readonly DMInfo[] {
+    return this.#dms;
   }
 
   get unread(): ReadonlySet<string> {
@@ -476,7 +523,7 @@ export class Chat {
   async start(): Promise<void> {
     this.#offAuto = this.session.groups.onAuto((ev) => this.#onAuto(ev));
     this.#offMembership = this.session.groups.onMembership((c) => this.#onMembership(c));
-    await this.refreshChannels();
+    await Promise.all([this.refreshChannels(), this.refreshDMs().catch(() => {})]);
     void this.#openEvents();
     void this.refreshVoice();
     this.#voicePoll = setInterval(() => void this.refreshVoice(), VOICE_POLL_MS);
@@ -589,17 +636,80 @@ export class Chat {
     this.#emit({ type: "channels", channels: list });
 
     // An open channel that is gone from the list was deleted or lost.
+    // Direct messages aren't in this list (refreshDMs).
     const v = this.#view;
-    if (v) {
+    if (v && v.channel.kind !== "dm") {
       const now = list.find((c) => c.id === v.channel.id);
       if (!now) v.lost();
       else v.updateChannel(now);
     }
   }
 
-  /** Open a text channel, closing whichever was open. */
+  /**
+   * Fetch your direct messages. Called on start, on dms_changed, and on
+   * events that can turn one read-only (decisions.md "Stage 1 as built").
+   * Calls during a fetch are folded into one more, which the returned
+   * promise waits for.
+   */
+  refreshDMs(): Promise<void> {
+    if (this.#dmsLoading) {
+      this.#dmsAgain ??= this.#dmsLoading.catch(() => {}).then(() => {
+        this.#dmsAgain = null;
+        return this.refreshDMs();
+      });
+      return this.#dmsAgain;
+    }
+    const run = this.#loadDMs().finally(() => {
+      this.#dmsLoading = null;
+    });
+    this.#dmsLoading = run;
+    return run;
+  }
+
+  #dmsLoading: Promise<void> | null = null;
+  #dmsAgain: Promise<void> | null = null;
+
+  async #loadDMs(): Promise<void> {
+    const list = (await this.#opts.call("/api/v1/dms")) as DMInfo[];
+    if (this.#closed) return;
+    this.#dms = list;
+    this.#recomputeUnread();
+    this.#emit({ type: "dms", dms: list });
+    const v = this.#view;
+    if (v && v.channel.kind === "dm") {
+      const now = list.find((d) => d.channel_id === v.channel.id);
+      if (now) v.updateChannel(dmChannel(now));
+      else v.lost();
+    }
+  }
+
+  /**
+   * Your direct message with someone, started if there is none yet
+   * (POST /dms). Throws the server's refusal (403: one side can't send
+   * DMs or blocks the other). Open it with open(d.channel_id).
+   */
+  async startDM(userId: string): Promise<DMInfo> {
+    const d = (await this.#opts.call("/api/v1/dms", {
+      method: "POST",
+      body: JSON.stringify({ user_id: userId }),
+    })) as DMInfo;
+    if (!this.#dms.some((x) => x.channel_id === d.channel_id)) {
+      // dms_changed follows for a new one; until then it is openable.
+      this.#dms = [d, ...this.#dms];
+      this.#recomputeUnread();
+      this.#emit({ type: "dms", dms: this.#dms });
+    }
+    return d;
+  }
+
+  #dmById(channelId: string): DMInfo | undefined {
+    return this.#dms.find((d) => d.channel_id === channelId);
+  }
+
+  /** Open a text channel or a direct message, closing whichever was open. */
   open(channelId: string): ChannelView {
-    const channel = this.#channels.find((c) => c.id === channelId && c.kind === "text");
+    const dm = this.#dmById(channelId);
+    const channel = dm ? dmChannel(dm) : this.#channels.find((c) => c.id === channelId && c.kind === "text");
     if (!channel) throw new Error("no such text channel");
     this.#view?.close();
     const view = new ChannelView(this, channel, this.#opts);
@@ -663,10 +773,16 @@ export class Chat {
   #recomputeUnread(): void {
     const next = new Set<string>();
     const mentioned = new Set<string>();
-    for (const c of this.#channels) {
-      if (c.kind !== "text") continue;
-      const read = this.#store.get(this.#readKey(c.id));
-      if (!read) {
+    for (const c of [...this.#channels, ...this.#dms.map(dmChannel)]) {
+      if (c.kind === "voice") continue;
+      let read = this.#store.get(this.#readKey(c.id));
+      if (!read && c.dm) {
+        // A direct message is new to you as a whole: everything in it is
+        // unread until you look (otherwise someone's first message to you
+        // would never alert).
+        read = normalizeTime(c.dm.created_at);
+        this.#store.set(this.#readKey(c.id), read);
+      } else if (!read) {
         // First sight: everything so far counts as read.
         this.#store.set(this.#readKey(c.id), c.last_message_at
           ? normalizeTime(c.last_message_at) : new Date().toISOString());
@@ -684,6 +800,9 @@ export class Chat {
 
   #onMention(f: GlobalFrame): void {
     const channelId = f.channel_id!;
+    // Every message in a direct message alerts like a mention already
+    // (#onActivity); one not in the channel list may be a new DM.
+    if (!this.#channels.some((c) => c.id === channelId)) return;
     const open = channelId === this.#view?.channel.id;
     if ((!open || !this.#looking) && !this.#mentioned.has(channelId)) {
       this.#mentioned = new Set(this.#mentioned).add(channelId);
@@ -695,7 +814,16 @@ export class Chat {
     });
   }
 
-  #onActivity(channelId: string, authorId: string, createdAt: string, messageId: string): void {
+  #onActivity(channelId: string, authorId: string, createdAt: string, messageId: string, fetched = false): void {
+    let dm = this.#dmById(channelId);
+    if (!dm && !fetched && !this.#channels.some((c) => c.id === channelId)) {
+      // Not a channel we know: most likely someone's first message in a
+      // new direct message. Fetch the list, then handle it.
+      this.refreshDMs()
+        .then(() => this.#onActivity(channelId, authorId, createdAt, messageId, true))
+        .catch(() => {});
+      return;
+    }
     // Your own messages, and the channel you are looking at, are read.
     if (authorId === this.userId) {
       this.markRead(channelId, createdAt);
@@ -706,6 +834,24 @@ export class Chat {
     else if (!this.#unread.has(channelId)) {
       this.#unread = new Set(this.#unread).add(channelId);
       this.#emit({ type: "unread", unread: this.#unread });
+    }
+    if (dm) {
+      // A direct message alerts like a mention, before the message event
+      // so the client plays the mention sound instead.
+      if ((!open || !this.#looking) && !this.#mentioned.has(channelId)) {
+        this.#mentioned = new Set(this.#mentioned).add(channelId);
+        this.#emit({ type: "mentions", mentions: this.#mentioned });
+      }
+      if (dm.last_incoming_at === undefined || Date.parse(createdAt) > Date.parse(dm.last_incoming_at)) {
+        dm = { ...dm, last_message_at: createdAt, last_incoming_at: createdAt };
+        const updated = dm;
+        this.#dms = [updated, ...this.#dms.filter((d) => d.channel_id !== channelId)];
+        this.#emit({ type: "dms", dms: this.#dms });
+      }
+      this.#emit({
+        type: "mentioned", channelId, messageId, authorId,
+        username: dm.user.username, open, dm: true,
+      });
     }
     this.#emit({ type: "message", channelId, messageId, open });
   }
@@ -730,6 +876,7 @@ export class Chat {
       this.#eventsSince = Date.now();
       // Anything missed while it was down.
       this.refreshChannels().catch(() => {});
+      this.refreshDMs().catch(() => {});
       if (this.#eventsEverOpen) this.#emit({ type: "events_reconnected" });
       this.#eventsEverOpen = true;
     };
@@ -771,13 +918,18 @@ export class Chat {
       case "mention":
         this.#onMention(frame);
         break;
+      case "dms_changed":
+        this.refreshDMs().catch(() => {});
+        break;
       case "user_purged":
+        this.refreshDMs().catch(() => {});
         this.#view?.userPurged(frame.user_id!);
         this.#reconcileOpen();
         // Their messages in every other channel, not only the open one.
         this.#pruneSoon();
         break;
       case "access_changed":
+        this.refreshDMs().catch(() => {});
         this.#reconcileOpen();
         this.#view?.refreshMembers();
         break;
@@ -828,8 +980,10 @@ export class Chat {
         this.#refreshVoiceSoon();
         break;
       case "perms_changed":
-        // Group membership decides name colours too.
+        // Group membership decides name colours too, and whether either
+        // side of a direct message may still send.
         this.#emit({ type: "names_changed" });
+        this.refreshDMs().catch(() => {});
         if (!frame.user_id || frame.user_id === this.userId) {
           this.#emit({ type: "me_changed" });
           this.refreshChannels().catch(() => {});
@@ -1025,8 +1179,26 @@ export class ChannelView {
 
   /** @internal The channel's settings changed. */
   updateChannel(c: ChannelInfo): void {
+    const prev = this.#channel;
     this.#channel = c;
+    if (c.kind === "dm" && prev.can_post !== c.can_post) {
+      // A DM turned read-only or back (a block, the switch). The server
+      // decides posting per connection and keeps a refusal for the
+      // connection's life, so reconnect for a fresh answer.
+      this.#canPost = c.can_post;
+      this.#reconnectNow();
+    }
     this.#changed();
+  }
+
+  #reconnectNow(): void {
+    if (this.#closed || this.#gone) return;
+    const s = this.#socket;
+    this.#socket = null;
+    s?.close();
+    for (const [ref] of this.#pendingSends) this.#failPending(ref, "connection lost");
+    this.#retry = 0;
+    void this.#connect();
   }
 
   // -------------------------------------------------------- connection
@@ -1075,7 +1247,9 @@ export class ChannelView {
 
   /** @internal The channel is gone from this account's list. */
   lost(): void {
-    this.notice("You no longer have access to this channel.");
+    this.notice(this.#channel.kind === "dm"
+      ? "This conversation is no longer available."
+      : "You no longer have access to this channel.");
     this.#canPost = false;
     this.#gone = true;
     const s = this.#socket;
@@ -1085,8 +1259,12 @@ export class ChannelView {
     this.#changed();
   }
 
+  /** Counts #connect calls, so only the newest one opens a socket. */
+  #connectSeq = 0;
+
   async #connect(): Promise<void> {
     if (this.#closed || this.#gone) return;
+    const seq = ++this.#connectSeq;
     this.#connection = "connecting";
     this.#changed();
 
@@ -1096,10 +1274,10 @@ export class ChannelView {
       // is traded for a single-use ticket instead of going in the URL.
       ({ ticket } = (await this.#opts.call("/api/v1/ws/ticket", { method: "POST" })) as { ticket: string });
     } catch {
-      this.#scheduleReconnect();
+      if (seq === this.#connectSeq) this.#scheduleReconnect();
       return;
     }
-    if (this.#closed || this.#gone) return;
+    if (this.#closed || this.#gone || seq !== this.#connectSeq) return;
 
     const ws = new WebSocket(this.#opts.wsUrl(
       `/api/v1/ws?ticket=${encodeURIComponent(ticket)}&channel=${encodeURIComponent(this.#channel.id)}`,
@@ -1143,7 +1321,7 @@ export class ChannelView {
     setTimeout(() => {
       // Refetching the list first finds out whether access was lost (the
       // server closes the socket on demotion); lost() then stops here.
-      this.#chat.refreshChannels()
+      (this.#channel.kind === "dm" ? this.#chat.refreshDMs() : this.#chat.refreshChannels())
         .catch(() => {})
         .then(() => this.#connect());
     }, delay);

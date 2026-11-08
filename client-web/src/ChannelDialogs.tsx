@@ -372,7 +372,7 @@ export function ChannelSettingsDialog({ call, channel, canManage, canForcePTT, f
             </label>
             {nameChanged && !nameValid && <p className="error small">A name needs at least one character.</p>}
             {groupsError && <p className="error">Couldn't load groups: {groupsError}</p>}
-            {rows && <AccessEditor rows={rows} setRows={setRows} kind={channel.kind} />}
+            {rows && <AccessEditor rows={rows} setRows={setRows} kind={channel.kind === "voice" ? "voice" : "text"} />}
 
             {!voice && (
               <label>

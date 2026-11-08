@@ -250,7 +250,8 @@ export function VoiceRoster({ live, others, onWatch, onPerson, onOther, onDrag }
   others: readonly { user_id: string; username: string }[];
   onWatch: (participantId: string) => void;
   onPerson: (p: VoiceParticipant, at: { x: number; y: number }) => void;
-  /** Set for holders of move_members: a menu on people in calls you're not in. */
+  /** A menu on people in calls you're not in: Message, and for holders
+   * of move_members Move and Disconnect (then onDrag is set too). */
   onOther?: (p: { user_id: string; username: string }, at: { x: number; y: number }) => void;
   /** Set for holders of move_members: names can be dragged to another
    * voice channel. Called with the person on drag start, null at the end. */
@@ -280,7 +281,7 @@ export function VoiceRoster({ live, others, onWatch, onPerson, onOther, onDrag }
             }}>
             <span className="avatar" aria-hidden>{p.name.slice(0, 1).toUpperCase()}</span>
             <button className="who" disabled={p.isLocal}
-              title={p.isLocal ? undefined : "Volume (or right-click)"}
+              title={p.isLocal ? undefined : "Volume and Message (or right-click)"}
               onClick={(e) => !p.isLocal && onPerson(p, { x: e.clientX, y: e.clientY })}>
               <ColouredName userId={p.id}>{p.name}</ColouredName>{p.isLocal ? " (you)" : ""}
             </button>
@@ -307,7 +308,7 @@ export function VoiceRoster({ live, others, onWatch, onPerson, onOther, onDrag }
           })}>
           <span className="avatar" aria-hidden>{p.username.slice(0, 1).toUpperCase()}</span>
           {onOther ? (
-            <button className="who" title="Move or disconnect (or right-click)"
+            <button className="who" title={onDrag ? "Message, move or disconnect (or right-click)" : "Message (or right-click)"}
               onClick={(e) => onOther(p, { x: e.clientX, y: e.clientY })}>
               <ColouredName userId={p.user_id}>{p.username}</ColouredName>
             </button>
@@ -423,22 +424,46 @@ function MoveSection({ userId, from, channels, call, onDone }: {
   );
 }
 
+/** "Message" (direct messages) at the top of a person menu. */
+export interface MessageAction {
+  /** The viewer may not send direct messages. */
+  disabled: boolean;
+  onClick: () => void;
+}
+
+function MessageButton({ message, onClose }: { message: MessageAction; onClose: () => void }) {
+  return (
+    <button className="outline" disabled={message.disabled}
+      title={message.disabled ? "You can't send direct messages on this server" : undefined}
+      onClick={() => {
+        onClose();
+        message.onClick();
+      }}>
+      Message
+    </button>
+  );
+}
+const MESSAGE_BUTTON_HEIGHT = 44;
+
 /** For holders of move_members: someone in a call you're not in. */
-export function MoveMenu({ person, from, channels, at, call, onClose }: {
+export function MoveMenu({ person, from, channels, at, call, message, onClose }: {
   person: { user_id: string; username: string };
   from: string;
   channels: readonly MoveTarget[];
   at: { x: number; y: number };
   call: ApiCall;
+  message?: MessageAction;
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useMenuClose(ref, onClose);
   const left = Math.min(at.x, window.innerWidth - 240);
-  const top = Math.max(8, Math.min(at.y, window.innerHeight - MOVE_SECTION_HEIGHT - 40));
+  const top = Math.max(8, Math.min(at.y, window.innerHeight - MOVE_SECTION_HEIGHT - 40
+    - (message ? MESSAGE_BUTTON_HEIGHT : 0)));
   return (
     <div ref={ref} className="menu" style={{ left, top }} role="dialog" aria-label={`Move ${person.username}`}>
       <strong>{person.username}</strong>
+      {message && <MessageButton message={message} onClose={onClose} />}
       <MoveSection userId={person.user_id} from={from} channels={channels} call={call} onDone={onClose} />
     </div>
   );
@@ -449,7 +474,7 @@ export function MoveMenu({ person, from, channels, at, call, onClose }: {
  * holders of server_mute, the server mute too, and for holders of
  * move_members, Move and Disconnect.
  */
-export function PersonMenu({ voice, person, at, call, canServerMute, move, onClose }: {
+export function PersonMenu({ voice, person, at, call, canServerMute, move, message, onClose }: {
   voice: VoiceClient;
   person: VoiceParticipant;
   at: { x: number; y: number };
@@ -457,6 +482,7 @@ export function PersonMenu({ voice, person, at, call, canServerMute, move, onClo
   canServerMute: boolean;
   /** Set for holders of move_members: the call they're in and where they can go. */
   move?: { from: string; channels: readonly MoveTarget[] };
+  message?: MessageAction;
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -483,10 +509,11 @@ export function PersonMenu({ voice, person, at, call, canServerMute, move, onClo
   const share = voice.snapshot().screens.find((s) => s.participantId === person.id && s.hasAudio);
   const left = Math.min(at.x, window.innerWidth - 240);
   const top = Math.max(8, Math.min(at.y, window.innerHeight - (canServerMute ? 330 : 140)
-    - (share ? 32 : 0) - (move ? MOVE_SECTION_HEIGHT : 0)));
+    - (share ? 32 : 0) - (move ? MOVE_SECTION_HEIGHT : 0) - (message ? MESSAGE_BUTTON_HEIGHT : 0)));
   return (
     <div ref={ref} className="menu" style={{ left, top }} role="dialog" aria-label={`${person.name} volume`}>
       <strong>{person.name}</strong>
+      {message && <MessageButton message={message} onClose={onClose} />}
       <label>
         Volume {vol}%
         <input type="range" min={0} max={100} value={vol}
