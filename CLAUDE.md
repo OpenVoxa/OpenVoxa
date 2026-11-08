@@ -172,22 +172,25 @@ PROD for work in progress:** build and test on this stack (DEV, LAN-only
 passed on DEV, at once as a **hotfix** (tag `v1.0.0-beta.N.M`) if it needs
 no call rejoin, no desktop install and doesn't touch voice/share/LiveKit. Repo
 history was rewritten 2026-11-07: reset older clones to origin/main,
-never pull or merge them. **Next:** **Direct messages stage 2
-(web client)**: sidebar switch, DM list, New Message, "Message" in name
-menus, read-only box, alerts (decisions.md "Direct messages"). Then
-stage 3 (Block UI). After DMs: the login
+never pull or merge them. **Next:** **Direct messages stage 3 (Block
+UI)**: Block/Unblock in the name menus and DM row menu, the blocked list
+in Settings, collapsed "Blocked message (show)" in channels; the
+blocker's open DM vanishes from GET /dms (view shows "no longer
+available"), so stage 3 must open a blocked DM from POST /dms instead
+(decisions.md "Direct messages"). Then the login
 page download link (suggested: quiet text link, browsers only, Windows,
 SmartScreen hint); then release-routine gaps: `release:win` still
 writes DEV's `deploy/desktop-updates` (copy to PROD by hand), a DNS
 updater for the public A record, the double reconnect after a restart
 (Open items). Waiting on Ryan: the desktop icon PNG. Offered: `#`
 headings in Home, server name in the sidebar header, a single-copy
-hardware (H.264) share mode. Untested: DK1-DK9, SI4/SI8.
+hardware (H.264) share mode, "Message" on @mention chips. Untested:
+DK1-DK9, SI4/SI8.
 **Built 2026-11-08, on DEV only:** Move members (passed MV1-MV7,
-DD1-DD5); **DMs stage 1 (server)**: migration 0036, `dms.go`, DM branch
-in access.go, `direct_messages` switch on Member, staff checks ignore it
-(decisions.md "Direct messages", "Stage 1 as built", incl. what stage 2
-must refetch on). PROD gets both at the next release.
+DD1-DD5); **DMs stage 1 (server)** and **stage 2 (web client**, passed
+DM1-DM12), plus one-minute sound cooldowns for DMs and @mentions
+(MC1-MC4) (decisions.md "Direct messages", "Stage 1/2 as built").
+PROD gets all of it at the next release.
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts, server name, IPs and the domain: private

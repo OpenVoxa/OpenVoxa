@@ -700,7 +700,7 @@ Disconnect is not a ban: they can join again.
 
 #### Direct messages
 
-Designed with Ryan 2026-11-08; **not built yet** (stages below). "Whisper"
+Designed with Ryan 2026-11-08; stages 1 and 2 built, stage 3 (Block UI) next (stages below). "Whisper"
 means the same thing as a DM: no separate voice whisper.
 
 - **One-to-one only.** No group DMs; group chat stays in channels.
@@ -789,6 +789,39 @@ means the same thing as a DM: no separate voice whisper.
   `access_changed` and `user_purged`, and on a `channel_activity` for an
   unknown channel id (someone's first message); alert on
   `last_incoming_at` like a mention.
+
+**Stage 2 as built (2026-11-08).** Web client; DM1-DM12 passed.
+
+- **client-core:** `Chat.dms` / `refreshDMs()` / `startDM(userId)` and
+  a `dms` ChatEvent. A DM opens with `Chat.open(channel_id)` as a
+  ChannelInfo of kind `dm` made by `dmChannel()` (encrypted, carries
+  the DMInfo as `.dm`; `last_incoming_at` stands in for
+  `last_mention_at`). Refetched on everything "Stage 2 must" lists and
+  on the event socket reopening; a `channel_activity` for an unknown id
+  refetches, then is handled. A DM nobody has read on this browser
+  starts read at its `created_at`, so a first message alerts.
+- **Alerts:** every message from the other person emits `mentioned`
+  with `dm: true` (before `message`, so only the mention sound plays);
+  the server's `mention` event is ignored for anything not in the
+  channel list, so a DM with an @ doesn't alert twice. Pop-up: "X sent
+  you a message", no text. Mute Sounds on a DM silences it fully (a
+  channel's mute lets mentions through; a DM is all mentions).
+- **Read-only:** the box greys out with the reason (`dmText.ts`). When
+  `can_post` flips, the open view reconnects: the server keeps a
+  refusal for a connection's life.
+- **Layout:** "Channels" / "Messages" tabs under the sidebar header
+  (Ryan's pick), remembered per browser; the Messages tab's red count is
+  the number of conversations with something new, and each row gets a
+  red dot, no number (the server has no unread counts; Ryan's pick).
+  Home lives on the Channels tab. "Message" is on message author names
+  (click or right-click), the voice person menu and the roster of other
+  calls (for everyone; move_members adds Move). Not on @mention chips
+  yet.
+- **Sound cooldowns (Ryan, anti-spam):** a DM plays at most once a
+  minute per conversation (looking at it resets that); @mentions play
+  at most once a minute over all channels, not reset by looking. Both
+  cover the pop-up too; badges still update on every message. Fixed,
+  not settings.
 
 #### Receiving shares on demand
 
@@ -943,7 +976,9 @@ Discussed with Ryan, 2026-11-04. Stage 1 built and verified the same day
 - **Cooldown:** first built as "once, then quiet until read"; Ryan
   pointed out that if you're away when the first one lands you never
   hear the rest. Now each channel waits a cooldown after it plays the
-  message or mention sound: Settings > Sounds > Message, "Message
+  message or mention sound (mentions and DMs have their own fixed
+  one-minute limits too: "Direct messages", "Stage 2 as built"):
+  Settings > Sounds > Message, "Message
   notification cooldown", None / 1 / 2 (default) / 5 / 10 / 30 minutes /
   until you've read the channel (`sound.message.cooldown`, seconds, -1 =
   until read). Per channel; looking at the channel (opening it, or
@@ -3417,6 +3452,11 @@ verified; the section named holds the design.
   the DM branch of access.go; `direct_messages` switch on Member; Go
   tests `TestDMAccess` against a throwaway Postgres), DM1-DM4 regression
   checks (Feature decisions, "Direct messages", "Stage 1 as built").
+- 2026-11-08 Direct messages stage 2, web client (Channels / Messages
+  sidebar tabs, DM list, New Message, "Message" on names, read-only box,
+  alerts), DM1-DM12; one-minute sound cooldowns for DMs (per
+  conversation) and @mentions (all channels), MC1-MC4 (Feature
+  decisions, "Direct messages", "Stage 2 as built").
 
 ## Open items
 
@@ -3541,7 +3581,8 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
       groups, per-group permissions.
 - [ ] **Direct messages** ("whispers" = DMs): designed 2026-11-08
       (Feature decisions, "Direct messages", with the 3-stage plan).
-      Stage 1 (server) built 2026-11-08; next: stage 2, web client.
+      Stages 1 (server) and 2 (web client) built 2026-11-08; next:
+      stage 3, Block UI. Later: "Message" on @mention chips.
 - [x] **Home page** and community rules: built 2026-11-07 (Feature
       decisions, "Home page and community rules"; HP1-HP18).
 - [ ] **Desktop status icon:** your status on the taskbar button
