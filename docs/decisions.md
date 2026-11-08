@@ -1396,6 +1396,7 @@ Built 2026-11-08 (`client-web/src/appDownload.tsx`; Ryan's picks).
   top-level `path:` line of `/desktop-updates/latest.yml` (the file the
   installed apps check), so nothing in Caddy or the server changes per
   release. A server without an update folder shows no link.
+- Tested: DL1-DL6 on DEV; DL7 (the link on PROD after beta.2.1) passed.
 
 #### Public DNS record follows the IP
 
