@@ -163,7 +163,7 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 ## Current state (rewrite every session)
 
 _2026-11-08._ **Beta v1 is live.** PROD (Debian 13 VM, `ssh prod` from
-Docker; Ryan runs sudo in its console) runs tag **v1.0.0-beta.1** with
+Docker; Ryan runs sudo in its console) runs tag **v1.0.0-beta.2** with
 the public domain, forwards, IP cron, desktop updates, its own GIPHY key
 and Cloudflare token; friends use it (server password). **Never restart
 PROD for work in progress:** build and test on this stack (DEV, LAN-only
@@ -181,12 +181,9 @@ updater for the public A record, the double reconnect after a restart
 headings in Home, server name in the sidebar header, a single-copy
 hardware (H.264) share mode, "Message" on @mention chips. Untested:
 DK1-DK9, SI4/SI8.
-**Built 2026-11-08, on DEV only:** Move members (passed MV1-MV7,
-DD1-DD5); **direct messages, all three stages** (server, web client,
-Block UI; passed DM1-DM12, BK1-BK8), plus one-minute sound cooldowns
-for DMs and @mentions (MC1-MC4) (decisions.md "Direct messages").
-PROD gets all of it at the next release (Move members touches voice,
-so not a hotfix).
+**Released 2026-11-08 as beta.2** (server and web client only):
+Move members, direct messages with blocks, the DM and @mention sound
+cooldowns (decisions.md "v1.0.0-beta.2"). DEV and PROD now match.
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts, server name, IPs and the domain: private
