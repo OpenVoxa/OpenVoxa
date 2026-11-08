@@ -700,7 +700,7 @@ Disconnect is not a ban: they can join again.
 
 #### Direct messages
 
-Designed with Ryan 2026-11-08; stages 1 and 2 built, stage 3 (Block UI) next (stages below). "Whisper"
+Designed with Ryan 2026-11-08; all three stages built the same day (below). "Whisper"
 means the same thing as a DM: no separate voice whisper.
 
 - **One-to-one only.** No group DMs; group chat stays in channels.
@@ -822,6 +822,27 @@ means the same thing as a DM: no separate voice whisper.
   at most once a minute over all channels, not reset by looking. Both
   cover the pop-up too; badges still update on every message. Fixed,
   not settings.
+
+**Stage 3 as built (2026-11-08).** Block UI; BK1-BK8 passed.
+
+- **client-core:** `Chat.blocks` / `blocked` (user ids), `refreshBlocks()`
+  (on start, `dms_changed`, event socket reopening), `block(id, name)`,
+  `unblock(id)`, a `blocks` ChatEvent.
+- **Where:** Block (red) / Unblock under Message in the name menu, and
+  after a divider in the DM row menu. No confirmation (undo is one
+  click). Not in the voice person menu: voice is unaffected.
+- **Open blocked DM:** when `GET /dms` drops the open DM, `#loadDMs`
+  fetches it from `POST /dms` and keeps it in the list while it's open
+  (reason `you_blocked`); opening anything else drops it. Its view shows
+  a bar with Unblock above the greyed-out box.
+- **Settings > Chat > Blocked People:** the list with Unblock.
+- **Channels (not DMs):** a blocked person's message collapses to
+  "Blocked message (show)", name hidden too; "show" reveals that one
+  message until the channel is left. A reply quoting them shows
+  "Blocked message". No mention alert (sound, @ badge, pop-up) and no
+  message sound from them; the unread dot stays. Server side,
+  `listChannels`' `last_mention_at` skips authors you block, so the @
+  badge stays off after a reload.
 
 #### Receiving shares on demand
 
@@ -3457,6 +3478,10 @@ verified; the section named holds the design.
   alerts), DM1-DM12; one-minute sound cooldowns for DMs (per
   conversation) and @mentions (all channels), MC1-MC4 (Feature
   decisions, "Direct messages", "Stage 2 as built").
+- 2026-11-08 Direct messages stage 3, Block UI (name and DM row menus,
+  Settings > Chat > Blocked People, collapsed blocked messages, no
+  alerts from blocked people), BK1-BK8 (Feature decisions, "Direct
+  messages", "Stage 3 as built").
 
 ## Open items
 
@@ -3579,10 +3604,9 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
       (categories) that collapse, and drag-to-reorder for channels and
       groups (`manage_channels`). Open: voice channels in the same
       groups, per-group permissions.
-- [ ] **Direct messages** ("whispers" = DMs): designed 2026-11-08
-      (Feature decisions, "Direct messages", with the 3-stage plan).
-      Stages 1 (server) and 2 (web client) built 2026-11-08; next:
-      stage 3, Block UI. Later: "Message" on @mention chips.
+- [x] **Direct messages** ("whispers" = DMs): all three stages built
+      2026-11-08 (Feature decisions, "Direct messages"). Later, offered:
+      "Message" on @mention chips.
 - [x] **Home page** and community rules: built 2026-11-07 (Feature
       decisions, "Home page and community rules"; HP1-HP18).
 - [ ] **Desktop status icon:** your status on the taskbar button
