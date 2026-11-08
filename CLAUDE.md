@@ -165,7 +165,9 @@ the public domain, forwards, IP cron, desktop updates, its own GIPHY key
 and Cloudflare token; friends use it (server password). **Never restart
 PROD for work in progress:** build and test on this stack (DEV, LAN-only
 `dev.` name, test data kept); PROD moves only to a new tag when Ryan says
-"release" (routine: decisions.md beta entry, "First release"). Repo
+"release" (routine: decisions.md beta entry, "First release"), or, once
+passed on DEV, at once as a **hotfix** (tag `v1.0.0-beta.N.M`) if it needs
+no call rejoin, no desktop install and doesn't touch voice/share/LiveKit. Repo
 history was rewritten 2026-11-07: reset older clones to origin/main,
 never pull or merge them. **Next:** design talk on a desktop download
 link on the login page; then release-routine gaps: `release:win` still

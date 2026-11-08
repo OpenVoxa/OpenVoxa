@@ -3452,6 +3452,13 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
 
 ### Features not built yet
 
+        **Hotfixes** (Ryan, 2026-11-08): a change that has passed on DEV
+        goes to PROD at once, same routine, if it needs nobody to end or
+        rejoin a call, needs no desktop app install or update, and
+        doesn't affect voice (voice client, voice UI, screen share,
+        LiveKit). Tagged `v1.0.0-beta.N.M` (`v1.0.0-beta.1.1`, ...):
+        semver orders that between beta.N and beta.N+1, where a
+        `-hotfix` suffix would sort after beta.N+1.
 - [ ] Guest accounts: the Everyone group exists, but there is no
       anonymous or invite flow to create one.
 - [ ] `@everyone` / `@group` mentions, mention counts, notifications
