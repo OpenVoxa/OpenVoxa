@@ -157,21 +157,21 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 
 ## Current state (rewrite every session)
 
-_2026-11-07._ **Beta v1, DEV and PROD** (decisions.md Next up). This stack
-= DEV (test data kept, later a LAN-only `dev.` name). PROD VM is built
-(Debian 13, NAS uploads share mounted, no Docker or git yet): `ssh prod`
-from Docker; Ryan runs anything needing sudo in its console. PROD takes
-the domain, forwards, IP cron and desktop updates; moves only to tags
-when Ryan says "release". Repo history was rewritten 2026-11-07: reset
-older clones to origin/main, never pull or merge them.
-**Stage 1 done:** `deploy/setup.sh` + README Quick start (decisions.md,
-beta entry). **Next, stage 2:** on PROD Ryan runs `sudo apt install git`,
-clones, `./setup.sh` (Cloudflare path, port 8443, uploads folder
-`/mnt/openvoxa-blobs`, internet), reports SU1-SU8; then the network
-cutover (DNS, forwards, IP cron off on DEV, desktop-updates folder,
-DEV to its `dev.` name). Stage 3: release routine. Waiting on Ryan: the
-desktop icon PNG. Offered: `#` headings in Home, server name in the
-sidebar header. Untested: DK1-DK9, SI4/SI8.
+_2026-11-08._ **Beta v1, DEV and PROD** (decisions.md Next up).
+**Stage 2 done:** PROD (Debian 13 VM, `ssh prod` from Docker; Ryan runs
+sudo in its console) now has the public domain, forwards, IP cron,
+desktop updates, its own GIPHY key and Cloudflare token. This stack =
+DEV at its LAN-only `dev.` name (LAN node IP, no IP cron, test data
+kept). PROD runs main as installed; it moves only to tags when Ryan says
+"release". Repo history was rewritten 2026-11-07: reset older clones to
+origin/main, never pull or merge them. **Next:** a design talk on a
+desktop download link on the login page (Ryan asked 2026-11-08), then
+stage 3, the release routine: tag, update PROD to the tag, desktop
+releases published to PROD (`release:win` still writes DEV's folder;
+copy by hand until then), and maybe a DNS updater for the public A
+record. Waiting on Ryan: the desktop icon PNG. Offered: `#` headings in
+Home, server name in the sidebar header. Untested: DK1-DK9, SI4/SI8,
+voice over mobile data to PROD (SU7b step 3).
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts, server name, IPs and the domain: private
@@ -179,11 +179,12 @@ sidebar header. Untested: DK1-DK9, SI4/SI8.
   repo (it's public).** Text channels: general
   (plain), secret (encrypted) and some test ones. Voice channels:
   voice-general, vip-voice (admins only).
-- Docker deploy: LiveKit v1.13.11, host networking, `update-node-ip.sh`
-  on cron. Blobs on `/mnt/openvoxa-blobs`. Account keys (also sealing
-  TOTP secrets) in volume `deploy_key-data` under a KEK only Ryan holds,
-  backed up daily 03:30 to `~/openvoxa-key-backups`. Ryan is the only
-  user. `docker builder prune` when disk passes ~80%.
+- Both stacks: LiveKit v1.13.11, host networking, blobs on each one's
+  own NAS share at `/mnt/openvoxa-blobs`, account keys in `deploy_key-data`
+  under a separate KEK per stack (only Ryan holds them), backed up daily
+  03:30 to `~/openvoxa-key-backups`. IP cron on PROD only. PROD is open to
+  friends (server password); DEV is Ryan's. `docker builder prune` when
+  disk passes ~80%.
 - Untested and gaps: decisions.md Open items.
 - After the beta: avatars, channel groups, DMs, desktop status icon;
   later code signing, "needs app version X".

@@ -3321,6 +3321,24 @@ verified; the section named holds the design.
         mounted before Docker, stack back up.
         README Requirements/Quick start now use it; the manual path and
         the boot-order traps are documented.
+      - **Stage 2 done 2026-11-08:** PROD installed from scratch with
+        `setup.sh` (Cloudflare path, 8443, NAS folder, internet).
+        SU1-SU8 and GF1 passed: Docker carried on via `sg`, the write
+        test and drop-in worked, the first account took the setup code,
+        reachable from outside, and after a reboot the share mounted a
+        second before Docker and the stack came back. Cutover: router
+        forwards and the LAN DNS record moved to PROD, a public A record
+        added (DNS only; there was none before), DEV renamed to its
+        LAN-only `dev.` name with a LAN node IP and no IP cron, desktop
+        update files copied to PROD, PROD has its own GIPHY key and
+        Cloudflare token. Learned (README updated): the router has no
+        NAT loopback, so LAN users need the local DNS record; the
+        user's own shell needs a new login for the docker group;
+        "memory almost full" in the hypervisor was page cache from the
+        build (about 600 MB really used). Gaps for stage 3:
+        `release:win` still writes to DEV's `deploy/desktop-updates`
+        (copied to PROD by hand); the public A record doesn't follow a
+        changed WAN IP (the IP cron only updates LiveKit).
       - **Releases:** DEV runs work in progress; PROD only moves to a
         tagged version (e.g. `v1.0.0-beta.1`) when Ryan says "release".
       - **Stages:** (1) setup script and rewritten install docs; (2)
