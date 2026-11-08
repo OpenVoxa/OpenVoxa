@@ -163,7 +163,7 @@ First-time setup: deploy/README.md. The server image is distroless (no shell).
 ## Current state (rewrite every session)
 
 _2026-11-08._ **Beta v1 is live.** PROD (Debian 13 VM, `ssh prod` from
-Docker; Ryan runs sudo in its console) runs tag **v1.0.0-beta.2** with
+Docker; Ryan runs sudo in its console) runs tag **v1.0.0-beta.2.1** with
 the public domain, forwards, IP cron, desktop updates, its own GIPHY key
 and Cloudflare token; friends use it (server password). **Never restart
 PROD for work in progress:** build and test on this stack (DEV, LAN-only
@@ -172,19 +172,16 @@ PROD for work in progress:** build and test on this stack (DEV, LAN-only
 passed on DEV, at once as a **hotfix** (tag `v1.0.0-beta.N.M`) if it needs
 no call rejoin, no desktop install and doesn't touch voice/share/LiveKit. Repo
 history was rewritten 2026-11-07: reset older clones to origin/main,
-never pull or merge them. **Built on DEV
-(2f777e1, passed DL1-DL6):** the login page download link, a hotfix
-candidate (`v1.0.0-beta.2.1`) when Ryan says. **Next:** release-routine gaps: `release:win` still
-writes DEV's `deploy/desktop-updates` (copy to PROD by hand), a DNS
-updater for the public A record, the double reconnect after a restart
+never pull or merge them. **Next:** release-routine gaps: `release:win` still
+writes DEV's `deploy/desktop-updates` (copy to PROD by hand), the double reconnect after a restart
 (Open items). Waiting on Ryan: the desktop icon PNG. Offered: `#`
 headings in Home, server name in the sidebar header, a single-copy
 hardware (H.264) share mode, "Message" on @mention chips. Untested:
 DK1-DK9, SI4/SI8.
-**Released 2026-11-08 as beta.2** (server and web client only):
-Move members, direct messages with blocks, the DM and @mention sound
-cooldowns (decisions.md "v1.0.0-beta.2"). DEV is ahead of PROD only by
-the download link.
+**Hotfix 2026-11-08, beta.2.1** (after beta.2: Move members, DMs with
+blocks, sound cooldowns): the login page download link and the IP cron
+now keeping the public A record on Cloudflare (decisions.md "Login page
+download link", "Public DNS record follows the IP"). DEV and PROD match.
 
 - Groups: Administrator 30, Moderator 20, Member 10 (new accounts),
   Everyone 0. Test accounts, server name, IPs and the domain: private
