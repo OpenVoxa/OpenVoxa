@@ -65,6 +65,13 @@ export interface DMInfo {
   readonly last_incoming_at?: string;
 }
 
+/** Someone you block, as GET /api/v1/blocks lists them. */
+export interface BlockInfo {
+  readonly user_id: string;
+  readonly username: string;
+  readonly created_at: string;
+}
+
 /** A direct message as a channel, to open with Chat.open. Always
  * encrypted; a message from the other person counts as a mention. */
 export function dmChannel(d: DMInfo): ChannelInfo {
@@ -267,6 +274,8 @@ export type ChatEvent =
   | { type: "channels"; channels: readonly ChannelInfo[] }
   /** Your direct messages, newest activity first. */
   | { type: "dms"; dms: readonly DMInfo[] }
+  /** The people you block, by name (Settings), and changed. */
+  | { type: "blocks"; blocks: readonly BlockInfo[] }
   /** This account's groups or permissions may have changed: refetch /me. */
   | { type: "me_changed" }
   | { type: "unread"; unread: ReadonlySet<string> }
@@ -430,6 +439,8 @@ export class Chat {
   readonly #store: KeyValueStore;
   #channels: ChannelInfo[] = [];
   #dms: DMInfo[] = [];
+  #blocks: BlockInfo[] = [];
+  #blocked: ReadonlySet<string> = new Set();
   #listeners = new Set<(e: ChatEvent) => void>();
   #events: WebSocket | null = null;
   #eventsOpen = false;
@@ -469,6 +480,17 @@ export class Chat {
   /** Your direct messages, newest activity first. */
   get dms(): readonly DMInfo[] {
     return this.#dms;
+  }
+
+  /** The people you block (Settings lists them). */
+  get blocks(): readonly BlockInfo[] {
+    return this.#blocks;
+  }
+
+  /** User ids of the people you block: their channel messages collapse,
+   * their mentions don't alert. */
+  get blocked(): ReadonlySet<string> {
+    return this.#blocked;
   }
 
   get unread(): ReadonlySet<string> {
@@ -523,7 +545,11 @@ export class Chat {
   async start(): Promise<void> {
     this.#offAuto = this.session.groups.onAuto((ev) => this.#onAuto(ev));
     this.#offMembership = this.session.groups.onMembership((c) => this.#onMembership(c));
-    await Promise.all([this.refreshChannels(), this.refreshDMs().catch(() => {})]);
+    await Promise.all([
+      this.refreshChannels(),
+      this.refreshDMs().catch(() => {}),
+      this.refreshBlocks().catch(() => {}),
+    ]);
     void this.#openEvents();
     void this.refreshVoice();
     this.#voicePoll = setInterval(() => void this.refreshVoice(), VOICE_POLL_MS);
@@ -670,8 +696,17 @@ export class Chat {
   #dmsAgain: Promise<void> | null = null;
 
   async #loadDMs(): Promise<void> {
-    const list = (await this.#opts.call("/api/v1/dms")) as DMInfo[];
+    let list = (await this.#opts.call("/api/v1/dms")) as DMInfo[];
     if (this.#closed) return;
+    // The server leaves out a DM with someone you block, but one that is
+    // open stays (read-only, with Unblock) until you leave it: fetch it
+    // the way "Message" does (POST /dms answers even for a block).
+    const v0 = this.#view;
+    if (v0 && v0.channel.kind === "dm" && v0.channel.dm && !list.some((d) => d.channel_id === v0.channel.id)) {
+      const kept = await this.#openBlockedDM(v0.channel.dm.user.id, v0.channel.id);
+      if (this.#closed) return;
+      if (kept) list = [...list, kept];
+    }
     this.#dms = list;
     this.#recomputeUnread();
     this.#emit({ type: "dms", dms: list });
@@ -681,6 +716,66 @@ export class Chat {
       if (now) v.updateChannel(dmChannel(now));
       else v.lost();
     }
+  }
+
+  /** The DM channelId with userId when you block them, from POST /dms;
+   * null if it isn't that (or the fetch fails). */
+  async #openBlockedDM(userId: string, channelId: string): Promise<DMInfo | null> {
+    try {
+      const d = (await this.#opts.call("/api/v1/dms", {
+        method: "POST",
+        body: JSON.stringify({ user_id: userId }),
+      })) as DMInfo;
+      return d.channel_id === channelId && d.read_only_reason === "you_blocked" ? d : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Drop DMs with people you block from the list, except the open one
+   * (only open ones are in it: see #loadDMs). */
+  #dropBlockedDMs(): void {
+    const open = this.#view?.channel.id;
+    const next = this.#dms.filter((d) => d.read_only_reason !== "you_blocked" || d.channel_id === open);
+    if (next.length === this.#dms.length) return;
+    this.#dms = next;
+    this.#recomputeUnread();
+    this.#emit({ type: "dms", dms: next });
+  }
+
+  /** Fetch whom you block (GET /blocks). Also on start, dms_changed and
+   * the event socket reopening. */
+  async refreshBlocks(): Promise<void> {
+    const list = (await this.#opts.call("/api/v1/blocks")) as BlockInfo[];
+    if (this.#closed) return;
+    this.#setBlocks(list);
+  }
+
+  #setBlocks(list: BlockInfo[]): void {
+    this.#blocks = list;
+    this.#blocked = new Set(list.map((b) => b.user_id));
+    this.#emit({ type: "blocks", blocks: list });
+  }
+
+  /**
+   * Block someone (silent: they aren't told). Your DM with them turns
+   * read-only for both and leaves your list once you leave it; their
+   * channel messages collapse. Updates blocks and DMs straight away.
+   */
+  async block(userId: string, username: string): Promise<void> {
+    await this.#opts.call(`/api/v1/blocks/${encodeURIComponent(userId)}`, { method: "PUT" });
+    if (!this.#blocked.has(userId)) {
+      this.#setBlocks([...this.#blocks, { user_id: userId, username, created_at: new Date().toISOString() }]
+        .sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase())));
+    }
+    await Promise.all([this.refreshDMs().catch(() => {}), this.refreshBlocks().catch(() => {})]);
+  }
+
+  /** Lift a block. A DM with them comes back as it was. */
+  async unblock(userId: string): Promise<void> {
+    await this.#opts.call(`/api/v1/blocks/${encodeURIComponent(userId)}`, { method: "DELETE" });
+    if (this.#blocked.has(userId)) this.#setBlocks(this.#blocks.filter((b) => b.user_id !== userId));
+    await Promise.all([this.refreshDMs().catch(() => {}), this.refreshBlocks().catch(() => {})]);
   }
 
   /**
@@ -714,6 +809,7 @@ export class Chat {
     this.#view?.close();
     const view = new ChannelView(this, channel, this.#opts);
     this.#view = view;
+    this.#dropBlockedDMs();
     this.markRead(channelId, channel.last_message_at);
     void view.start();
     return view;
@@ -803,6 +899,9 @@ export class Chat {
     // Every message in a direct message alerts like a mention already
     // (#onActivity); one not in the channel list may be a new DM.
     if (!this.#channels.some((c) => c.id === channelId)) return;
+    // Someone you block can't get your attention: their message stays
+    // unread (#onActivity) but collapsed, with no @ badge or sound.
+    if (f.author_id && this.#blocked.has(f.author_id)) return;
     const open = channelId === this.#view?.channel.id;
     if ((!open || !this.#looking) && !this.#mentioned.has(channelId)) {
       this.#mentioned = new Set(this.#mentioned).add(channelId);
@@ -853,6 +952,7 @@ export class Chat {
         username: dm.user.username, open, dm: true,
       });
     }
+    if (this.#blocked.has(authorId)) return;
     this.#emit({ type: "message", channelId, messageId, open });
   }
 
@@ -877,6 +977,7 @@ export class Chat {
       // Anything missed while it was down.
       this.refreshChannels().catch(() => {});
       this.refreshDMs().catch(() => {});
+      this.refreshBlocks().catch(() => {});
       if (this.#eventsEverOpen) this.#emit({ type: "events_reconnected" });
       this.#eventsEverOpen = true;
     };
@@ -919,7 +1020,9 @@ export class Chat {
         this.#onMention(frame);
         break;
       case "dms_changed":
+        // Also sent on a block or unblock (from another of your devices too).
         this.refreshDMs().catch(() => {});
+        this.refreshBlocks().catch(() => {});
         break;
       case "user_purged":
         this.refreshDMs().catch(() => {});

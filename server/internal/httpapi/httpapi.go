@@ -564,7 +564,11 @@ func (a *API) listChannels(w http.ResponseWriter, r *http.Request) {
 		        (SELECT max(m.created_at) FROM messages m WHERE m.channel_id = c.id),
 		        (SELECT max(m.created_at) FROM message_mentions mm
 		           JOIN messages m ON m.id = mm.message_id
-		          WHERE mm.user_id = u.id AND m.channel_id = c.id AND NOT m.deleted)
+		          WHERE mm.user_id = u.id AND m.channel_id = c.id AND NOT m.deleted
+		            -- Someone you block can't get your attention (the
+		            -- web client collapses their messages).
+		            AND NOT EXISTS (SELECT 1 FROM user_blocks ub
+		                             WHERE ub.blocker_id = u.id AND ub.blocked_id = m.author_id))
 		   FROM channels c, users u
 		  WHERE u.id = $1 AND c.kind <> 'dm' AND `+canViewSQL+`
 		  ORDER BY c.name`,

@@ -14,7 +14,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import type { ApiCall } from "@core/identity";
-import type { Chat } from "@core/chat";
+import type { BlockInfo, Chat } from "@core/chat";
 import type { BackupStatus } from "@core/recovery";
 import { storage } from "@core/storage";
 import type { VoiceClient, VoiceSnapshot } from "@core/voice";
@@ -84,7 +84,7 @@ export function SettingsDialog({ tab: initialTab, session, call, chat, deviceId,
         {tab === "voice" && (voice
           ? <VoiceSettings voice={voice} snap={snap} />
           : voiceError ? <p className="error" role="alert">{voiceError}</p> : <p className="muted">Loading…</p>)}
-        {tab === "chat" && <ChatSettings />}
+        {tab === "chat" && <ChatSettings chat={chat} />}
         {tab === "sounds" && <SoundSettings />}
         {tab === "appearance" && <AppearanceSettings />}
         {tab === "about" && <AboutSettings call={call} chat={chat} voice={voice} snap={snap} />}
@@ -98,7 +98,7 @@ export function SettingsDialog({ tab: initialTab, session, call, chat, deviceId,
 
 // ------------------------------------------------------------------ chat
 
-function ChatSettings() {
+function ChatSettings({ chat }: { chat: Chat }) {
   const previews = useToggle(PREVIEWS_ENCRYPTED);
   const imagesInTab = useToggle(IMAGES_IN_TAB);
   const mentionNotify = useToggle(MENTION_NOTIFY);
@@ -150,7 +150,57 @@ function ChatSettings() {
           <span className="muted small block">Off: clicking an image shows it larger in a viewer on this page.</span>
         </span>
       </label>
+      <BlockedPeople chat={chat} />
     </>
+  );
+}
+
+/** Whom you block, with Unblock (decisions.md "Direct messages"). Kept
+ * on the server, so it follows the account to every device. */
+function BlockedPeople({ chat }: { chat: Chat }) {
+  const [blocks, setBlocks] = useState<readonly BlockInfo[]>(chat.blocks);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    void chat.refreshBlocks().catch(() => {});
+    return chat.on((e) => {
+      if (e.type === "blocks") setBlocks(e.blocks);
+    });
+  }, [chat]);
+
+  async function unblock(id: string) {
+    setBusy(id);
+    setError(null);
+    try {
+      await chat.unblock(id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <section>
+      <h3 className="settings-head">Blocked People</h3>
+      <p className="muted small">
+        They can't send you direct messages, and their messages in channels are collapsed. They aren't told.
+        Block someone from their name's menu.
+      </p>
+      {error && <p className="error small" role="alert">{error}</p>}
+      {blocks.length ? (
+        <ul className="blocked-list">
+          {blocks.map((b) => (
+            <li key={b.user_id}>
+              <span>{b.username}</span>
+              <button className="outline" disabled={!!busy} onClick={() => void unblock(b.user_id)}>
+                {busy === b.user_id ? "Unblocking…" : "Unblock"}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : <p className="muted small">Nobody.</p>}
+    </section>
   );
 }
 

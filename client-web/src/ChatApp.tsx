@@ -74,6 +74,8 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   const [failed, setFailed] = useState<string | null>(null);
   const [channels, setChannels] = useState<readonly ChannelInfo[]>([]);
   const [dms, setDms] = useState<readonly DMInfo[]>([]);
+  /** User ids you block (Chat.blocked). */
+  const [blocked, setBlocked] = useState<ReadonlySet<string>>(new Set());
   const dmsRef = useRef<readonly DMInfo[]>([]);
   dmsRef.current = dms;
   // Which list the sidebar shows: the channels or your direct messages.
@@ -224,6 +226,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
         c.on((e) => {
           if (e.type === "channels") setChannels(e.channels);
           else if (e.type === "dms") setDms(e.dms);
+          else if (e.type === "blocks") setBlocked(c.blocked);
           else if (e.type === "unread") setUnread(e.unread);
           else if (e.type === "mentions") setMentions(e.mentions);
           else if (e.type === "message") {
@@ -336,6 +339,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
         }
         setChannels(c.channels);
         setDms(c.dms);
+        setBlocked(c.blocked);
         setUnread(c.unread);
         setMentions(c.mentions);
         setPresence(c.voicePresence);
@@ -595,6 +599,17 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
     void openDM(u.id).then((err) => err && setDropNote({ title: `Couldn't message ${u.username}`, text: err, at }));
   };
 
+  /** Block or Unblock from a menu; a refusal shows where the menu was. */
+  const toggleBlock = (u: NamedUser, at: { x: number; y: number }) => {
+    if (!chat) return;
+    const was = chat.blocked.has(u.id);
+    void (was ? chat.unblock(u.id) : chat.block(u.id, u.username)).catch((err) =>
+      setDropNote({ title: `Couldn't ${was ? "unblock" : "block"} ${u.username}`, text: err instanceof Error ? err.message : String(err), at }));
+  };
+  const blockItem = (u: NamedUser, at: { x: number; y: number }): MenuItem => blocked.has(u.id)
+    ? { label: "Unblock", onClick: () => toggleBlock(u, at) }
+    : { label: "Block", onClick: () => toggleBlock(u, at), danger: true };
+
   const accountActions: AccountActions = {
     onBackUpNow, onSetUpKey, onEnterKey, onNewKey,
     onDeleteAccount: (password) => onDeleteAccount(chat, password),
@@ -649,10 +664,12 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
     }
     const isMuted = muted.has(c.id);
     if (c.kind === "dm") {
+      const other = c.dm && !c.dm.user.deleted ? { id: c.dm.user.id, username: c.dm.user.username } : null;
       return [
         { label: "Mark as Read", onClick: () => chat.markRead(c.id, c.last_message_at ?? undefined),
           disabled: !unread.has(c.id) && !mentions.has(c.id), reason: "Nothing unread" },
         { label: isMuted ? "Unmute Sounds" : "Mute Sounds", onClick: () => setChannelMuted(c.id, !isMuted) },
+        ...(other && chanMenu ? ["sep" as const, blockItem(other, chanMenu.at)] : []),
       ];
     }
     return [
@@ -871,6 +888,8 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           <ChannelPane key={view.channel.id} view={view} call={call} userId={session.user_id} username={session.username} canDeleteAny={canDeleteAny}
             canManageStickers={can("manage_stickers")}
             onName={onName}
+            blocked={blocked}
+            onUnblock={(id) => void chat.unblock(id).catch((err) => view.notice(err instanceof Error ? err.message : String(err)))}
             jumpTo={jump?.channelId === view.channel.id ? jump.messageId : null}
             onJumped={() => setJump(null)} />
         ) : (
@@ -934,7 +953,8 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
       {nameMenu && (
         <ChannelMenu title={nameMenu.user.username} at={nameMenu.at}
           items={[{ label: "Message", disabled: !canDM, reason: NO_DM_REASON,
-            onClick: () => messageFrom(nameMenu.user, nameMenu.at) }]}
+            onClick: () => messageFrom(nameMenu.user, nameMenu.at) },
+            "sep", blockItem(nameMenu.user, nameMenu.at)]}
           onClose={() => setNameMenu(null)} />
       )}
       {dialog?.k === "newdm" && (

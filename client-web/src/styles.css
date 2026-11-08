@@ -269,6 +269,10 @@ button.secondary:hover:not(:disabled) { background: var(--sidebar-active); }
 .badge.plain { background: var(--panel); color: var(--muted); }
 .banner { padding: 8px 16px; background: var(--panel); font-size: 14px; border-bottom: 1px solid var(--line); }
 .pane-error { padding: 6px 16px; color: var(--danger); font-size: 14px; }
+/* A DM you made read-only by blocking: Unblock above the greyed-out box. */
+.blocked-list { list-style: none; margin: 0; padding: 0; }
+.blocked-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; }
+.unblock-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 16px 8px; }
 
 .messages { position: relative; flex: 1; overflow-y: auto; padding: 8px 0 16px; overflow-anchor: none; }
 /* Pinned to the bottom edge of the message list while scrolled up. Zero

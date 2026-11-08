@@ -44,7 +44,7 @@ const paneName = (c: { kind: string; name: string }) => `${c.kind === "dm" ? "@"
 /** Someone whose name was clicked, and where. */
 type OnName = (u: { id: string; username: string }, at: { x: number; y: number }) => void;
 
-export function ChannelPane({ view, call, userId, username, canDeleteAny, canManageStickers, jumpTo, onJumped, onName }: {
+export function ChannelPane({ view, call, userId, username, canDeleteAny, canManageStickers, jumpTo, onJumped, onName, blocked, onUnblock }: {
   view: ChannelView;
   call: ApiCall;
   userId: string;
@@ -57,6 +57,10 @@ export function ChannelPane({ view, call, userId, username, canDeleteAny, canMan
   onJumped: () => void;
   /** A message author's name was clicked (the name menu: Message). */
   onName?: OnName;
+  /** People you block: their messages in channels (not DMs) collapse. */
+  blocked?: ReadonlySet<string>;
+  /** Unblock the other person of a DM you made read-only by blocking. */
+  onUnblock?: (userId: string) => void;
 }) {
   const snap = useSnapshot(view);
   const previewsEncrypted = useToggle(PREVIEWS_ENCRYPTED);
@@ -147,6 +151,7 @@ export function ChannelPane({ view, call, userId, username, canDeleteAny, canMan
         jumpTo={jumpTo}
         onJumped={onJumped}
         onName={onName}
+        blocked={snap.channel.kind === "dm" ? undefined : blocked}
         onReply={(m) => setReplying({ to: replyRefTo(m), mention: !m.own, own: m.own })}
       />
 
@@ -156,6 +161,12 @@ export function ChannelPane({ view, call, userId, username, canDeleteAny, canMan
         </div>
       )}
 
+      {snap.channel.dm?.read_only_reason === "you_blocked" && onUnblock && (
+        <div className="unblock-bar">
+          <span className="muted small">They can't message you, and you can't message them.</span>
+          <button className="outline" onClick={() => onUnblock(snap.channel.dm!.user.id)}>Unblock</button>
+        </div>
+      )}
       <Composer
         snap={snap}
         call={call}
@@ -209,7 +220,7 @@ const JUMP_PAGES = 20;
 /** How long the message jumped to stays highlighted. */
 const JUMP_FLASH_MS = 2000;
 
-function MessageList({ view, snap, call, previews, userId, username, canDeleteAny, editing, setEditing, onError, jumpTo: linkJump, onJumped: onLinkJumped, onReply, onName }: {
+function MessageList({ view, snap, call, previews, userId, username, canDeleteAny, editing, setEditing, onError, jumpTo: linkJump, onJumped: onLinkJumped, onReply, onName, blocked }: {
   view: ChannelView;
   snap: ChannelSnapshot;
   call: ApiCall;
@@ -224,6 +235,7 @@ function MessageList({ view, snap, call, previews, userId, username, canDeleteAn
   onJumped: () => void;
   onReply: (m: ChatMessage) => void;
   onName?: OnName;
+  blocked?: ReadonlySet<string>;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   // A jump from a reply to its original; a message link's jump wins.
@@ -379,6 +391,8 @@ function MessageList({ view, snap, call, previews, userId, username, canDeleteAn
         link={m.pending ? null : channelLink(snap.channel.id, m.id)}
         jumped={flash === m.id}
         original={m.reply ? byId.get(m.reply.messageId) ?? null : null}
+        blockedAuthor={!m.own && !!m.authorId && !!blocked?.has(m.authorId)}
+        blockedReply={!!m.reply && !!blocked?.has(m.reply.authorId)}
         onJumpToOriginal={() => m.reply && setReplyJump(m.reply.messageId)}
         call={call}
         encrypted={snap.channel.encrypted}
@@ -634,7 +648,7 @@ function Reactions({ m, userId, canReact, onReact, onOpenReact }: {
   );
 }
 
-function Message({ m, link: address, jumped, original, onJumpToOriginal, call, encrypted, previews, compact, userId, username, members, canDelete, canEdit, canReport, canReact, canReply, onReply, onName, editing, onEdit, onCancelEdit, onSaveEdit, onDelete, onReport, onReact, onOpenReact, onDismiss }: {
+function Message({ m, link: address, jumped, original, blockedAuthor, blockedReply, onJumpToOriginal, call, encrypted, previews, compact, userId, username, members, canDelete, canEdit, canReport, canReact, canReply, onReply, onName, editing, onEdit, onCancelEdit, onSaveEdit, onDelete, onReport, onReact, onOpenReact, onDismiss }: {
   m: ChatMessage;
   /** The message's link address; null while it's still being sent. */
   link: string | null;
@@ -642,6 +656,10 @@ function Message({ m, link: address, jumped, original, onJumpToOriginal, call, e
   jumped: boolean;
   /** The message this replies to, if it's loaded. */
   original: ChatMessage | null;
+  /** From someone you block: collapsed until "show". */
+  blockedAuthor: boolean;
+  /** Replies to someone you block: the reply line hides what they said. */
+  blockedReply: boolean;
   onJumpToOriginal: () => void;
   call: ApiCall;
   encrypted: boolean;
@@ -676,6 +694,7 @@ function Message({ m, link: address, jumped, original, onJumpToOriginal, call, e
     m.deleted || m.unreadable ? "faint" : "",
     m.mentionsMe && !m.deleted && !m.unreadable ? "mentions-me" : "", jumped ? "jumped" : ""].filter(Boolean).join(" ");
   const [copied, setCopied] = useState(false);
+  const [shown, setShown] = useState(false);
   useEffect(() => {
     if (!copied) return;
     const t = setTimeout(() => setCopied(false), 1500);
@@ -692,9 +711,21 @@ function Message({ m, link: address, jumped, original, onJumpToOriginal, call, e
   else body = m.text ? <Markdown text={m.text} mentions={m.mentions} me={userId} /> : null;
   const link = !m.deleted && !m.unreadable && !m.pending && !editing && !sticker ? firstLink(m.text) : null;
 
+  if (blockedAuthor && !shown && !m.deleted) {
+    return (
+      <article className={`msg blocked${compact ? " compact" : ""}`} data-id={m.id} aria-label={`Blocked message at ${formatTime(m.createdAt)}`}>
+        {compact && <time className="side-time small" dateTime={m.createdAt}>{formatTime(m.createdAt)}</time>}
+        <div className="body muted">
+          <em>Blocked message</em>{" "}
+          (<button className="link small" onClick={() => setShown(true)}>show</button>)
+        </div>
+      </article>
+    );
+  }
+
   return (
     <article className={classes} data-id={m.id} aria-label={`${name} at ${formatTime(m.createdAt)}`}>
-      {m.reply && !m.deleted && <ReplyLine to={m.reply} original={original} onClick={onJumpToOriginal} />}
+      {m.reply && !m.deleted && <ReplyLine to={m.reply} original={original} blocked={blockedReply} onClick={onJumpToOriginal} />}
       {compact
         ? <time className="side-time small" dateTime={m.createdAt}>{formatTime(m.createdAt)}</time>
         : (
@@ -786,7 +817,7 @@ function replyRefTo(m: ChatMessage): ReplyRef {
  * when the original is loaded (edits, deletion); otherwise the preview
  * saved when the reply was sent. Clicking jumps to the original.
  */
-function ReplyLine({ to, original, onClick }: { to: ReplyRef; original: ChatMessage | null; onClick: () => void }) {
+function ReplyLine({ to, original, blocked, onClick }: { to: ReplyRef; original: ChatMessage | null; blocked?: boolean; onClick: () => void }) {
   const colour = useNameColour(to.authorId);
   let who = to.username;
   let text: ReactNode = to.preview || <em>Click to see the message</em>;
@@ -795,6 +826,7 @@ function ReplyLine({ to, original, onClick }: { to: ReplyRef; original: ChatMess
     if (original.deleted) text = <em>Original message deleted</em>;
     else if (!original.unreadable) text = previewFor(original) || text;
   }
+  if (blocked) text = <em>Blocked message</em>;
   return (
     <button className="reply-line" onClick={onClick} title="Jump to the original message">
       <span className="reply-spine" aria-hidden />
