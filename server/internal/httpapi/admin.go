@@ -229,7 +229,7 @@ func (a *API) renameChannel(w http.ResponseWriter, r *http.Request) {
 	var old, kind string
 	err = tx.QueryRow(r.Context(),
 		`WITH o AS (SELECT name FROM channels WHERE id = $2)
-		 UPDATE channels SET name = $1 WHERE id = $2
+		 UPDATE channels SET name = $1 WHERE id = $2 AND kind <> 'dm'
 		 RETURNING (SELECT name FROM o), kind`,
 		req.Name, r.PathValue("id")).Scan(&old, &kind)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -283,7 +283,7 @@ func (a *API) deleteChannel(w http.ResponseWriter, r *http.Request) {
 	var name, kind string
 	var encrypted bool
 	err = tx.QueryRow(r.Context(),
-		`DELETE FROM channels WHERE id = $1 RETURNING name, kind, encrypted`,
+		`DELETE FROM channels WHERE id = $1 AND kind <> 'dm' RETURNING name, kind, encrypted`,
 		r.PathValue("id")).Scan(&name, &kind, &encrypted)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "channel not found")

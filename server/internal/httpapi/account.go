@@ -265,12 +265,12 @@ func (a *API) setChannelRetention(w http.ResponseWriter, r *http.Request) {
 
 	if req.Retention == "" {
 		tag, err = a.pool.Exec(r.Context(),
-			`UPDATE channels SET retention = NULL WHERE id = $1`, r.PathValue("id"))
+			`UPDATE channels SET retention = NULL WHERE id = $1 AND kind <> 'dm'`, r.PathValue("id"))
 	} else {
 		// Cast in SQL so Postgres validates the interval syntax. An
 		// invalid value is a client error, not a server one.
 		tag, err = a.pool.Exec(r.Context(),
-			`UPDATE channels SET retention = $1::interval WHERE id = $2`,
+			`UPDATE channels SET retention = $1::interval WHERE id = $2 AND kind <> 'dm'`,
 			req.Retention, r.PathValue("id"))
 	}
 

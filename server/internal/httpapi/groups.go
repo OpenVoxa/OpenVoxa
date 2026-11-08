@@ -545,7 +545,7 @@ func (a *API) setChannelAccess(w http.ResponseWriter, r *http.Request) {
 
 	var exists bool
 	if err := tx.QueryRow(r.Context(),
-		`SELECT EXISTS (SELECT 1 FROM channels WHERE id = $1 FOR UPDATE)`,
+		`SELECT EXISTS (SELECT 1 FROM channels WHERE id = $1 AND kind <> 'dm' FOR UPDATE)`,
 		channelID).Scan(&exists); err != nil {
 		slog.Error("locking channel", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not change access")

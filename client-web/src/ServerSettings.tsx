@@ -87,6 +87,7 @@ const SWITCHES: { id: string; label: string; help: string }[] = [
   { id: "server_mute", label: "Server mute", help: "Take away the microphone of people below their rank, in every voice channel." },
   { id: "move_members", label: "Move members", help: "Move people below their rank who are in a call to another voice channel, or disconnect them from voice." },
   { id: "manage_stickers", label: "Manage stickers", help: "Add, rename and remove the server's stickers." },
+  { id: "direct_messages", label: "Direct messages", help: "Start and send direct messages. Staff (any other switch) always can." },
 ];
 const switchLabel = (id: string) => SWITCHES.find((s) => s.id === id)?.label ?? id;
 

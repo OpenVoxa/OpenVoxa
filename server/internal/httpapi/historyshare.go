@@ -44,7 +44,7 @@ func (a *API) setHistorySharing(w http.ResponseWriter, r *http.Request) {
 	channelID := r.PathValue("id")
 
 	tag, err := a.pool.Exec(r.Context(),
-		`UPDATE channels SET history_sharing = $1 WHERE id = $2 AND encrypted`,
+		`UPDATE channels SET history_sharing = $1 WHERE id = $2 AND encrypted AND kind <> 'dm'`,
 		req.Enabled, channelID)
 	if err != nil {
 		slog.Error("setting history sharing", "err", err)

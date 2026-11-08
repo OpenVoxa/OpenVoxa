@@ -155,7 +155,7 @@ func (a *API) listChannelMembers(w http.ResponseWriter, r *http.Request) {
 		slog.Error("checking channel access", "err", err, "channel_id", channelID)
 		writeError(w, http.StatusInternalServerError, "could not list members")
 		return
-	case p.Kind != "text":
+	case !hasMessages(p.Kind):
 		writeError(w, http.StatusBadRequest, "not a text channel")
 		return
 	}

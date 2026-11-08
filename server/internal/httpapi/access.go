@@ -24,6 +24,13 @@ import (
 // serves the caller and other accounts alike; only the ban and deletion
 // checks differ, because requireAuth has already made them for the
 // caller.
+//
+// Direct messages (kind 'dm', migration 0036) follow their own rule and
+// never the administrator path: a DM is visible to its two people only,
+// and since allowedDevices comes from this same rule, nobody else's
+// devices can ever be added to its encryption group. Posting in one
+// needs both people still able to send DMs (mayDMSQL) and no block in
+// either direction; otherwise it is read-only for both.
 
 // errChannelNotFound covers both a missing channel and one the caller may
 // not view. Callers answer 404 for either, so a hidden channel is not
@@ -46,16 +53,62 @@ const isAdminSQL = `
 	         WHERE eg.user_id = u.id
 	           AND 'administrator' = ANY(g.permissions))`
 
-const canViewSQL = `(` + isAdminSQL + `
+const canViewSQL = `(CASE WHEN c.kind = 'dm' THEN ` + isDMMemberSQL + `
+	ELSE (` + isAdminSQL + `
 	OR EXISTS (SELECT 1 FROM channel_access ca
 	             JOIN effective_groups eg ON eg.group_id = ca.group_id
-	            WHERE ca.channel_id = c.id AND eg.user_id = u.id))`
+	            WHERE ca.channel_id = c.id AND eg.user_id = u.id)) END)`
 
-const canPostSQL = `(` + isAdminSQL + `
+const canPostSQL = `(CASE WHEN c.kind = 'dm' THEN ` + dmCanPostSQL + `
+	ELSE (` + isAdminSQL + `
 	OR EXISTS (SELECT 1 FROM channel_access ca
 	             JOIN effective_groups eg ON eg.group_id = ca.group_id
 	            WHERE ca.channel_id = c.id AND eg.user_id = u.id
-	              AND ca.can_post))`
+	              AND ca.can_post)) END)`
+
+// isDMMemberSQL: u is one of DM c's two people.
+const isDMMemberSQL = `
+	EXISTS (SELECT 1 FROM dm_channels dc
+	         WHERE dc.channel_id = c.id AND u.id IN (dc.user_low, dc.user_high))`
+
+// dmCanPostSQL: u is one of DM c's two people, neither has blocked the
+// other, and both may still send DMs.
+const dmCanPostSQL = `
+	EXISTS (SELECT 1 FROM dm_channels dc
+	         WHERE dc.channel_id = c.id AND u.id IN (dc.user_low, dc.user_high)
+	           AND NOT ` + dmBlockedSQL + `
+	           AND NOT EXISTS (SELECT 1 FROM users x
+	                            WHERE x.id IN (dc.user_low, dc.user_high)
+	                              AND NOT (` + mayDMSQL + `)))`
+
+// dmBlockedSQL: either of dm_channels row dc's people blocks the other.
+const dmBlockedSQL = `
+	EXISTS (SELECT 1 FROM user_blocks ub
+	         WHERE (ub.blocker_id = dc.user_low AND ub.blocked_id = dc.user_high)
+	            OR (ub.blocker_id = dc.user_high AND ub.blocked_id = dc.user_low))`
+
+// mayDMSQL: account x may send direct messages. It exists, isn't under
+// an active ban, and holds the direct_messages switch or any staff switch
+// (Administrator included). The list is every switch in perm.All, which
+// TestDMSwitchList keeps in step; a name not on it, such as a corrupt
+// one, grants nothing.
+const mayDMSQL = `
+	x.deleted_at IS NULL
+	AND NOT EXISTS (SELECT 1 FROM bans b
+	                 WHERE b.user_id = x.id
+	                   AND (b.expires_at IS NULL OR b.expires_at > now()))
+	AND EXISTS (SELECT 1 FROM effective_groups eg
+	              JOIN perm_groups g ON g.id = eg.group_id
+	             WHERE eg.user_id = x.id
+	               AND g.permissions && ` + dmSwitchesSQL + `)`
+
+const dmSwitchesSQL = `ARRAY['administrator', 'manage_groups', 'manage_channels',
+	'delete_messages', 'view_reports', 'ban', 'force_ptt', 'server_mute',
+	'move_members', 'manage_stickers', 'direct_messages']::text[]`
+
+// hasMessages reports whether a channel kind carries messages: text
+// channels and direct messages.
+func hasMessages(kind string) bool { return kind == "text" || kind == "dm" }
 
 const accessSQL = canViewSQL + `, ` + canPostSQL
 

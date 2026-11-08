@@ -280,7 +280,7 @@ func (a *API) listReports(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.pool.Query(r.Context(),
 		`SELECT rp.id, rp.message_id, rp.channel_id,
-		        COALESCE(c.name, ''), COALESCE(m.deleted, true),
+		        COALESCE(CASE WHEN c.kind = 'dm' THEN 'Direct message' ELSE c.name END, ''), COALESCE(m.deleted, true),
 		        COALESCE(ru.username, '[deleted]'),
 		        COALESCE(au.username, '[deleted]'),
 		        rp.accused_id, rp.reason, rp.claimed_body, rp.claimed_sealed,

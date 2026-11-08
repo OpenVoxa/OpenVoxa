@@ -22,6 +22,7 @@ import type { ApiCall } from "@core/identity";
 import type { Chat } from "@core/chat";
 import { countDown, countUp, sizeOf, trafficTotals } from "@core/traffic";
 import type { VoiceClient, VoiceSnapshot } from "@core/voice";
+import { isStaffPerms } from "./perms";
 
 const GITHUB = "https://github.com/OpenVoxa/OpenVoxa";
 
@@ -133,7 +134,7 @@ export function AboutSettings({ call, chat, voice, snap }: { call: ApiCall; chat
     (call("/api/v1/me") as Promise<Me>).then((m) => {
       if (!live) return;
       setMe(m);
-      if (m.permissions.length > 0) {
+      if (isStaffPerms(m.permissions)) {
         (call("/api/v1/version") as Promise<ServerVersion>).then((v) => live && setVersion(v)).catch(() => {});
       }
     }).catch(() => {});
@@ -144,7 +145,7 @@ export function AboutSettings({ call, chat, voice, snap }: { call: ApiCall; chat
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [call]);
 
-  const staff = (me?.permissions.length ?? 0) > 0;
+  const staff = isStaffPerms(me?.permissions ?? []);
   const since = chat.connectedSince;
   const inCall = snap?.state === "connected";
 

@@ -71,7 +71,8 @@ func (a *API) listModerationLog(w http.ResponseWriter, r *http.Request) {
 		             ELSE COALESCE(au.username, '[deleted]') END,
 		        l.action, l.subject_id,
 		        COALESCE(su.username, mu.username, ru.username, ''),
-		        COALESCE(mc.name, rc.name, ''),
+		        COALESCE(CASE WHEN mc.kind = 'dm' THEN 'Direct message' ELSE mc.name END,
+		                 CASE WHEN rc.kind = 'dm' THEN 'Direct message' ELSE rc.name END, ''),
 		        l.detail, l.created_at
 		   FROM moderation_log l
 		   LEFT JOIN users au ON au.id = l.actor_id

@@ -228,6 +228,12 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 
 	mux.HandleFunc("GET /api/v1/me", api.requireAuth(api.me))
 	mux.HandleFunc("GET /api/v1/channels", api.requireAuth(api.listChannels))
+	mux.HandleFunc("GET /api/v1/dms", api.requireAuth(api.listDMs))
+	mux.HandleFunc("POST /api/v1/dms", api.requireAuth(api.startDM))
+	mux.HandleFunc("GET /api/v1/dm-candidates", api.requireAuth(api.listDMCandidates))
+	mux.HandleFunc("GET /api/v1/blocks", api.requireAuth(api.listBlocks))
+	mux.HandleFunc("PUT /api/v1/blocks/{id}", api.requireAuth(api.putBlock))
+	mux.HandleFunc("DELETE /api/v1/blocks/{id}", api.requireAuth(api.deleteBlock))
 	// Older history, page by page (the websocket sends the newest page).
 	mux.HandleFunc("GET /api/v1/channels/{id}/messages",
 		withUUIDPath(api.requireAuth(api.listMessages)))
@@ -560,7 +566,7 @@ func (a *API) listChannels(w http.ResponseWriter, r *http.Request) {
 		           JOIN messages m ON m.id = mm.message_id
 		          WHERE mm.user_id = u.id AND m.channel_id = c.id AND NOT m.deleted)
 		   FROM channels c, users u
-		  WHERE u.id = $1 AND `+canViewSQL+`
+		  WHERE u.id = $1 AND c.kind <> 'dm' AND `+canViewSQL+`
 		  ORDER BY c.name`,
 		session.UserID)
 	if err != nil {

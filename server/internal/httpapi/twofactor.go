@@ -749,7 +749,8 @@ func (a *API) putSecuritySettings(w http.ResponseWriter, r *http.Request) {
 		  WHERE u.deleted_at IS NULL AND u.totp_enabled_at IS NULL
 		    AND ($1 = 'everyone' OR ($1 = 'staff' AND EXISTS (
 		          SELECT 1 FROM effective_groups eg JOIN perm_groups g ON g.id = eg.group_id
-		           WHERE eg.user_id = u.id AND cardinality(g.permissions) > 0)))`, mode)
+		           WHERE eg.user_id = u.id
+		             AND cardinality(array_remove(g.permissions, 'direct_messages')) > 0)))`, mode)
 	if err != nil {
 		slog.Error("finding accounts without two-factor", "err", err)
 		writeError(w, http.StatusInternalServerError, fail)

@@ -222,7 +222,7 @@ func (a *API) websocket(w http.ResponseWriter, r *http.Request) {
 		slog.Error("checking channel access", "err", err, "channel_id", channelID)
 		writeError(w, http.StatusInternalServerError, "could not open channel")
 		return
-	case p.Kind != "text":
+	case !hasMessages(p.Kind):
 		writeError(w, http.StatusBadRequest, "not a text channel")
 		return
 	}
@@ -274,7 +274,14 @@ func (a *API) websocket(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Checked per message, not just at connect. A read-only connection
-		// stays read-only for its whole life.
+		// stays read-only for its whole life. A DM is re-checked on every
+		// message too, because it turns read-only without any change to
+		// groups or channels: a block, or the other person losing the
+		// switch, being banned or deleted.
+		if canPost && p.Kind == "dm" {
+			now, err := a.channelPermsFor(ctx, session, channelID)
+			canPost = err == nil && now.CanPost
+		}
 		if !canPost {
 			sendFrame(ctx, client, errorFrame{
 				Type:  "error",

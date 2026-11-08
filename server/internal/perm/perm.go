@@ -47,11 +47,17 @@ const (
 	// MoveMembers: move people below your rank who are in a call to
 	// another voice channel, or disconnect them from voice.
 	MoveMembers Perm = "move_members"
+	// DirectMessages: start and send direct messages. Unlike the others
+	// it is an everyday ability, not a staff power: Member carries it by
+	// default (migration 0036), and Staff ignores it. Staff can always
+	// send DMs whether or not they hold it (httpapi/access.go).
+	DirectMessages Perm = "direct_messages"
 )
 
 // All lists every switch, in display order.
 var All = []Perm{Administrator, ManageGroups, ManageChannels,
-	DeleteMessages, ViewReports, Ban, ForcePTT, ServerMute, MoveMembers, ManageStickers}
+	DeleteMessages, ViewReports, Ban, ForcePTT, ServerMute, MoveMembers, ManageStickers,
+	DirectMessages}
 
 // Valid reports whether s names a known switch.
 func Valid(s string) bool {
@@ -82,12 +88,12 @@ func (s Set) Has(p Perm) bool {
 	return s[Administrator] || s[p]
 }
 
-// Staff reports whether the set holds any switch at all: the line between
-// ordinary accounts and power users. Used for things every staff member
-// needs, such as the account list.
+// Staff reports whether the set holds any switch other than
+// DirectMessages: the line between ordinary accounts and power users.
+// Used for things every staff member needs, such as the account list.
 func (s Set) Staff() bool {
 	for _, p := range All {
-		if s[p] {
+		if s[p] && p != DirectMessages {
 			return true
 		}
 	}

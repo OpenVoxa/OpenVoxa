@@ -143,7 +143,7 @@ func (a *API) listMessages(w http.ResponseWriter, r *http.Request) {
 		slog.Error("checking channel access", "err", err, "channel_id", channelID)
 		writeError(w, http.StatusInternalServerError, "could not load messages")
 		return
-	case p.Kind != "text":
+	case !hasMessages(p.Kind):
 		writeError(w, http.StatusBadRequest, "not a text channel")
 		return
 	}

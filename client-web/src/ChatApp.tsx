@@ -35,6 +35,7 @@ import { channelLink, LinksContext, onAddressTarget, takePendingTarget, type Lin
 import { serverInfoChanged, useServerInfo } from "./serverInfo";
 import { configureHome, HomeIcon, HomePane, markHomeSeen, refreshHome, useHome } from "./home";
 import type { ServerTab } from "./ServerSettings";
+import { isStaffPerms } from "./perms";
 
 const LAST_CHANNEL = (userId: string) => `lastChannel.${userId}`;
 /** "1" when Home was the last thing open: you come back to it. */
@@ -531,9 +532,9 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   const canManage = can("manage_channels");
   const canForcePTT = can("force_ptt");
   const canMove = can("move_members");
-  // Staff: anyone holding a switch. They see the member list; changing
-  // groups needs manage_groups (checked inside the dialog).
-  const isStaff = perms.length > 0;
+  // Staff: anyone holding a switch (Direct messages aside). They see the
+  // member list; changing groups needs manage_groups (checked inside the dialog).
+  const isStaff = isStaffPerms(perms);
   const settingsFor = (c: ChannelInfo) => canManage || (c.kind === "voice" && canForcePTT);
   const dialogChannel = dialog?.k === "settings" ? channels.find((c) => c.id === dialog.id) : undefined;
 
