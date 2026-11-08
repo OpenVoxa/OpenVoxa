@@ -172,9 +172,10 @@ PROD for work in progress:** build and test on this stack (DEV, LAN-only
 passed on DEV, at once as a **hotfix** (tag `v1.0.0-beta.N.M`) if it needs
 no call rejoin, no desktop install and doesn't touch voice/share/LiveKit. Repo
 history was rewritten 2026-11-07: reset older clones to origin/main,
-never pull or merge them. **Next:** release-routine gaps: `release:win` still
-writes DEV's `deploy/desktop-updates` (copy to PROD by hand), the double reconnect after a restart
-(Open items). Waiting on Ryan: the desktop icon PNG. Offered: `#`
+never pull or merge them. Desktop updates reach PROD via a private script
+(memory, not in the repo: **the repo serves single-server self-hosters;
+nothing DEV/PROD-specific goes in it**). **Next:** Ryan picks from Open
+items, Next up. Waiting on Ryan: the desktop icon PNG. Offered: `#`
 headings in Home, server name in the sidebar header, a single-copy
 hardware (H.264) share mode, "Message" on @mention chips. Untested:
 DK1-DK9, SI4/SI8.

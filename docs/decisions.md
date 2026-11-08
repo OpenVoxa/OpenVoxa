@@ -3588,7 +3588,13 @@ verified; the section named holds the design.
         build (about 600 MB really used). Gaps for stage 3:
         `release:win` still writes to DEV's `deploy/desktop-updates`
         (copied to PROD by hand); the public A record doesn't follow a
-        changed WAN IP (the IP cron only updates LiveKit).
+        changed WAN IP (the IP cron only updates LiveKit). Both closed
+        2026-11-08: the A record in "Public DNS record follows the IP";
+        the desktop copy to PROD is a private script on Docker, outside
+        the repo (Ryan: the repo serves single-server self-hosters, so
+        nothing that only fits a DEV/PROD pair goes in it). A single
+        server needs nothing: `release:win` writes its own update folder
+        (or `OPENVOXA_DESKTOP_UPDATES_DIR`).
       - **First release, v1.0.0-beta.1 (2026-11-08):** the 60 fps small
         copy fix, shipped while friends were on. Routine used: tag on
         Docker and push the tag; on PROD (over SSH, no sudo) `git fetch
@@ -3683,10 +3689,12 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
 
 ### Untested
 
-- [ ] **Double reconnect after a server restart** (2026-11-08, PROD
+- [x] **Double reconnect after a server restart** (2026-11-08, PROD
       v1.0.0-beta.1): each of three clients fetched a WebSocket ticket
-      twice, about 3 s apart, all 200. Harmless; reproduce on DEV with a
-      server restart and find why the first connection is dropped.
+      twice, about 3 s apart, all 200. Explained 2026-11-08, no change:
+      a client in a channel has two sockets, the events socket (`Chat`,
+      retry 5 s) and the channel socket (`ChannelView`, retry 1 s, then
+      2 s, ...), and each trades its own single-use ticket.
 
 - [ ] K1 flows 2-5 (recovery screens other than sign-up; deferred by
       Ryan), G2-G4 (GIFs), P3 (password), D1 (`delete-user` host
