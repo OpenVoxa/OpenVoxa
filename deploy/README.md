@@ -188,7 +188,7 @@ LiveKit reads the node IP only when it starts. `scripts/update-node-ip.sh` check
 */5 * * * * /home/you/OpenVoxa/deploy/scripts/update-node-ip.sh >> $HOME/openvoxa-node-ip.log 2>&1
 ```
 
-Your DNS record still needs its own dynamic DNS updater; this only covers LiveKit.
+**The DNS record follows too, on Cloudflare.** With `CLOUDFLARE_API_TOKEN` and `OPENVOXA_DOMAIN` set (the `Caddyfile.dns` path), the same script keeps the domain's A record on the public IP, using the token Caddy already has. It only changes the address of an A record that already exists. It never creates one, and it leaves the proxy setting and TTL alone. It checks the record on every run, so a failed update is tried again 5 minutes later, and changes and errors go to the same log. With another DNS provider, or several A records for the name, run your provider's own dynamic DNS updater instead.
 
 ## Attachments and storage
 

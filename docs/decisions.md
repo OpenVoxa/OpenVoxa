@@ -1397,6 +1397,32 @@ Built 2026-11-08 (`client-web/src/appDownload.tsx`; Ryan's picks).
   installed apps check), so nothing in Caddy or the server changes per
   release. A server without an update folder shows no link.
 
+#### Public DNS record follows the IP
+
+Built 2026-11-08 (`deploy/scripts/update-node-ip.sh`).
+
+- **Part of the existing IP cron, not a second job.** After its LiveKit
+  check, the script compares the domain's A record on Cloudflare with
+  the public IP and fixes the address when they differ. One IP lookup,
+  one log (`~/openvoxa-node-ip.log`), one cron line from `setup.sh`.
+- **Reuses Caddy's Cloudflare token** (DNS: Edit and Zone: Read already
+  cover it): no new secret. The token goes to curl on stdin, never on
+  the command line (other users can read the process list).
+- **Only an existing A record, only its address.** Never creates a
+  record (a LAN server must never get a public one; see deploy/README.md
+  "Private IPs need local DNS"), leaves the proxy and TTL alone, and
+  leaves names with several A records alone. Runs only while
+  `LIVEKIT_NODE_IP` is public, like the LiveKit part.
+- **The record is checked every run** (two or three API reads per 5
+  minutes, well under Cloudflare's limits) instead of only when the IP
+  changes, so a failed update is retried and a hand edit gets corrected.
+- No `jq` on Debian by default, so the JSON is read with `grep`/`sed`
+  (shapes checked against the live API).
+- Tested 2026-11-08 against the live zone with DEV's token: correct
+  record, missing record, unknown zone and LAN-only change nothing;
+  DD1, a temporary `ddns-test` A record at 192.0.2.1, moved to the
+  public IP with proxy and TTL kept, a second run silent, then deleted.
+
 #### Server name and icon
 
 Decided with Ryan, 2026-11-07; built the same day (desktop 0.1.9).
