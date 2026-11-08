@@ -108,7 +108,15 @@ Needs: a DNS A record pointing at your public IP, ports 80 and 443 forwarded to 
 
 For a server on a private IP, behind CGNAT, or behind a NAT you do not control. Caddy proves domain ownership by writing a TXT record through your DNS provider's API, so nothing has to reach you from outside. You still get a publicly trusted certificate.
 
-Needs: an API token scoped to DNS edits on your zone, and a Caddy build that includes your provider's plugin.
+Needs: an API token scoped to DNS edits on your zone, and a Caddy build that includes your provider's plugin (`setup.sh` sets up both).
+
+**Cloudflare token.** In the dashboard: profile icon, My Profile, API Tokens, Create Token, start from scratch with a **zone policy**:
+
+- Zone: Include, Specific zone, your domain (never all zones).
+- Permissions: **DNS: Edit** (writes the challenge record) and **Zone: Read** (finds the zone). Nothing else; in particular not Zone: Edit.
+- No expiration and no IP filter: certificates renew every couple of months, and an expired token or a changed home IP would make renewal fail quietly.
+
+Cloudflare shows the token once; keep it in a password manager. Give each server its own token, so one can be revoked without breaking the other.
 
 The shipped `caddy/Dockerfile` builds with the Cloudflare plugin. For another provider, change the `--with` line — [caddyserver.com/download](https://caddyserver.com/download) lists around a hundred, all following the same `github.com/caddy-dns/<name>` pattern. Then update the `dns` directive in `Caddyfile.dns` to match.
 

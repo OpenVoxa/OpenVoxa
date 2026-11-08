@@ -215,8 +215,10 @@ case $TLS_CHOICE in
 esac
 if [[ $TLS_CHOICE == 2 ]]; then
 	say "Caddy proves you own the domain by adding a DNS record through"
-	say "Cloudflare's API. Create an API token with Zone > DNS > Edit for this"
-	say "domain's zone (Cloudflare dashboard > My Profile > API Tokens)."
+	say "Cloudflare's API. Create an API token in the Cloudflare dashboard"
+	say "(My Profile > API Tokens > Create Token): a zone policy for this domain"
+	say "only, with DNS: Edit and Zone: Read, no expiry (certificates renew"
+	say "every couple of months). Details: deploy/README.md, \"Caddyfile.dns\"."
 	while [[ -z $CF_TOKEN ]]; do ask_secret CF_TOKEN "Cloudflare API token (hidden)"; done
 fi
 
