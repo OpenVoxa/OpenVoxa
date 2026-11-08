@@ -7,7 +7,9 @@ what's true now and what's next. History belongs in decisions.md and git.
 ## What this is
 
 Self-hosted, non-monetised Discord/TeamSpeak alternative: text channels,
-voice, screen share, forum-style features. Pre-alpha.
+voice, screen share, forum-style features. Pre-alpha. **Built for
+gaming groups:** smooth game screen shares (60 fps, every viewer) and
+low-latency voice come first; never trade them away for savings.
 Repo: github.com/OpenVoxa/OpenVoxa. Owner: Ryan (new to much of this,
 leans on AI for code: explain non-obvious choices, don't assume expertise).
 
