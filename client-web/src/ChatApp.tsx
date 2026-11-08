@@ -44,6 +44,8 @@ const LAST_CHANNEL = (userId: string) => `lastChannel.${userId}`;
 const LAST_HOME = (userId: string) => `lastHome.${userId}`;
 /** Least time between two alert sounds from one direct message. */
 const DM_SOUND_COOLDOWN_MS = 60_000;
+/** Least time between two @mention sounds, across all channels. */
+const MENTION_SOUND_COOLDOWN_MS = 60_000;
 /** "dms" when the sidebar last showed Direct Messages. */
 const SIDE_TAB = (userId: string) => `sideTab.${userId}`;
 
@@ -100,6 +102,9 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   // channel last played the message or mention sound. Looking at a
   // channel clears its entry, so its next message plays again.
   const soundAt = useRef(new Map<string, number>());
+  // When the last @mention sound played, in any channel (one cooldown
+  // for all of them, so mention spam can't be spread across channels).
+  const mentionSoundAt = useRef<number | null>(null);
   const openRef = useRef<string | null>(null);
   openRef.current = openId;
   useEffect(() => {
@@ -248,6 +253,12 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
             if (e.dm) {
               const last = soundAt.current.get(e.channelId);
               if (last !== undefined && Date.now() - last < DM_SOUND_COOLDOWN_MS) return;
+            } else {
+              // @mentions: at most once a minute over all channels, sound
+              // and pop-up. The @ badge still shows on every channel.
+              const last = mentionSoundAt.current;
+              if (last !== null && Date.now() - last < MENTION_SOUND_COOLDOWN_MS) return;
+              mentionSoundAt.current = Date.now();
             }
             // The mention sound counts towards the channel's cooldown.
             soundAt.current.set(e.channelId, Date.now());
