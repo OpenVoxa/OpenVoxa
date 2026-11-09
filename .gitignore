@@ -27,8 +27,12 @@ build/
 .idea/
 *.swp
 .DS_Store
+
+# Local to each server
 deploy/docker-compose.override.yml
-deploy/desktop-updates/
-deploy/docker-compose.override.yml
-deploy/desktop-updates/
+# Published desktop builds. The folder itself is kept (.gitkeep) so it
+# exists owned by whoever cloned the repo; left to Docker, the first
+# `compose up` would create it owned by root and releases couldn't write.
+deploy/desktop-updates/*
+!deploy/desktop-updates/.gitkeep
 /client-desktop/update-url.local
