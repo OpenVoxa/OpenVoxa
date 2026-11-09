@@ -3738,6 +3738,9 @@ verified; the section named holds the design.
         Preset over Resolution / Frame rate / Bitrate fields with Custom,
         Encoder VP8 or H.264, trimmed Stats), HW1-HW9. Web client only:
         no desktop app update. Same routine; served bundle matched DEV.
+      - **v1.0.0-beta.4 (2026-11-09):** user avatars, profiles stage 1
+        (AV1-AV12); migration 0037. Server and web client only: no
+        desktop app update. Same routine; served bundle matched DEV.
       - **Open for later:** an official desktop app on GitHub Releases
         for other people's servers; prebuilt server images.
 - [ ] **Desktop app icon** (Ryan, 2026-11-07): replace the Electron
