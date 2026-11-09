@@ -228,7 +228,7 @@ chmod 750 /path/to/share
 Mount it on the Docker host and make it persistent in `/etc/fstab`:
 
 ```
-nas.example:/export/openvoxa  /mnt/openvoxa-blobs  nfs  defaults,_netdev,soft,timeo=100,noatime  0  0
+nas.example:/srv/nfs/openvoxa-blobs  /mnt/openvoxa-blobs  nfs  defaults,_netdev,soft,timeo=100,noatime  0  0
 ```
 
 `_netdev` stops boot hanging before networking is up. `soft,timeo=100` makes the mount fail fast rather than blocking forever when the NAS is unreachable; without it a NAS reboot can wedge the server.
