@@ -10,7 +10,7 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type DragEvent, type ReactNode, type RefObject } from "react";
 import type {
-  AudioDevices, AudioSettings, MicLevel, MicMode, NoiseMode, ScreenShare, ShareSettings, VoiceClient, VoiceParticipant,
+  AudioDevices, AudioSettings, MicLevel, MicMode, NoiseMode, ScreenShare, ScreenStats, ShareCodec, ShareSettings, VoiceClient, VoiceParticipant,
   VoiceSnapshot,
 } from "@core/voice";
 import type { ApiCall } from "@core/identity";
@@ -640,6 +640,19 @@ export function VoiceBar({ voice, snap, channelName, onShare, onSettings }: {
 
 const SHARE_PREFS = "voice.share";
 
+/** The Resolution field's choices: the picture's height, always 16:9. */
+const RESOLUTIONS = [720, 1080, 1440, 2160];
+const FRAME_RATES = [15, 30, 60];
+const resLabel = (h: number) => (h === 2160 ? "4K (2160p)" : `${h}p`);
+
+/** What the share dialog's fields hold; a Quality template fills them in. */
+interface ShareFields { res: number; fps: number; kbps: number }
+
+const ENCODER_HINT: Record<ShareCodec, string> = {
+  vp8: "Recommended. Adds a small copy for viewers' tiles, so a slow connection can still watch.",
+  h264: "One full copy only: tiles and slow connections download the full picture.",
+};
+
 export function ShareDialog({ voice, onClose }: { voice: VoiceClient; onClose: () => void }) {
   const saved = (() => {
     try {
@@ -648,8 +661,21 @@ export function ShareDialog({ voice, onClose }: { voice: VoiceClient; onClose: (
       return {};
     }
   })();
-  const [preset, setPreset] = useState(saved.preset ?? 1);
+  const [fields, setFields] = useState<ShareFields>(() => {
+    if (saved.height && saved.fps && saved.kbps) return { res: saved.height, fps: saved.fps, kbps: saved.kbps };
+    // Saved before the fields existed: just a template's number.
+    const p = PRESETS[saved.preset ?? 1] ?? PRESETS[1];
+    return { res: p.height, fps: p.fps, kbps: p.kbps };
+  });
+  // The bitrate box as typed, in Mbps; it counts on Enter or leaving the box.
+  const [mbpsText, setMbpsText] = useState(String(fields.kbps / 1000));
   const [priority, setPriority] = useState<ShareSettings["priority"]>(saved.priority ?? "detail");
+  // VP8 unless this browser can't send it (WebKit: H.264 only).
+  const encoders = voice.shareEncoders();
+  const [codec, setCodec] = useState<ShareCodec>(() => {
+    const want = saved.codec ?? "vp8";
+    return encoders[want] ? want : want === "h264" ? "vp8" : "h264";
+  });
   const serverMuted = voice.snapshot().serverMuted;
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -662,36 +688,53 @@ export function ShareDialog({ voice, onClose }: { voice: VoiceClient; onClose: (
       .then((l) => {
         if (!live) return;
         setLimit(l);
-        // A remembered preset above the limit falls back to the best one allowed.
-        setPreset((cur) => {
-          if (PRESETS[cur] && presetAllowed(PRESETS[cur], l)) return cur;
-          for (let i = PRESETS.length - 1; i >= 0; i--) if (presetAllowed(PRESETS[i], l)) return i;
-          return 0;
-        });
+        // Remembered values above the limit come down to it.
+        if (l) {
+          setFields((f) => {
+            const res = [...RESOLUTIONS].reverse().find((r) => r <= Math.min(f.res, l.res)) ?? RESOLUTIONS[0];
+            const fps = [...FRAME_RATES].reverse().find((r) => r <= Math.min(f.fps, l.fps)) ?? FRAME_RATES[0];
+            const out = { res, fps, kbps: Math.min(f.kbps, l.kbps) };
+            setMbpsText(String(out.kbps / 1000));
+            return out;
+          });
+        }
       })
       .catch(() => live && setLimit(null)); // the server stays the judge either way
     return () => { live = false; };
   }, [voice]);
-  const allowed = PRESETS.map((p) => presetAllowed(p, limit ?? null));
-  const hidden = allowed.some((ok) => !ok);
+  const lim = limit ?? null;
+  const allowed = PRESETS.map((p) => presetAllowed(p, lim));
+  const limited = allowed.some((ok) => !ok);
+  // The template the fields match, or -1: Custom.
+  const template = PRESETS.findIndex((p) => p.height === fields.res && p.fps === fields.fps && p.kbps === fields.kbps);
+  const maxMbps = lim ? lim.kbps / 1000 : 50;
 
   const snap = voice.snapshot();
   const sharing = snap.sharing;
+  // While sharing, the dialog shows the encoder the share really uses.
+  const shownCodec = (sharing && snap.share?.codec) || codec;
 
-  function settings(i: number, prio: ShareSettings["priority"]): ShareSettings {
-    const p = PRESETS[i] ?? PRESETS[1];
+  function settings(f: ShareFields, prio: ShareSettings["priority"]): ShareSettings {
     // Sound is always asked for: whether a share has it is chosen in the
     // picker (the desktop app's or the browser's), next to what is shared.
     // A server mute still turns it off (VoiceClient's #capture).
-    return { width: p.width, height: p.height, fps: p.fps, kbps: p.kbps, priority: prio, audio: true };
+    return {
+      width: Math.round((f.res * 16) / 9), height: f.res, fps: f.fps, kbps: f.kbps,
+      priority: prio, audio: true, codec,
+    };
+  }
+
+  function remember(f: ShareFields, prio: ShareSettings["priority"]) {
+    const s = settings(f, prio);
+    localStore.set(SHARE_PREFS, JSON.stringify({ height: s.height, fps: s.fps, kbps: s.kbps, priority: prio, codec }));
   }
 
   async function start() {
-    localStore.set(SHARE_PREFS, JSON.stringify({ preset, priority }));
+    remember(fields, priority);
     setBusy(true);
     setError(null);
     try {
-      await voice.startShare(settings(preset, priority));
+      await voice.startShare(settings(fields, priority));
       onClose();
     } catch (err) {
       const text = shareErrorText(err);
@@ -701,19 +744,33 @@ export function ShareDialog({ voice, onClose }: { voice: VoiceClient; onClose: (
     }
   }
 
-  // While sharing: a quality change applies at once, in place.
-  async function changeQuality(i: number, prio: ShareSettings["priority"]) {
-    setPreset(i);
+  // Any field change: before sharing it is just kept; while sharing it
+  // applies at once, in place.
+  async function change(f: ShareFields, prio: ShareSettings["priority"]) {
+    setFields(f);
+    setMbpsText(String(f.kbps / 1000));
     setPriority(prio);
-    localStore.set(SHARE_PREFS, JSON.stringify({ preset: i, priority: prio }));
+    if (!sharing) return;
+    remember(f, prio);
     setBusy(true);
     setError(null);
     try {
-      await voice.setShareQuality(settings(i, prio));
+      await voice.setShareQuality(settings(f, prio));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
     setBusy(false);
+  }
+
+  function commitMbps() {
+    const n = Number(mbpsText.replace(",", "."));
+    if (!Number.isFinite(n) || n <= 0) {
+      setMbpsText(String(fields.kbps / 1000)); // nonsense: back to what it was
+      return;
+    }
+    const kbps = Math.round(Math.min(Math.max(n, 0.5), maxMbps) * 10) * 100; // 0.1 Mbps steps
+    if (kbps === fields.kbps) setMbpsText(String(kbps / 1000));
+    else void change({ ...fields, kbps }, priority);
   }
 
   async function switchShare() {
@@ -733,25 +790,61 @@ export function ShareDialog({ voice, onClose }: { voice: VoiceClient; onClose: (
     <Modal title={sharing ? "You're sharing your screen" : "Share your screen"} onClose={onClose}>
       <div className="modal-body">
         <label>
-          Quality
-          <select value={preset} disabled={busy} onChange={(e) => {
-            const i = Number(e.target.value);
-            if (sharing) void changeQuality(i, priority);
-            else setPreset(i);
+          Quality preset
+          <select value={template} disabled={busy} onChange={(e) => {
+            const p = PRESETS[Number(e.target.value)];
+            if (p) void change({ res: p.height, fps: p.fps, kbps: p.kbps }, priority);
           }}>
-            {PRESETS.map((p, i) => allowed[i] && <option key={p.label} value={i}>{p.label}</option>)}
+            {PRESETS.map((p, i) => (
+              <option key={p.label} value={i} disabled={!allowed[i]}
+                title={allowed[i] ? undefined : "Turned off on this server"}>{p.label}</option>
+            ))}
+            <option value={-1}>Custom</option>
           </select>
-          {hidden && <span className="muted small block">Higher qualities are turned off on this server.</span>}
+          {limited && <span className="muted small block">Higher qualities are turned off on this server.</span>}
+        </label>
+        <label>
+          Resolution
+          <select value={fields.res} disabled={busy} onChange={(e) => void change({ ...fields, res: Number(e.target.value) }, priority)}>
+            {RESOLUTIONS.map((r) => {
+              const ok = !lim || r <= lim.res;
+              return <option key={r} value={r} disabled={!ok} title={ok ? undefined : "Turned off on this server"}>{resLabel(r)}</option>;
+            })}
+          </select>
+        </label>
+        <label>
+          Frame rate
+          <select value={fields.fps} disabled={busy} onChange={(e) => void change({ ...fields, fps: Number(e.target.value) }, priority)}>
+            {FRAME_RATES.map((r) => {
+              const ok = !lim || r <= lim.fps;
+              return <option key={r} value={r} disabled={!ok} title={ok ? undefined : "Turned off on this server"}>{r} fps</option>;
+            })}
+          </select>
+        </label>
+        <label>
+          Bitrate (Mbps)
+          <input type="number" min={0.5} max={maxMbps} step={0.5} value={mbpsText} disabled={busy}
+            title={`0.5 to ${maxMbps} Mbps`}
+            onChange={(e) => setMbpsText(e.target.value)}
+            onBlur={commitMbps}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); commitMbps(); } }} />
         </label>
         <label>
           Optimise for
-          <select value={priority} disabled={busy} onChange={(e) => {
-            const prio = e.target.value as ShareSettings["priority"];
-            if (sharing) void changeQuality(preset, prio);
-            else setPriority(prio);
-          }}>
+          <select value={priority} disabled={busy} onChange={(e) => void change(fields, e.target.value as ShareSettings["priority"])}>
             <option value="detail">Detail: text and documents stay sharp</option>
             <option value="motion">Motion: games and video stay smooth</option>
+          </select>
+        </label>
+        <label>
+          Encoder
+          <select value={shownCodec} disabled={busy || sharing}
+            title={sharing ? "Changes on your next share" : ENCODER_HINT[shownCodec]}
+            onChange={(e) => setCodec(e.target.value as ShareCodec)}>
+            <option value="vp8" disabled={!encoders.vp8}
+              title={encoders.vp8 ? ENCODER_HINT.vp8 : "This browser shares with H.264 only"}>VP8</option>
+            <option value="h264" disabled={!encoders.h264}
+              title={encoders.h264 ? ENCODER_HINT.h264 : "This browser can't send H.264"}>H.264</option>
           </select>
         </label>
         {serverMuted && <p className="muted small">A moderator has muted you, so your share won't have sound.</p>}
@@ -1351,6 +1444,24 @@ function PersonTile({ voice, person, share, mutedTalking, hidden, onHide, onWatc
   );
 }
 
+/**
+ * A share's stats line. Your own: "60 / 60 fps · 5800 / 6000 kbps ·
+ * H.264 hardware · 0 dropped" (sent against the caps). Someone else's:
+ * what you receive, and your decoder.
+ */
+function statsLine(s: ScreenStats, local: boolean): ReactNode {
+  const n = (v: number | null) => v ?? "?";
+  const fps = local ? `${n(s.fps)} / ${n(s.maxFps)} fps` : `${n(s.fps)} fps`;
+  const kbps = local ? `${n(s.kbps)} / ${n(s.maxKbps)} kbps` : `${n(s.kbps)} kbps`;
+  const kind = s.hardware === null ? "" : s.hardware ? " hardware" : " software";
+  const coder = (
+    <span title={[s.coder && `${local ? "Encoder" : "Decoder"}: ${s.coder}`, s.fmtp && `Format: ${s.fmtp}`].filter(Boolean).join("\n") || undefined}>
+      {(s.codec ?? "?") + kind}
+    </span>
+  );
+  return <>{fps} · {kbps} · {coder} · {s.dropped} dropped</>;
+}
+
 function ScreenTile({ voice, share, stats, onClick }: {
   voice: VoiceClient;
   share: ScreenShare;
@@ -1372,12 +1483,7 @@ function ScreenTile({ voice, share, stats, onClick }: {
     if (!stats) return;
     const t = setInterval(async () => {
       const s = await voice.screenStats(share.id, video.current ?? undefined);
-      setLine(`${s.width}×${s.height} · ${s.fps ?? "?"} fps · ${s.kbps ?? "?"} kbps` +
-        (s.dropped ? ` · ${s.dropped} dropped` : "") + (share.isLocal ? " (sending)" : "") +
-        (s.capture ? ` · capture: asked ${s.capture.asked ?? "?"}, agreed ${s.capture.agreed ?? "?"}, got ${s.capture.actual ?? "?"} fps` : "") +
-        // LiveKit names the layers q (small) and h or f (full); one copy has no name.
-        (s.copies?.length ? " · " + [...s.copies].sort((a, b) => (a.name === "q" ? 1 : 0) - (b.name === "q" ? 1 : 0)).map((c) =>
-          `${c.name === "q" ? "small" : c.name ? "full" : "copy"}: max ${c.maxFps ?? "?"} fps, ${c.fps ? `sending ${c.fps}` : "paused"}`).join(" · ") : ""));
+      setLine(statsLine(s, share.isLocal));
     }, 1000);
     return () => clearInterval(t);
   }, [stats, voice, share.id, share.isLocal]);

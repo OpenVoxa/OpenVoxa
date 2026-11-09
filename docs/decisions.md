@@ -894,6 +894,44 @@ with Hide (stop showing it), Listen and Fullscreen. Decided the same day:
   devices without VP8 hardware decoding (older iPhones mostly).
   Exception: Safari and other WebKit sharers send one full H.264 copy
   (Implementation notes, "Safari screen share layers").
+  **Changed 2026-11-09 (Ryan): Hardware (H.264) is the default.** The
+  share dialog has an Encoder choice: Hardware (H.264, one full copy,
+  encoded by the graphics card where the browser can) or Software (VP8,
+  full copy plus the small one for tiles, encoded on the CPU). The point
+  is a gaming PC's CPU: VP8 at 1080p60 competes with the game, the
+  graphics card's H.264 encoder doesn't. The cost: tiles download the
+  full copy, and a viewer on a weak connection has no smaller copy to
+  fall back to. Fixed for the length of a share (greyed out while
+  sharing), remembered per device; greyed out where the browser can't
+  send it (Hardware without H.264; Standard on WebKit). If the graphics
+  card can't, Chromium encodes H.264 in software (OpenH264): Stats says
+  which. HW1-HW9 below.
+  **Reversed the same day (Ryan): VP8 is the default again**, and the
+  options are just "VP8" / "H.264" (hover: what each sends). In Chromium
+  "Hardware (H.264)" never reached the graphics card (Implementation
+  notes, LiveKit, "Why Hardware (H.264) still encodes in software"), so
+  it only cost viewers the small copy. Later, each its own design talk:
+  enabling H.264 Baseline/Main in LiveKit's `enabled_codecs` on DEV
+  (would iPads still watch?), then a native share helper for the
+  desktop app (LiveKit's Rust SDK, NVENC directly, E2EE kept).
+  **Share dialog reworked (same day, Ryan):** Quality preset is a template
+  list (the five presets plus Custom) that only fills in the fields
+  below it: Resolution (720p, 1080p, 1440p, 4K; always 16:9), Frame
+  rate (15, 30, 60), Bitrate (a box in Mbps, 0.5 to the server's
+  limit, 0.1 steps; counts on Enter or leaving the box), Optimise for
+  and Encoder. Editing a field shows Custom unless the values match a
+  template again. Templates leave Optimise for and Encoder alone. The
+  encoder options are just "Hardware (H.264)" / "Software (VP8)", with
+  the explanation on hover (no hint line under it). Choices above the
+  server's limit are greyed out, no longer hidden. While sharing, every
+  field but Encoder applies at once. The device remembers the fields
+  (older saved template numbers still load).
+  **Stats trimmed (same day, Ryan):** your own share shows sent / max
+  fps, current / max kbps (max: every copy's cap added up), the
+  encoder (codec, hardware or software; its name on hover) and frames
+  dropped since Stats was turned on (captured but not encoded). Someone
+  else's: received fps and kbps, your decoder, frames dropped by the
+  decoder or the screen.
 - **Clicks (Ryan, 2026-11-05):** one click on a tile opens the big view
   (Watch); one click on a lone share there, or Esc, goes back (to the
   tiles or to chat, wherever you came from). A double click anywhere
@@ -2888,6 +2926,37 @@ content. The "prioritise detail / motion" control sets both this and
 when simulcast is on, H.264 when it is off and hardware decoding matters
 (notably Safari and iOS). Awkward and inherent to WebRTC today.
 
+**H.264 share as one copy (2026-11-09, experiment: two headless Chrome
+157 against our LiveKit 1.13.11, livekit-client 2.23.0, E2EE on, a
+1080p60 canvas).** `videoCodec: "h264"` with `simulcast: false` sends
+one copy; LiveKit adds no backup codec when E2EE is on (its source says
+so), so it really is one. The viewer decoded 1920x1080 at 60 fps in a
+320 px tile (no smaller copy to pick), and a live quality change (6 Mbps
+60 fps to 3 Mbps 30 fps by `replaceTrack` with itself) applied in place.
+**Chrome hides `encoderImplementation`, `decoderImplementation` and
+`powerEfficientEncoder/Decoder` unless the page is capturing:** with no
+capture they were missing; with a getUserMedia track stopped at once,
+still missing; with a mic track kept open: "OpenH264" / "FFmpeg",
+power-efficient false (no GPU in the container). In a call the mic is
+open, so Stats can show them; a hardware encoder reports
+`powerEfficientEncoder: true`. Not yet seen on a real graphics card.
+
+**Why "Hardware (H.264)" still encodes in software (2026-11-09, Ryan's
+RTX 4090, Windows 11, Brave 1.99 / Chromium 157; log via
+`--enable-logging --v=1`).** LiveKit lets publishers send only H.264
+Constrained Baseline (`42e01f`): it filters High profile out of the
+publisher transport (`filterOutH264HighProfile: !IsOfferer`, v1.13.11
+`pkg/rtc/transport.go`), and Baseline/Main (`42001f`/`4d001f`) are only
+registered when `enabled_codecs` lists them with that exact fmtp line.
+Chromium on Windows doesn't offer the graphics card for Constrained
+Baseline (feature `PlatformH264CbpEncoding`, off by default on Windows
+only). Turned on, Chromium tries the card and NVIDIA's Media Foundation
+encoder refuses it ("Couldn't set output media type, The input type is
+not supported for D3D device (0xC00D6D76)"), so it falls back to
+OpenH264 (`implementation_name = 'OpenH264'`). `brave://gpu` lists
+hardware H.264 baseline/main/high (1080p up to 121 fps, 4K up to 30).
+`WebRtcScreenshareSwEncoding` is unrelated (off by default, VP8 only).
+
 **Safari screen share layers (2026-11-05, CV5).** An iPad Pro in Safari
 sharing with VP8 simulcast sent only the small layer: tiles worked,
 but Watch (full layer) received 0x0, 0 kbps, a black view, and the
@@ -3527,6 +3596,14 @@ verified; the section named holds the design.
   Settings > Chat > Blocked People, collapsed blocked messages, no
   alerts from blocked people), BK1-BK8 (Feature decisions, "Direct
   messages", "Stage 3 as built").
+- 2026-11-09 H.264 share encoder option (Encoder
+  choice in the share dialog, one full copy; VP8, the default, keeps the
+  small copy for tiles) and a trimmed Stats line (sent / max fps and
+  kbps, encoder hardware or software, frames dropped); the share dialog
+  reworked into a Quality template (with Custom) over Resolution, Frame
+  rate, Bitrate, Optimise for and Encoder fields, HW1-HW9 pass (Feature
+  decisions, "Voice channel view"; Implementation notes, LiveKit, "H.264
+  share as one copy").
 
 ## Open items
 

@@ -161,6 +161,32 @@ export interface ShareSettings {
   /** "detail" keeps text sharp, "motion" keeps the frame rate. */
   priority: "detail" | "motion";
   audio: boolean;
+  /**
+   * "vp8" (the default): a full copy and a half-size one for tiles.
+   * "h264": one full copy. Both encode on the CPU in Chromium today
+   * (decisions.md, "Why Hardware (H.264) still encodes in software").
+   * Fixed for the length of a share.
+   */
+  codec: ShareCodec;
+}
+
+export type ShareCodec = "h264" | "vp8";
+
+/** A share's stats line (screenStats). Max values: your own share only. */
+export interface ScreenStats {
+  fps: number | null;
+  maxFps: number | null;
+  kbps: number | null;
+  maxKbps: number | null;
+  /** H.264, VP8, ... */
+  codec: string | null;
+  /** The browser's encoder or decoder, e.g. OpenH264, libvpx, or a graphics card's. */
+  coder: string | null;
+  /** Whether that runs on dedicated hardware (null: the browser doesn't say). */
+  hardware: boolean | null;
+  /** The codec's SDP parameters (for H.264, which profile was agreed). */
+  fmtp: string | null;
+  dropped: number;
 }
 
 /**
@@ -278,6 +304,21 @@ function heldToLimit(s: ShareSettings, limit: ShareLimit | null): ShareSettings 
 const WEBKIT = typeof navigator !== "undefined" &&
   /AppleWebKit/.test(navigator.userAgent) && !/(Chrome|Chromium|Android)\//.test(navigator.userAgent);
 
+/** Whether this browser can send an H.264 share. */
+function canShareH264(): boolean {
+  try {
+    return RTCRtpSender.getCapabilities?.("video")?.codecs.some((c) => /h264/i.test(c.mimeType)) ?? false;
+  } catch {
+    return false;
+  }
+}
+
+/** The encoder a share really uses: the one asked for when this browser can send it. */
+function shareCodec(asked: ShareCodec): ShareCodec {
+  if (WEBKIT) return "h264";
+  return asked === "h264" && canShareH264() ? "h264" : "vp8";
+}
+
 /** The capture size asked for, as LiveKit asks it (Safari: max, others: ideal). */
 function captureSize(s: ShareSettings): MediaTrackConstraints {
   return WEBKIT
@@ -291,13 +332,16 @@ function shareOptions(s: ShareSettings): TrackPublishOptions {
   // asking for the full one got 0 kbps, a black Watch view. Safari and
   // every other WebKit browser send one full H.264 copy instead
   // (hardware-encoded), so their shares cost viewers' tiles more.
+  const codec = shareCodec(s.codec);
   const encoding = { maxBitrate: s.kbps * 1000, maxFramerate: s.fps };
   return {
     // Screen-share tracks read screenShareEncoding, NOT videoEncoding;
     // setting only the latter leaves 1080p15 at 1.5 Mbps in place.
     screenShareEncoding: encoding,
     videoEncoding: encoding,
-    // Two layers: full quality, and half resolution, which the call
+    // H.264: one full copy, because H.264 simulcast is
+    // poorly supported; tiles download the full picture too.
+    // VP8: two layers, full quality and half resolution, which the call
     // view's tiles show (adaptiveStream picks it from their size) and
     // anyone who can't keep up falls back to. Both at the chosen frame
     // rate: a 30 fps cap here made a 60 fps game share look locked at 30
@@ -305,12 +349,14 @@ function shareOptions(s: ShareSettings): TrackPublishOptions {
     // simulcast is poorly supported (decisions.md, "Voice channel
     // view"); watching costs a little more CPU where VP8 isn't
     // hardware-decoded.
-    simulcast: !WEBKIT,
+    simulcast: codec === "vp8",
     screenShareSimulcastLayers: [
       new VideoPreset(Math.round(s.width / 2), Math.round(s.height / 2),
         Math.round(s.kbps * 1000 * 0.3), s.fps),
     ],
-    videoCodec: WEBKIT ? "h264" : "vp8",
+    // No backup codec: LiveKit only adds one without E2EE (checked in
+    // livekit-client 2.23.0), so an H.264 share is exactly one copy.
+    videoCodec: codec,
     degradationPreference: s.priority === "motion" ? "maintain-framerate" : "maintain-resolution",
   };
 }
@@ -467,7 +513,7 @@ export class VoiceClient {
    * back) doesn't stop and restart the download. */
   #unwatch = new Map<string, ReturnType<typeof setTimeout>>();
   #listening = new Set<string>(); // participant identities
-  #stats = new Map<string, { bytes: number; frames: number; at: number }>();
+  #stats = new Map<string, { bytes: number; at: number; droppedBase: number }>();
 
   constructor(session: Session, opts: VoiceOptions) {
     this.#session = session;
@@ -1678,7 +1724,7 @@ export class VoiceClient {
     // Held to the server's limit whatever was asked for, so an honest
     // client is never the one the server has to stop.
     const limit = await this.shareLimit();
-    s = heldToLimit(s, limit);
+    s = heldToLimit({ ...s, codec: shareCodec(s.codec) }, limit);
     const cap = await this.#capture(s, limit);
     if (this.#room !== room) {
       cap.release(); // left the call meanwhile
@@ -1783,7 +1829,8 @@ export class VoiceClient {
     this.#shareBusy = true;
     try {
       const limit = await this.shareLimit();
-      const s = heldToLimit({ ...q, audio: this.#share.audio }, limit);
+      // The encoder can't change while sharing (it would end the track).
+      const s = heldToLimit({ ...q, audio: this.#share.audio, codec: this.#share.codec }, limit);
       if (this.#shareVideo() !== video) return;
       const mst = video.mediaStreamTrack;
       try {
@@ -1806,6 +1853,11 @@ export class VoiceClient {
       this.#shareBusy = false;
       this.#changed();
     }
+  }
+
+  /** Which share encoders this browser can use (WebKit: H.264 only, see shareOptions). */
+  shareEncoders(): Record<ShareCodec, boolean> {
+    return { h264: WEBKIT || canShareH264(), vp8: !WEBKIT };
   }
 
   /** The running share's picture track. */
@@ -2021,73 +2073,88 @@ export class VoiceClient {
   }
 
   /**
-   * What a share is actually doing, for the stats line: frame size, frame
-   * rate and bitrate, sent (your own) or received. Call about once a
-   * second; rates are measured between calls.
+   * What a share is actually doing, for the stats line, sent (your own)
+   * or received: frame rate and bitrate (with your own share's caps), the
+   * encoder or decoder, and frames dropped since the stats were first
+   * asked for. Call about once a second; bitrates are measured between
+   * calls.
    */
-  async screenStats(id: string, el?: HTMLVideoElement): Promise<{
-    width: number; height: number; fps: number | null; kbps: number | null; dropped: number;
-    /** Your own share only: the frame rate asked for, what the browser agreed to, and what it captures. */
-    capture?: { asked: number | null; agreed: number | null; actual: number | null };
-    /** Your own share only: each copy (full, small) with its frame rate cap and what it sends now (0 = paused). */
-    copies?: { name: string; width: number; maxFps: number | null; fps: number }[];
-  }> {
+  async screenStats(id: string, el?: HTMLVideoElement): Promise<ScreenStats> {
     const t = this.#screenTrack(id);
-    const out: Awaited<ReturnType<VoiceClient["screenStats"]>> =
-      { width: el?.videoWidth ?? 0, height: el?.videoHeight ?? 0, fps: null, kbps: null, dropped: 0 };
+    const out: ScreenStats = { fps: null, maxFps: null, kbps: null, maxKbps: null, codec: null, coder: null, hardware: null, fmtp: null, dropped: 0 };
     if (!t) return out;
-    if (t === this.#shareVideo()) {
-      const agreed = t.mediaStreamTrack.getSettings().frameRate;
-      out.capture = { asked: this.#share?.fps ?? null, agreed: agreed ? Math.round(agreed) : null, actual: null };
-      out.copies = [];
-    }
-    // The sender's caps per layer (rid), to match up with the outbound stats.
-    const caps = new Map<string, number | null>();
-    for (const e of (t as LocalTrack).sender?.getParameters().encodings ?? []) {
-      caps.set(e.rid ?? "", e.maxFramerate ?? null);
+    const local = t === this.#shareVideo();
+    if (local) {
+      // Caps over every copy: the best frame rate and the total bitrate.
+      for (const e of (t as LocalTrack).sender?.getParameters().encodings ?? []) {
+        if (e.maxFramerate) out.maxFps = Math.max(out.maxFps ?? 0, Math.round(e.maxFramerate));
+        if (e.maxBitrate) out.maxKbps = (out.maxKbps ?? 0) + Math.round(e.maxBitrate / 1000);
+      }
     }
     let bytes = 0;
-    let frames = 0;
+    let dropped = 0;
+    let captured = 0;
+    let encoded = 0;
+    let best = -1; // frame width of the copy the encoder line describes
+    type Rtp = {
+      type: string; kind?: string; codecId?: string; mimeType?: string; sdpFmtpLine?: string; id: string;
+      bytesSent?: number; bytesReceived?: number; framesPerSecond?: number; frameWidth?: number;
+      frames?: number; framesEncoded?: number; framesDropped?: number;
+      encoderImplementation?: string; decoderImplementation?: string;
+      powerEfficientEncoder?: boolean; powerEfficientDecoder?: boolean;
+    };
     try {
       const report = await (t as unknown as { getRTCStatsReport?: () => Promise<RTCStatsReport | undefined> }).getRTCStatsReport?.();
-      // Simulcast reports one outbound-rtp per layer: sum before diffing.
-      report?.forEach((r: { type: string; kind?: string; bytesSent?: number; bytesReceived?: number; framesSent?: number; framesDecoded?: number; frameWidth?: number; frameHeight?: number; framesPerSecond?: number }) => {
+      const codecs = new Map<string, { mime: string; fmtp: string | null }>();
+      report?.forEach((r: Rtp) => {
+        if (r.type === "codec" && r.mimeType) codecs.set(r.id, { mime: r.mimeType, fmtp: r.sdpFmtpLine ?? null });
+      });
+      // Simulcast reports one outbound-rtp per copy: bytes add up, the
+      // frame rate and the encoder are the best copy's.
+      report?.forEach((r: Rtp) => {
         if (r.kind !== "video") return;
-        // What the capture delivers, before the encoder.
-        if (r.type === "media-source" && out.capture && r.framesPerSecond !== undefined) {
-          out.capture.actual = Math.round(r.framesPerSecond);
-        }
-        if (r.type === "outbound-rtp") {
-          if (out.copies) {
-            const rid = (r as { rid?: string }).rid ?? "";
-            out.copies.push({ name: rid, width: r.frameWidth ?? 0, maxFps: caps.get(rid) ?? null, fps: Math.round(r.framesPerSecond ?? 0) });
-          }
-          bytes += r.bytesSent ?? 0;
-          frames = Math.max(frames, r.framesSent ?? 0);
-          if (!out.width && r.frameWidth) {
-            out.width = r.frameWidth;
-            out.height = r.frameHeight ?? 0;
-          }
-        } else if (r.type === "inbound-rtp") {
-          bytes += r.bytesReceived ?? 0;
-          frames += r.framesDecoded ?? 0;
+        if (r.type === "media-source") captured = r.frames ?? 0;
+        if (r.type !== "outbound-rtp" && r.type !== "inbound-rtp") return;
+        bytes += (r.type === "outbound-rtp" ? r.bytesSent : r.bytesReceived) ?? 0;
+        if (r.framesPerSecond !== undefined) out.fps = Math.max(out.fps ?? 0, Math.round(r.framesPerSecond));
+        if (r.type === "outbound-rtp") encoded = Math.max(encoded, r.framesEncoded ?? 0);
+        else dropped += r.framesDropped ?? 0;
+        const w = r.frameWidth ?? 0;
+        if (w > best) {
+          best = w;
+          const c = r.codecId ? codecs.get(r.codecId) : undefined;
+          out.codec = c ? codecName(c.mime) : out.codec;
+          out.fmtp = c?.fmtp ?? out.fmtp;
+          // Chrome only names these to a page that is capturing (the mic
+          // in a call; found by experiment): otherwise they stay null.
+          out.coder = r.encoderImplementation ?? r.decoderImplementation ?? null;
+          out.hardware = r.powerEfficientEncoder ?? r.powerEfficientDecoder ?? null;
         }
       });
     } catch {
       /* stats unavailable in this browser */
     }
-    const q = el?.getVideoPlaybackQuality?.();
-    if (q) out.dropped = q.droppedVideoFrames;
+    // Dropped: your own share, captured frames the encoder skipped (CPU or
+    // bandwidth); someone else's, frames the decoder or the screen dropped.
+    if (local) dropped = Math.max(0, captured - encoded);
+    else dropped += el?.getVideoPlaybackQuality?.().droppedVideoFrames ?? 0;
     const now = performance.now();
     const prev = this.#stats.get(id);
     if (prev && now > prev.at) {
       const secs = (now - prev.at) / 1000;
       out.kbps = Math.max(0, Math.round(((bytes - prev.bytes) * 8) / secs / 1000));
-      out.fps = Math.max(0, Math.round((frames - prev.frames) / secs));
     }
-    this.#stats.set(id, { bytes, frames, at: now });
+    const base = prev?.droppedBase ?? dropped;
+    out.dropped = Math.max(0, dropped - base);
+    this.#stats.set(id, { bytes, at: now, droppedBase: base });
     return out;
   }
+}
+
+/** "video/H264" as people know it: H.264, VP8, VP9, AV1. */
+function codecName(mime: string): string {
+  const n = mime.replace(/^video\//i, "");
+  return /^h264$/i.test(n) ? "H.264" : n.toUpperCase();
 }
 
 type Stats = { getStats(): Promise<RTCStatsReport> | undefined };
