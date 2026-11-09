@@ -6,16 +6,16 @@ A free, open-source alternative to Discord and TeamSpeak. Your server, your data
 
 ---
 
-## ⚠️ Do not use this yet. Seriously.
+## ⚠️ Beta, and the encryption has never been reviewed
 
-OpenVoxa is **pre-alpha**. It is being built in public, from scratch, by someone learning large chunks of this as they go.
+OpenVoxa is in **beta**: it runs day to day for a small group of friends, and you can host your own. It is being built in public, from scratch, by someone learning large chunks of this as they go.
 
 Text, voice and screen sharing work, and end-to-end encryption is now built: encrypted channels and every call are encrypted on your device with MLS (RFC 9420), so the server only stores and relays ciphertext. **But none of it has been reviewed by anyone qualified.** Encryption that hasn't been audited is encryption you should assume is broken somewhere. That review is the line between "interesting project" and "something to trust".
 
 **Please do not:**
 
 - Use this for any conversation you would mind seeing on a billboard
-- Expose it to the open internet
+- Expose it to the open internet unless you accept that risk: keep it to people you know, with sign-up closed or behind a server password
 - Recommend it to anyone who actually needs privacy (journalists, activists, people in unsafe situations)
 - Assume the word "encrypted" anywhere in this repo means "reviewed and safe"; it means "built and tested by us"
 
@@ -145,15 +145,17 @@ The server never sits in the media path. It mints short-lived, room-scoped token
 
 ## Running it
 
-Requires Docker and Docker Compose.
+On a 64-bit Linux machine (Debian or Ubuntu is easiest), as your normal user:
 
 ```bash
 git clone https://github.com/OpenVoxa/OpenVoxa.git
 cd OpenVoxa/deploy
-cp .env.example .env
-# edit .env, then:
-docker compose --profile tls up -d
+./setup.sh
 ```
+
+The script installs Docker if it's missing, asks a few questions (domain or LAN only, who connects, where uploads go), generates every secret, sets up backups and starts the server. `./setup.sh --dry-run` shows what it would do first. To set it up by hand instead, copy `deploy/.env.example` to `.env` and follow [`deploy/README.md`](deploy/README.md).
+
+People join in a browser at your server's address. The Windows desktop app works with any OpenVoxa server; building and publishing it yourself is in [`deploy/README.md`](deploy/README.md), "Desktop app".
 
 **TLS is not optional in practice.** Browsers refuse microphone and screen-capture access outside a secure context, so without it voice does not work anywhere but `localhost`. Three ready-made Caddy setups cover a public domain, a domain with no inbound access (private IPs, CGNAT), and LAN only; or put your own reverse proxy in front.
 

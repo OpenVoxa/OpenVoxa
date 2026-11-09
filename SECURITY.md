@@ -2,7 +2,7 @@
 
 ## Current status: assume it's broken
 
-OpenVoxa is **pre-alpha and unaudited**. No security researcher has reviewed it. The cryptographic design follows established standards and uses established implementations, but correct usage of those implementations has not been verified by anyone qualified.
+OpenVoxa is **beta and unaudited**. No security researcher has reviewed it. The cryptographic design follows established standards and uses established implementations, but correct usage of those implementations has not been verified by anyone qualified.
 
 Do not deploy this where real privacy matters. Do not use it for conversations you would mind being public.
 
