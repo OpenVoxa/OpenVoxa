@@ -3684,6 +3684,10 @@ verified; the section named holds the design.
         (deploy files and docs only; nightly `scripts/backup-db.sh`).
         No server or client change, so the server needs no rebuild:
         `git checkout` the tag and add the cron line.
+      - **v1.0.0-beta.3 (2026-11-09):** the share dialog rework (Quality
+        Preset over Resolution / Frame rate / Bitrate fields with Custom,
+        Encoder VP8 or H.264, trimmed Stats), HW1-HW9. Web client only:
+        no desktop app update. Same routine; served bundle matched DEV.
       - **Open for later:** an official desktop app on GitHub Releases
         for other people's servers; prebuilt server images.
 - [ ] **Desktop app icon** (Ryan, 2026-11-07): replace the Electron
