@@ -1436,6 +1436,28 @@ Built 2026-11-08 (`client-web/src/appDownload.tsx`; Ryan's picks).
   release. A server without an update folder shows no link.
 - Tested: DL1-DL6 on the test server; DL7 (the link on the live server after beta.2.1) passed.
 
+#### New version notice
+
+Built 2026-11-09 (`client-web/src/newVersion.ts`; Ryan's picks).
+
+- **Why:** the web client is embedded in the server, so a server update
+  brings a new one, but open pages (browser tabs and the desktop app's
+  server views alike) keep running the old one until they reload. The
+  desktop app's green arrow is only for the shell itself.
+- **Detection, no server change:** a server restart drops the event
+  socket; on `events_reconnected` the page fetches `/` (no-store) and
+  compares the hashed app script it names (`/assets/index-<hash>.js`)
+  with its own. Different: a newer client is there. A plain restart
+  (same build) shows nothing; a development server (no hashed script)
+  never does. The front page is public, so nothing new is exposed.
+- **The notice (Ryan's pick over instructions to right-click the server
+  icon):** a bar at the top of the main pane, "New features are
+  available." with **Reload** (reloads the page, in browsers and the
+  desktop app alike) and × (hidden until the next new build).
+- **Never during a call** (Ryan's pick): reloading drops voice and screen
+  share, so the bar waits until the call ends (gaming first).
+- Tested: NV1-NV6 on the test server.
+
 #### Public DNS record follows the IP
 
 Built 2026-11-08 (`deploy/scripts/update-node-ip.sh`).
@@ -3654,6 +3676,9 @@ verified; the section named holds the design.
   Avatar, logged; sealed under the account key; migration 0037),
   AV1-AV12 pass (Feature decisions, "Planned", "User avatars and
   profiles", "Stage 1 as built").
+- 2026-11-09 New version notice (a Reload bar after a server update
+  brings a new web client, hidden during calls), NV1-NV6 (Feature
+  decisions, "New version notice").
 
 ## Open items
 

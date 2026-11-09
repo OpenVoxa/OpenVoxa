@@ -1253,3 +1253,12 @@ button.name-btn:hover { text-decoration: underline; }
   flex: none; width: 72px; height: 72px; border-radius: 50%; display: grid; place-items: center;
   font-size: 30px; font-weight: 700; background: var(--sidebar-active); color: var(--text); margin: 8px 0;
 }
+/* "New features are available" (newVersion.ts): the reply bar's look,
+   at the top of the main pane. */
+.update-bar {
+  display: flex; align-items: center; gap: 8px; margin: 8px 16px 0; padding: 6px 6px 6px 12px;
+  background: var(--panel); border-radius: var(--radius); font-size: 14px; flex: none;
+}
+.update-bar-text { flex: 1; min-width: 0; }
+.update-bar button.primary { flex: none; font-size: 13px; font-weight: 700; padding: 3px 10px; border: 1px solid var(--accent); }
+.update-bar .reply-x { flex: none; font-size: 18px; }

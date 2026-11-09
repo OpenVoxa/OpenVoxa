@@ -31,6 +31,7 @@ import { SettingsDialog, type AccountActions, type SettingsTab } from "./Setting
 import { ServerSettingsDialog } from "./ServerSettings";
 import { configureStickers, refreshStickers } from "./stickers";
 import { configureNames, refreshNames } from "./names";
+import { checkForNewVersion } from "./newVersion";
 import { avatarChanged, configureAvatars, refreshAvatars, useAvatarVersion } from "./avatars";
 import { channelLink, LinksContext, onAddressTarget, takePendingTarget, type LinkTarget, type Links } from "./links";
 import { serverInfoChanged, useServerInfo } from "./serverInfo";
@@ -152,6 +153,10 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   // The right-click (or long-press) menu on a channel in the sidebar.
   const [chanMenu, setChanMenu] = useState<{ id: string; at: { x: number; y: number } } | null>(null);
   // The menu on someone's name (a message author, someone in a call).
+  // A newer web client on the server (newVersion.ts), and the one the
+  // notice was closed for.
+  const [newVersion, setNewVersion] = useState<string | null>(null);
+  const [dismissedVersion, setDismissedVersion] = useState<string | null>(null);
   const [nameMenu, setNameMenu] = useState<{ user: NamedUser; at: { x: number; y: number } } | null>(null);
   const nameMenuHasAvatar = useAvatarVersion(nameMenu?.user.id) !== undefined;
   const menuTrigger = useMenuTrigger((id, at) => setChanMenu({ id, at }));
@@ -331,6 +336,8 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
             refreshNames();
             refreshAvatars();
             refreshMe();
+            // A server restart may have brought a new web client.
+            void checkForNewVersion().then((v) => v && setNewVersion(v));
           }
           else if (e.type === "me_changed") refreshMe();
         });
@@ -884,6 +891,15 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           onSetUpKey={onSetUpKey} onEnterKey={onEnterKey} />
       </nav>
       <main className="pane">
+        {/* Not during a call: reloading would drop it (gaming first). */}
+        {newVersion && newVersion !== dismissedVersion && !(vsnap && vsnap.state !== "idle") && (
+          <div className="update-bar" role="status">
+            <span className="update-bar-text">New features are available.</span>
+            <button className="primary" onClick={() => location.reload()}>Reload</button>
+            <button className="icon reply-x" title="Hide until the next update" aria-label="Hide"
+              onClick={() => setDismissedVersion(newVersion)}>×</button>
+          </div>
+        )}
         {stage && voiceClient ? (
           <Stage voice={voiceClient} screens={screens} focus={stage.focus}
             setFocus={(focus) => setStage({ focus })} onBack={() => setStage(null)}
