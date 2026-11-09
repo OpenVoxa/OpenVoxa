@@ -2,9 +2,9 @@
 
 Everything here brings up four containers: PostgreSQL, a LiveKit SFU, the OpenVoxa server, and optionally Caddy for TLS.
 
-**This is pre-alpha software whose encryption has never been reviewed. Do not expose it to the internet.** A LAN or a private network is the right place for it today.
+**This is beta software whose encryption has never been reviewed.** Internet-facing works, but keep it to people you know: close sign-up or require a server password (Server settings), and see the main README's warning.
 
-Contents: [Quick start](#quick-start) · [First account](#first-account-and-administrator-recovery) · [TLS](#choosing-a-tls-path) · [Own reverse proxy](#using-your-own-reverse-proxy) · [LIVEKIT_NODE_IP](#livekit_node_ip-is-the-setting-that-breaks-things) · [Storage](#attachments-and-storage) · [Account keys](#account-keys-and-backups) · [Screen share limit](#screen-share-limit) · [GIF search](#gif-search) · [Desktop updates](#desktop-app-updates) · [Updating](#updating) · [Troubleshooting](#troubleshooting) · [Secrets](#secrets) · [Resetting](#resetting)
+Contents: [Quick start](#quick-start) · [First account](#first-account-and-administrator-recovery) · [TLS](#choosing-a-tls-path) · [Own reverse proxy](#using-your-own-reverse-proxy) · [LIVEKIT_NODE_IP](#livekit_node_ip-is-the-setting-that-breaks-things) · [Storage](#attachments-and-storage) · [Database backups](#database-backups) · [Account keys](#account-keys-and-backups) · [Screen share limit](#screen-share-limit) · [GIF search](#gif-search) · [Desktop app](#desktop-app) · [Updating](#updating) · [Troubleshooting](#troubleshooting) · [Secrets](#secrets) · [Resetting](#resetting)
 
 ## Requirements
 
@@ -32,7 +32,7 @@ The script asks a few questions, then does the rest:
 3. **Voice:** whether people connect from the internet or only your network, and the matching IP (it detects both). See [LIVEKIT_NODE_IP](#livekit_node_ip-is-the-setting-that-breaks-things).
 4. **Uploaded files:** this machine, or a folder that's already mounted, such as a NAS share ([Using network storage](#using-network-storage) covers mounting it). It checks the server can write there and makes Docker wait for the mount at boot.
 5. **Account key protection:** generates the key that encrypts every account's key at rest and shows it once. Store it somewhere safe and separate from your backups before you continue ([Account keys](#account-keys-and-backups)).
-6. **Upkeep:** a nightly backup of the account keys, and, for internet-facing servers, a check that follows your public IP when it changes.
+6. **Upkeep:** nightly backups of the database and of the account keys, and, for internet-facing servers, a check that follows your public IP when it changes.
 7. **Start:** generates every other secret, writes `.env` (and `docker-compose.override.yml` when needed), builds and starts the server, and prints the address and the **setup code** for the first account.
 
 `./setup.sh --dry-run` asks the same questions and shows what it would do and write, without changing anything. The script refuses to run where `.env` already exists, so it can never replace the secrets of a working server.
@@ -182,7 +182,7 @@ LiveKit runs on the host's network and also offers the host's own addresses (`ad
 
 ### Home servers whose public IP changes
 
-LiveKit reads the node IP only when it starts. `scripts/update-node-ip.sh` checks the public IP (via Cloudflare's `1.1.1.1/cdn-cgi/trace`), and when it differs from `LIVEKIT_NODE_IP` it rewrites `.env` and recreates the `livekit` container. It does nothing while `LIVEKIT_NODE_IP` is a private address, so a LAN-only server is left alone. Run it from cron on the Docker host as a user who can run docker:
+LiveKit reads the node IP only when it starts. `scripts/update-node-ip.sh` checks the public IP (via Cloudflare's `1.1.1.1/cdn-cgi/trace`; set `OPENVOXA_IP_URL` in the cron line for another page that answers `ip=<address>`), and when it differs from `LIVEKIT_NODE_IP` it rewrites `.env` and recreates the `livekit` container. It does nothing while `LIVEKIT_NODE_IP` is a private address, so a LAN-only server is left alone. Run it from cron on the Docker host as a user who can run docker:
 
 ```
 */5 * * * * /home/you/OpenVoxa/deploy/scripts/update-node-ip.sh >> $HOME/openvoxa-node-ip.log 2>&1
@@ -273,6 +273,28 @@ Verify attachments still load before removing the old volume. That volume is you
 
 If the share becomes unavailable, uploads and downloads fail while chat and voice keep working.
 
+## Database backups
+
+The database holds accounts, channels, messages and settings. `scripts/backup-db.sh` writes a dated `pg_dump` archive and deletes those older than 30 days. `setup.sh` offers to run it nightly; by hand, from cron on the Docker host:
+
+```bash
+# writes to $HOME/openvoxa-db-backups, keeps 30 days
+0 3 * * * /home/you/OpenVoxa/deploy/scripts/backup-db.sh >> $HOME/openvoxa-db-backup.log 2>&1
+```
+
+Override `OPENVOXA_DB_BACKUP_DIR` (destination) or `OPENVOXA_DB_BACKUP_DAYS` (retention) in the cron line if the defaults don't suit. A backup on the same disk doesn't survive that disk, so copy the folder somewhere else too (another machine, a NAS), but **not to the same place as the account-key backups** ([below](#back-it-up-separately-and-briefly)).
+
+A full restore also needs the account keys from about the same time and the KEK, or plaintext-channel history comes back unreadable. Attachments are not in the dump: they live in the blob folder ([Storage](#attachments-and-storage)); back that up as files if you want them too.
+
+Restoring replaces the whole database:
+
+```bash
+docker compose stop server
+docker compose exec -T postgres sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner' \
+  < ~/openvoxa-db-backups/openvoxa-db-YYYY-MM-DD.dump
+docker compose start server
+```
+
 ## Account keys and backups
 
 Deleting an account must also make its messages unreadable in your **database backups**, not just in the live database. For channels that are not end-to-end encrypted, the server does this by storing each account's messages, report copies and files encrypted under a key belonging to that account. Deleting the account deletes the key, and every copy of its content, backups included, becomes permanently unreadable. Encrypted channels need none of this: the server could never read them in the first place.
@@ -280,7 +302,7 @@ Deleting an account must also make its messages unreadable in your **database ba
 The keys live in their own folder, one small file per account, **deliberately outside Postgres**: a key kept in the database would be restored from a backup along with the data it exists to destroy.
 
 - Inside the container: `/var/lib/openvoxa/keys` (`OPENVOXA_KEY_DIR`).
-- On the host: the Docker named volume `deploy_key-data`.
+- On the host: the Docker named volume `deploy_key-data`. Volume names start with the Compose project name, which is the folder name `deploy`; if you set `COMPOSE_PROJECT_NAME`, use that instead here and in the scripts (`OPENVOXA_KEY_VOLUME`).
 - Owned by UID 65532, mode 700. The server creates keys itself when first needed; there is nothing to set up.
 
 ### Encrypting the keys at rest (recommended)
@@ -387,30 +409,53 @@ Keys come from [developers.giphy.com](https://developers.giphy.com) (instant, fr
 
 GIFs count against `OPENVOXA_MAX_ATTACHMENT_MB` and against your storage. A couple of megabytes each is normal.
 
-## Desktop app updates
+## Desktop app
 
-Optional, and only for whoever publishes desktop builds. Caddy serves `deploy/desktop-updates/` at `/desktop-updates/` (read-only, no directory listing); an empty folder just answers 404. The desktop app checks the address built into it. Put that address, e.g. `https://openvoxa.example.com/desktop-updates/`, on the first line of `client-desktop/update-url.local` (not committed) or in `OPENVOXA_UPDATE_URL`; the release script stops if neither is set.
+The desktop app (Windows for now) is a shell with a server list: it opens each server's own web client, so one app works with any OpenVoxa server, yours included. On other systems people use the browser. Building and publishing it is optional and only for whoever hands out the app; nobody needs it to use your server.
 
-To publish a release from this host (needs Docker and Node 22):
+### Building it
+
+On a Linux machine with Docker, Node 22 and `python3` (this server will do; nothing is installed system-wide):
 
 ```bash
 cd OpenVoxa/client-desktop
 npm ci
+echo "https://openvoxa.example.com/desktop-updates/" > update-url.local   # your server
+npm run release:win -- --no-publish
+```
+
+The build runs in Docker containers: Rust with MinGW for the small window-sound helper (`audio-helper/`), and Node with Wine for the installer. It takes a few minutes the first time. The result is `release/installer/OpenVoxa-Setup-<version>.exe`, unsigned, so Windows SmartScreen warns on first install ("More info", "Run anyway"). `npm run package:win` alone makes a plain zip in `release/` instead.
+
+The update address is built into the app, and installed copies only ever update from there. Put it on the first line of `client-desktop/update-url.local` (not committed) or in `OPENVOXA_UPDATE_URL`; without one, `package:win` builds an app that never updates and `release:win` stops.
+
+### Publishing updates
+
+Caddy serves `deploy/desktop-updates/` at `/desktop-updates/` (read-only, no directory listing); an empty folder just answers 404. On the server:
+
+```bash
+cd OpenVoxa/client-desktop
 npm run release:win      # bumps the patch version, builds, publishes
 ```
 
-It writes `OpenVoxa-Setup-<version>.exe`, its `.blockmap` and `latest.yml` into `deploy/desktop-updates` and keeps the newest five versions. Treat that folder like a build machine: anything placed there runs on every installed app (see "Known tensions" in `docs/decisions.md`).
+It writes `OpenVoxa-Setup-<version>.exe`, its `.blockmap` and `latest.yml` into `deploy/desktop-updates` and keeps the newest five versions. Installed apps pick it up within four hours and offer "Restart to Update"; the login page also shows a download link once the folder has a release. Building somewhere else? Copy those three files into the server's `deploy/desktop-updates`, `latest.yml` last.
+
+Each release must have a higher version than the last one you published, or installed apps ignore it. The bump edits `client-desktop/package.json` in your clone, which gets in the way of `git pull`: before pulling, undo it with `git checkout -- client-desktop/package.json`. If the version you then have isn't above your last release (the `version:` line in `deploy/desktop-updates/latest.yml`), set one that is with `npm version <x.y.z> --no-git-tag-version` and release with `npm run release:win -- --no-bump`.
+
+Treat that folder like a build machine: anything placed there runs on every installed app (see "Known tensions" in `docs/decisions.md`).
 
 ## Updating
 
-Code changes flow through git. Push from wherever you develop, then on the server:
+Releases are git tags: `v1.0.0-beta.N`, and `v1.0.0-beta.N.M` for a fix to one (`git tag --sort=v:refname` lists them after a fetch, newest last). To move to one:
 
 ```bash
 cd OpenVoxa
-git pull
+git fetch --tags
+git checkout v1.0.0-beta.N        # the release you want
 cd deploy
 docker compose --profile tls up -d --build
 ```
+
+`main` is the latest code, ahead of the newest release and less tested: `git checkout main && git pull` instead, if you want it. Before a big jump, take a database backup ([Database backups](#database-backups)); the server upgrades the database itself on start, and there is no downgrade.
 
 Hard-refresh the browser (Ctrl+Shift+R) after an update, so it loads the new web client.
 
@@ -519,10 +564,11 @@ Git history is permanent. A key committed once is a key to rotate, not a key to 
 
 ## Resetting
 
-Wipe everything including the database and attachments:
+Wipe the database, attachments and account keys, but keep the certificates:
 
 ```bash
-docker compose down -v
+docker compose --profile tls down
+docker volume rm deploy_postgres-data deploy_blob-data deploy_key-data
 ```
 
-Accounts, messages, channels, uploaded files and account keys are gone. Certificates live in a separate volume and survive, which matters because Let's Encrypt rate-limits repeated issuance. A bind-mounted blob directory is not touched by `down -v`; remove its contents yourself if you want a clean slate.
+Accounts, messages, channels, uploaded files and account keys are gone. Keeping `deploy_caddy-data` matters because Let's Encrypt rate-limits repeated issuance. Don't use `docker compose down -v` for this: it removes every volume in the compose file, certificates included. A bind-mounted blob directory (network storage) is not touched either way; remove its contents yourself if you want a clean slate. Then remove `.env` (and `docker-compose.override.yml`) to run `setup.sh` again.
