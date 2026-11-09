@@ -18,6 +18,7 @@ import { Modal } from "./ChannelDialogs";
 import { localStore } from "./core";
 import { ColouredName } from "./names";
 import { PRESETS, presetAllowed, type ShareLimit } from "./shareLimit";
+import { Avatar } from "./avatars";
 
 export function useVoiceSnapshot(voice: VoiceClient | null): VoiceSnapshot | null {
   const subscribe = useCallback((cb: () => void) => (voice ? voice.on(cb) : () => {}), [voice]);
@@ -279,7 +280,7 @@ export function VoiceRoster({ live, others, onWatch, onPerson, onOther, onDrag }
               e.preventDefault();
               onPerson(p, { x: e.clientX, y: e.clientY });
             }}>
-            <span className="avatar" aria-hidden>{p.name.slice(0, 1).toUpperCase()}</span>
+            <Avatar userId={p.id} name={p.name} />
             <button className="who" disabled={p.isLocal}
               title={p.isLocal ? undefined : "Volume and Message (or right-click)"}
               onClick={(e) => !p.isLocal && onPerson(p, { x: e.clientX, y: e.clientY })}>
@@ -306,7 +307,7 @@ export function VoiceRoster({ live, others, onWatch, onPerson, onOther, onDrag }
             e.preventDefault();
             onOther(p, { x: e.clientX, y: e.clientY });
           })}>
-          <span className="avatar" aria-hidden>{p.username.slice(0, 1).toUpperCase()}</span>
+          <Avatar userId={p.user_id} name={p.username} />
           {onOther ? (
             <button className="who" title={onDrag ? "Message, move or disconnect (or right-click)" : "Message (or right-click)"}
               onClick={(e) => onOther(p, { x: e.clientX, y: e.clientY })}>
@@ -1324,7 +1325,7 @@ export function Stage({ voice, screens, focus, setFocus, onBack, backLabel }: {
  * The call you are in, as one tile per person (decisions.md, "Voice
  * channel view"). A sharer's tile shows their share from its half-size
  * copy (adaptiveStream picks that layer from the tile's size), with
- * Watch, Listen, Fullscreen and Hide. Letter circles until avatars exist.
+ * Watch, Listen, Fullscreen and Hide. Avatars (letter circles without one).
  */
 export function CallView({ voice, snap, channelName, onWatch }: {
   voice: VoiceClient;
@@ -1402,7 +1403,7 @@ function PersonTile({ voice, person, share, mutedTalking, hidden, onHide, onWatc
     <figure ref={fig} className={`person-tile${speaking ? " speaking" : ""}${showing ? " sharing" : ""}`}>
       {showing
         ? <video ref={video} autoPlay playsInline muted {...clicks} />
-        : <span className="avatar" aria-hidden>{person.name.slice(0, 1).toUpperCase()}</span>}
+        : <Avatar userId={person.id} name={person.name} />}
       {mutedTalking && (
         <div className="tile-banner" role="alert">
           <MicIcon off /> You're muted

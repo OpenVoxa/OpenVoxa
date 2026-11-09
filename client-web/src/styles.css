@@ -300,7 +300,16 @@ button.secondary:hover:not(:disabled) { background: var(--sidebar-active); }
 .msg { position: relative; padding: 4px 16px 4px 72px; margin-top: 10px; }
 .msg.compact { margin-top: 0; padding-top: 1px; padding-bottom: 1px; }
 .msg:hover { background: var(--hover-row); }
-.msg header { display: flex; align-items: baseline; gap: 8px; margin-left: -56px; }
+.msg header { display: flex; align-items: baseline; gap: 8px; }
+/* The author's avatar, once per run of messages (not on compact ones).
+   No top: it sits where it would in the flow, so under a reply line. */
+.msg .msg-avatar { position: absolute; left: 16px; width: 40px; height: 40px; margin-top: 2px;
+  padding: 0; border: 0; background: none; border-radius: 50%; }
+button.msg-avatar { cursor: pointer; }
+.msg .avatar {
+  width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 17px; font-weight: 700; background: var(--sidebar-active); color: var(--text);
+}
 .msg header strong { font-size: 15px; }
 .msg header strong.own { color: var(--link); }
 .msg .side-time {
@@ -361,7 +370,7 @@ button.secondary:hover:not(:disabled) { background: var(--sidebar-active); }
 @media (max-width: 640px) {
   .sidebar { width: 180px; }
   .msg { padding-left: 16px; }
-  .msg header { margin-left: 0; }
+  .msg .msg-avatar { display: none; }
   .msg .side-time { display: none; }
 }
 
@@ -885,11 +894,11 @@ a.channel-chip:hover { background: var(--mention-me-bg); color: var(--text); }
    joined to the avatar column by a bent spine), and the composer's bar. */
 .reply-line {
   display: flex; align-items: center; gap: 6px; max-width: 100%;
-  margin: 0 0 2px -56px; padding: 0 0 0 52px; position: relative;
+  margin: 0 0 2px -56px; padding: 0 0 0 56px; position: relative;
   background: none; color: var(--muted); font-size: 13px; text-align: left; border-radius: 0;
 }
 .reply-spine {
-  position: absolute; left: 8px; top: 50%; width: 38px; height: 10px;
+  position: absolute; left: 19px; top: 50%; width: 31px; height: 10px;
   border-left: 2px solid var(--line); border-top: 2px solid var(--line); border-top-left-radius: 6px;
 }
 .reply-line strong { flex: none; font-size: 13px; }
@@ -1235,3 +1244,12 @@ a.channel-chip:hover { background: var(--mention-me-bg); color: var(--text); }
 .pick-list .pick:hover:not(:disabled) { background: var(--hover-row); }
 button.name-btn { background: none; padding: 0; border: 0; color: inherit; font: inherit; cursor: pointer; }
 button.name-btn:hover { text-decoration: underline; }
+
+/* User avatars (avatars.tsx): a picture fills whatever circle .avatar is. */
+.avatar.has-picture { overflow: hidden; background: none; }
+.avatar.has-picture img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* Settings, Profile: the avatar as voice tiles show it. */
+.avatar.profile-avatar {
+  flex: none; width: 72px; height: 72px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 30px; font-weight: 700; background: var(--sidebar-active); color: var(--text); margin: 8px 0;
+}

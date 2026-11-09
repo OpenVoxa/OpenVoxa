@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /**
- * The Settings dialog (build order 13, M5 session A): Account, Voice,
- * Chat, Sounds, Appearance and About tabs. The user-panel gear opens it on Account, the voice bar's cog
+ * The Settings dialog (build order 13, M5 session A): Account, Profile,
+ * Voice, Chat, Sounds, Appearance and About tabs. The user-panel gear opens it on Account, the voice bar's cog
  * on Voice. The Voice tab loads the voice client (and with it LiveKit)
  * only when it is picked, so text-only use never pays for it.
  *
@@ -29,8 +29,9 @@ import { AboutSettings } from "./AboutSettings";
 import { COLOURS, getColour, setColour, useColour, type ColourSetting } from "./appearance";
 import { TwoFactorSection } from "./TwoFactor";
 import { SignInOtherDevice } from "./SignInLink";
+import { ProfileSettings } from "./ProfileSettings";
 
-export type SettingsTab = "account" | "voice" | "chat" | "sounds" | "appearance" | "about";
+export type SettingsTab = "account" | "profile" | "voice" | "chat" | "sounds" | "appearance" | "about";
 
 export interface AccountActions {
   onBackUpNow: () => void;
@@ -67,7 +68,7 @@ export function SettingsDialog({ tab: initialTab, session, call, chat, deviceId,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, voice]);
 
-  const tabs: [SettingsTab, string][] = [["account", "Account"], ["voice", "Voice"], ["chat", "Chat"], ["sounds", "Sounds"], ["appearance", "Appearance"], ["about", "About"]];
+  const tabs: [SettingsTab, string][] = [["account", "Account"], ["profile", "Profile"], ["voice", "Voice"], ["chat", "Chat"], ["sounds", "Sounds"], ["appearance", "Appearance"], ["about", "About"]];
   return (
     <Modal title="Settings" onClose={onClose} wide fixed>
       <div className="settings-tabs" role="tablist">
@@ -81,6 +82,7 @@ export function SettingsDialog({ tab: initialTab, session, call, chat, deviceId,
           <AccountSettings session={session} call={call} deviceId={deviceId} backup={backup} busy={busy}
             actions={actions} onClose={onClose} />
         )}
+        {tab === "profile" && <ProfileSettings call={call} userId={session.user_id} username={session.username} />}
         {tab === "voice" && (voice
           ? <VoiceSettings voice={voice} snap={snap} />
           : voiceError ? <p className="error" role="alert">{voiceError}</p> : <p className="muted">Loading…</p>)}

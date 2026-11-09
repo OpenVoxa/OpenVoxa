@@ -1648,14 +1648,59 @@ at the end.
     log is unchanged: moderators (ban, view reports, delete messages or
     server mute), not Manage channels alone. Settings changes (access,
     retention, history sharing, forced push-to-talk) are not logged.
-- **User avatars.** In voice (and messages, member lists) everyone shows
-  a generic letter. Users upload their own picture in Settings
-  (crop to a circle, same footprint as the letter), per server (islands:
-  a picture on one server is not on another). Stored as a server blob,
-  visible to everyone on that server, so not end-to-end encrypted
-  (like usernames). Open: size and type limits, animated GIFs, whether
-  moderators can remove an offensive avatar (likely yes, logged in
-  the moderation log).
+- **User avatars and profiles** (agreed with Ryan 2026-11-09; not built).
+  Two stages, each with its own test IDs (AV, then PR).
+  - *Stage 1, avatars.* A new Profile tab in Settings: upload, crop to
+    a circle, shrunk to 256 x 256 in the browser (the server icon's
+    cropper). PNG or WebP, static only (animated: skipped for now). Per
+    server (islands). Visible to everyone on the server, so not end-to-end
+    encrypted (like usernames), but sealed under the account key so
+    account deletion shreds it in backups too. Moderators can remove one
+    (moderation log). Shown wherever a letter circle is now (voice tiles,
+    voice member list, DMs, the profile card) and beside messages: one
+    avatar per run of consecutive messages from the same person.
+  - *Stage 1 as built* (2026-11-09, AV1-AV12). Server `avatars.go`,
+    migration 0037: table `user_avatars` (one row per account, deleted
+    with it), the bytes sealed under the account key (context
+    `openvoxa/avatar/v1`), `version` from a sequence so a removed and
+    re-added picture never reuses a cached URL. Routes, all signed in:
+    `GET /api/v1/avatars` (`{users: {id: version}}`), `GET
+    /api/v1/avatars/{id}?v=N` (nosniff, sandbox CSP, private immutable
+    cache for the current version), `PUT`/`DELETE /api/v1/me/avatar` (raw
+    body; PNG or WebP by magic bytes, square, at most 1024 px and 512 KB,
+    APNG and animated WebP refused). Moderators: `DELETE
+    /api/v1/avatars/{id}` needs `delete_messages` and, like a ban, a rank
+    above the owner's; logged as `remove_avatar`. Every change sends
+    `avatars_changed {user_id, version|null}` to every socket; a
+    reconnected socket refetches the list. Web client: `avatars.tsx`
+    (list plus a blob: URL per version, fetched with the token like
+    stickers; `<Avatar>` falls back to the letter), Settings > Profile
+    (`ProfileSettings.tsx`, the server icon's `Cropper` with shape
+    `avatar`; saved as soon as cropped, as Settings has no Save), Remove
+    Avatar in the name menu for moderators. Messages: a 40 px circle at
+    the left of each non-compact message (the run's first), clickable
+    like the name; hidden under 640 px wide. Deleted accounts show a
+    blank "?" circle.
+  - *Stage 2, profile card.* Clicking a name opens a card in place of
+    today's name menu: avatar, name in its colour, groups, bio, custom
+    status, "Joined <date>" (`users.created_at`), last seen, then Message
+    and Block (moderators also Remove Avatar / Clear Bio). Bio: plain
+    text, about 300 characters, links and emoji, sealed like the avatar.
+    Last seen is new per-account state: "Online now" while the events
+    socket is open; otherwise coarse ("Today", "Yesterday", "4 days
+    ago"), never an exact time. A Profile setting "Show when I was last
+    online" (default on) hides it both ways when off.
+  - *Custom status* (stage 2). An optional emoji plus up to 60
+    characters. Set in the Profile tab and from a "Set Status" item on
+    your own name. Shown on the profile card and in small grey text
+    under the name in the voice member list. "Clear after": Never,
+    1 hour, 4 hours, Today (local midnight); the server clears it when
+    it expires. Changes reach everyone live (like the server name).
+    Sealed like the bio; moderators can clear it (moderation log). No
+    automatic "Playing X" game detection (it would mean the desktop app
+    watching running programs).
+  - *Not doing:* display names separate from usernames (usernames stay
+    the only name), animated avatars, pronouns.
 - **About tab in Settings** (agreed with Ryan 2026-11-05; built the
   same day, AB1-AB8). The last tab of Settings, in each server's web
   client, so it works in browsers too (`AboutSettings.tsx`). Sections:
@@ -3604,6 +3649,11 @@ verified; the section named holds the design.
   rate, Bitrate, Optimise for and Encoder fields, HW1-HW9 pass (Feature
   decisions, "Voice channel view"; Implementation notes, LiveKit, "H.264
   share as one copy").
+- 2026-11-09 User avatars stage 1 (Settings > Profile with the crop
+  tool; voice tiles and list, DMs, beside messages; moderators' Remove
+  Avatar, logged; sealed under the account key; migration 0037),
+  AV1-AV12 pass (Feature decisions, "Planned", "User avatars and
+  profiles", "Stage 1 as built").
 
 ## Open items
 
@@ -3700,8 +3750,10 @@ verified; the section named holds the design.
       `src/main.ts`; ship with `npm run release:win`. Windows may show
       the old shortcut icon until its icon cache refreshes.
 
-- [ ] User avatars, uploaded in Settings, per server. They replace the
-      letter circles in voice tiles. Feature decisions, "Planned".
+- [ ] **User avatars and profiles** (design agreed 2026-11-09): stage 1
+      avatars (AV) built 2026-11-09, AV1-AV12 pass; next stage 2 profile card with bio, joined, last seen and
+      custom status (PR). Feature decisions, "Planned", "User avatars and
+      profiles".
 - [x] Server icon and name in the pane, set in Server settings: built
       2026-11-07 (Feature decisions, "Server name and icon"; SI1-SI9).
 - [ ] Audio quality per voice channel (Feature decisions, "Voice

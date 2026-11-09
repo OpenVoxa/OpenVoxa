@@ -31,6 +31,7 @@ import { SettingsDialog, type AccountActions, type SettingsTab } from "./Setting
 import { ServerSettingsDialog } from "./ServerSettings";
 import { configureStickers, refreshStickers } from "./stickers";
 import { configureNames, refreshNames } from "./names";
+import { avatarChanged, configureAvatars, refreshAvatars, useAvatarVersion } from "./avatars";
 import { channelLink, LinksContext, onAddressTarget, takePendingTarget, type LinkTarget, type Links } from "./links";
 import { serverInfoChanged, useServerInfo } from "./serverInfo";
 import { configureHome, HomeIcon, HomePane, markHomeSeen, refreshHome, useHome } from "./home";
@@ -152,6 +153,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   const [chanMenu, setChanMenu] = useState<{ id: string; at: { x: number; y: number } } | null>(null);
   // The menu on someone's name (a message author, someone in a call).
   const [nameMenu, setNameMenu] = useState<{ user: NamedUser; at: { x: number; y: number } } | null>(null);
+  const nameMenuHasAvatar = useAvatarVersion(nameMenu?.user.id) !== undefined;
   const menuTrigger = useMenuTrigger((id, at) => setChanMenu({ id, at }));
   const [presence, setPresence] = useState<VoicePresence>({});
   // Created on first join: loading it pulls in LiveKit, which text-only
@@ -187,6 +189,8 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   useEffect(() => configureStickers(call, session.token), [call, session.token]);
   // Username colours by group (names.tsx).
   useEffect(() => configureNames(call), [call]);
+  // User avatars (avatars.tsx); the pictures need the token.
+  useEffect(() => configureAvatars(call, session.token), [call, session.token]);
   // The Home page (home.tsx).
   useEffect(() => configureHome(call), [call]);
 
@@ -316,6 +320,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           else if (e.type === "bug_reports_changed") setBugsTick((t) => t + 1);
           else if (e.type === "stickers_changed") void refreshStickers();
           else if (e.type === "names_changed") refreshNames();
+          else if (e.type === "avatars_changed") avatarChanged(e.userId, e.version);
           else if (e.type === "server_info_changed") serverInfoChanged();
           else if (e.type === "home_changed") void refreshHome();
           else if (e.type === "events_reconnected") {
@@ -324,6 +329,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
             void refreshHome();
             void refreshStickers();
             refreshNames();
+            refreshAvatars();
             refreshMe();
           }
           else if (e.type === "me_changed") refreshMe();
@@ -605,6 +611,12 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
     const was = chat.blocked.has(u.id);
     void (was ? chat.unblock(u.id) : chat.block(u.id, u.username)).catch((err) =>
       setDropNote({ title: `Couldn't ${was ? "unblock" : "block"} ${u.username}`, text: err instanceof Error ? err.message : String(err), at }));
+  };
+  /** Moderators: Remove Avatar (logged; the server checks rank). */
+  const removeAvatar = (u: NamedUser, at: { x: number; y: number }) => {
+    void call(`/api/v1/avatars/${u.id}`, { method: "DELETE" }).then(
+      () => avatarChanged(u.id, null),
+      (err) => setDropNote({ title: `Couldn't remove ${u.username}'s avatar`, text: err instanceof Error ? err.message : String(err), at }));
   };
   const blockItem = (u: NamedUser, at: { x: number; y: number }): MenuItem => blocked.has(u.id)
     ? { label: "Unblock", onClick: () => toggleBlock(u, at) }
@@ -954,7 +966,10 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
         <ChannelMenu title={nameMenu.user.username} at={nameMenu.at}
           items={[{ label: "Message", disabled: !canDM, reason: NO_DM_REASON,
             onClick: () => messageFrom(nameMenu.user, nameMenu.at) },
-            "sep", blockItem(nameMenu.user, nameMenu.at)]}
+            "sep", blockItem(nameMenu.user, nameMenu.at),
+            ...(canDeleteAny ? ["sep" as const, {
+              label: "Remove Avatar", danger: true, disabled: !nameMenuHasAvatar, reason: "No avatar to remove",
+              onClick: () => removeAvatar(nameMenu.user, nameMenu.at) }] : [])]}
           onClose={() => setNameMenu(null)} />
       )}
       {dialog?.k === "newdm" && (

@@ -330,20 +330,21 @@ function charsLeft(text: string | null): string {
  * is wide, at a shape picked from BANNER_SHAPES or the picture's own
  * (when that is one the server accepts).
  */
-function Cropper({ src, shape, onCancel, onDone, onError }: {
+export function Cropper({ src, shape, onCancel, onDone, onError }: {
   src: string;
-  shape: "icon" | "banner";
+  /** icon and avatar: a 256 x 256 square under a circle. */
+  shape: "icon" | "avatar" | "banner";
   onCancel: () => void;
   onDone: (blob: Blob) => void;
   onError: (msg: string) => void;
 }) {
   const [img, setImg] = useState<HTMLImageElement | null>(null);
-  const [ratio, setRatio] = useState(shape === "icon" ? 1 : 3);
+  const [ratio, setRatio] = useState(shape === "banner" ? 3 : 1);
   const [zoom, setZoom] = useState(1); // 1: the picture just covers the frame
   const [pos, setPos] = useState({ x: 0, y: 0 }); // the picture's top left, in screen px
   const drag = useRef<{ id: number; x: number; y: number } | null>(null);
 
-  const viewW = shape === "icon" ? ICON_PX : BANNER_VIEW_W;
+  const viewW = shape === "banner" ? BANNER_VIEW_W : ICON_PX;
   const viewH = Math.round(viewW / ratio);
 
   // The picture centred and just covering the frame, for this shape.
@@ -445,7 +446,7 @@ function Cropper({ src, shape, onCancel, onDone, onError }: {
 
   async function finish() {
     const fail = "This browser couldn't crop the picture.";
-    if (shape === "icon") {
+    if (shape !== "banner") {
       const b = await render(ICON_PX);
       return b ? onDone(b) : onError(fail);
     }
@@ -459,9 +460,8 @@ function Cropper({ src, shape, onCancel, onDone, onError }: {
     onError("That picture is too detailed to fit in 2 MB; try another, or zoom in.");
   }
 
-  const label = shape === "icon"
-    ? "Crop the icon: drag or use the arrow keys to move it, the mouse wheel or plus and minus to zoom"
-    : "Crop the banner: drag or use the arrow keys to move it, the mouse wheel or plus and minus to zoom";
+  const label = `Crop the ${shape === "avatar" ? "picture" : shape}: drag or use the arrow keys to move it,`
+    + " the mouse wheel or plus and minus to zoom";
   return (
     <div className="icon-crop">
       {shape === "banner" && (
@@ -482,7 +482,7 @@ function Cropper({ src, shape, onCancel, onDone, onError }: {
         onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onWheel={wheel} onKeyDown={key}>
         <img src={src} alt="" draggable={false}
           style={{ width: w, height: h, transform: `translate(${pos.x}px, ${pos.y}px)` }} />
-        {shape === "icon" && <div className="icon-crop-mask" />}
+        {shape !== "banner" && <div className="icon-crop-mask" />}
       </div>
       <label className="icon-crop-zoom" style={{ width: Math.min(viewW, 320) }}>
         Zoom

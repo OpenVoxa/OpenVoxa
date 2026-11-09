@@ -298,6 +298,9 @@ export type ChatEvent =
   | { type: "names_changed" }
   /** The server's name or icon changed: fetch /server-info again. */
   | { type: "server_info_changed" }
+  /** Someone's avatar changed: its new version, or null when removed
+   * (or the account was deleted). */
+  | { type: "avatars_changed"; userId: string; version: number | null }
   /** Home (welcome, rules, banner) or rule enforcement changed: fetch /home again. */
   | { type: "home_changed" }
   /** The event socket came back after a drop: server-wide events may
@@ -362,7 +365,7 @@ const GLOBAL_EVENTS = new Set([
   "perms_changed", "channel_activity", "voice_changed", "reports_changed",
   "bug_reports_changed",
   "mention", "stickers_changed", "names_changed", "server_info_changed", "home_changed",
-  "archive_message_gone", "archive_channel_expired", "voice_moved", "dms_changed",
+  "avatars_changed", "archive_message_gone", "archive_channel_expired", "voice_moved", "dms_changed",
 ]);
 
 const EVENT_RETRY_MS = 5000;
@@ -1025,6 +1028,7 @@ export class Chat {
         this.refreshBlocks().catch(() => {});
         break;
       case "user_purged":
+        this.#emit({ type: "avatars_changed", userId: frame.user_id!, version: null });
         this.refreshDMs().catch(() => {});
         this.#view?.userPurged(frame.user_id!);
         this.#reconcileOpen();
@@ -1058,6 +1062,9 @@ export class Chat {
         break;
       case "server_info_changed":
         this.#emit({ type: "server_info_changed" });
+        break;
+      case "avatars_changed":
+        this.#emit({ type: "avatars_changed", userId: frame.user_id ?? "", version: frame.version ?? null });
         break;
       case "home_changed":
         this.#emit({ type: "home_changed" });
@@ -1163,6 +1170,8 @@ interface GlobalFrame {
   created_at?: string;
   from_channel_id?: string;
   to_channel_id?: string;
+  /** avatars_changed: the new version, or null when removed. */
+  version?: number | null;
 }
 
 // ---------------------------------------------------------- ChannelView

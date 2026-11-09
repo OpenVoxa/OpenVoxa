@@ -1444,6 +1444,8 @@ function describe(e: LogEntry): { text: string; note?: string } {
       return { text: "changed the server icon" };
     case "remove_server_icon":
       return { text: "removed the server icon" };
+    case "remove_avatar":
+      return { text: `removed ${who}'s avatar` };
     case "set_server_banner":
       return { text: "changed the Home banner" };
     case "remove_server_banner":

@@ -17,6 +17,7 @@ import { Modal } from "./ChannelDialogs";
 import { BellIcon } from "./ChannelPane";
 import { ColouredName } from "./names";
 import { dmName, NO_DM_REASON, readOnlyText } from "./dmText";
+import { Avatar } from "./avatars";
 
 /** The sidebar's Messages tab: your conversations, newest first. */
 export function DMList({ dms, openId, unread, mentions, muted, canStart, onOpen, onNew, menuHandlers, consumeLongPress }: {
@@ -57,7 +58,7 @@ export function DMList({ dms, openId, unread, mentions, muted, canStart, onOpen,
                 aria-current={id === openId ? "page" : undefined}
                 title={d.can_post ? `Direct message with ${dmName(d)}` : readOnlyText(d)}
               >
-                <span className="avatar" aria-hidden>{dmName(d).slice(0, 1).toUpperCase()}</span>
+                <Avatar userId={d.user.deleted ? null : d.user.id} name={dmName(d)} />
                 {d.user.deleted
                   ? <span className="name muted">{dmName(d)}</span>
                   : <ColouredName userId={d.user.id} className="name">{dmName(d)}</ColouredName>}
@@ -134,7 +135,7 @@ export function NewMessageDialog({ call, onClose, onPick }: {
           {shown.map((p) => (
             <li key={p.id}>
               <button className="pick" disabled={!!busy} onClick={() => void pick(p.id)}>
-                <span className="avatar" aria-hidden>{p.username.slice(0, 1).toUpperCase()}</span>
+                <Avatar userId={p.id} name={p.username} />
                 <ColouredName userId={p.id}>{p.username}</ColouredName>
                 {busy === p.id && <span className="muted small">Opening…</span>}
               </button>

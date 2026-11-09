@@ -28,6 +28,7 @@ import { ColouredName, nameStyle, useNameColour } from "./names";
 import { readOnlyText } from "./dmText";
 import { stickerIdOf, stickerToken } from "@core/stickers";
 import { joinReply, previewOf, type ReplyRef } from "@core/replies";
+import { Avatar } from "./avatars";
 
 function useSnapshot(view: ChannelView): ChannelSnapshot {
   const subscribe = useCallback((cb: () => void) => view.on(cb), [view]);
@@ -726,6 +727,18 @@ function Message({ m, link: address, jumped, original, blockedAuthor, blockedRep
   return (
     <article className={classes} data-id={m.id} aria-label={`${name} at ${formatTime(m.createdAt)}`}>
       {m.reply && !m.deleted && <ReplyLine to={m.reply} original={original} blocked={blockedReply} onClick={onJumpToOriginal} />}
+      {!compact && (onName && !m.own && !gone ? (
+        <button className="msg-avatar" tabIndex={-1} aria-hidden
+          onClick={(e) => onName({ id: m.authorId, username: name }, { x: e.clientX, y: e.clientY })}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            onName({ id: m.authorId, username: name }, { x: e.clientX, y: e.clientY });
+          }}>
+          <Avatar userId={m.authorId} name={name} />
+        </button>
+      ) : (
+        <span className="msg-avatar"><Avatar userId={gone ? null : m.own ? userId : m.authorId} name={gone ? "" : name} /></span>
+      ))}
       {compact
         ? <time className="side-time small" dateTime={m.createdAt}>{formatTime(m.createdAt)}</time>
         : (

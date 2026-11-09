@@ -264,6 +264,15 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 	mux.HandleFunc("DELETE /api/v1/users/{id}/groups/{group}",
 		withUUIDPath(api.requirePerm(perm.ManageGroups, api.removeUserFromGroup)))
 
+	// User avatars (avatars.go, migration 0037): anyone signed in sees
+	// them and sets their own; moderators remove others' (logged).
+	mux.HandleFunc("GET /api/v1/avatars", api.requireAuth(api.listAvatars))
+	mux.HandleFunc("GET /api/v1/avatars/{id}", withUUIDPath(api.requireAuth(api.getAvatar)))
+	mux.HandleFunc("DELETE /api/v1/avatars/{id}",
+		withUUIDPath(api.requirePerm(perm.DeleteMessages, api.removeAvatar)))
+	mux.HandleFunc("PUT /api/v1/me/avatar", api.requireAuth(api.putOwnAvatar))
+	mux.HandleFunc("DELETE /api/v1/me/avatar", api.requireAuth(api.deleteOwnAvatar))
+
 	// Username colours by group (namecolours.go, migration 0025).
 	mux.HandleFunc("GET /api/v1/name-colours", api.requireAuth(api.listNameColours))
 	mux.HandleFunc("PUT /api/v1/name-colours",
