@@ -325,7 +325,8 @@ fi
 # ------------------------------------------------------------------ upkeep
 
 step "6/7 Backups and upkeep"
-CRON_BACKUP=false CRON_IP=false
+CRON_DB=false CRON_BACKUP=false CRON_IP=false
+yes_no "Back up the database every night at 03:00 to ~/openvoxa-db-backups (keeps 30 days)?" Y && CRON_DB=true
 yes_no "Back up the account keys every night at 03:30 to ~/openvoxa-key-backups (keeps 7 days)?" Y && CRON_BACKUP=true
 if $INTERNET; then
 	say "Most home connections get a new public IP now and then, which stops voice."
@@ -445,7 +446,7 @@ fi
 
 # ------------------------------------------------------------------- cron
 
-if $CRON_BACKUP || $CRON_IP; then
+if $CRON_DB || $CRON_BACKUP || $CRON_IP; then
 	if ! command -v crontab >/dev/null; then
 		$APT || die "cron is missing; install it and add the lines from deploy/README.md."
 		run sudo apt-get install -y -qq cron
@@ -457,6 +458,7 @@ if $CRON_BACKUP || $CRON_IP; then
 			{ crontab -l 2>/dev/null | grep -vF "$2" || true; echo "$1"; } | crontab -
 		fi
 	}
+	$CRON_DB && add_cron "0 3 * * * $DEPLOY_DIR/scripts/backup-db.sh >> \$HOME/openvoxa-db-backup.log 2>&1" "$DEPLOY_DIR/scripts/backup-db.sh"
 	$CRON_BACKUP && add_cron "30 3 * * * $DEPLOY_DIR/scripts/backup-keys.sh >> \$HOME/openvoxa-key-backup.log 2>&1" "$DEPLOY_DIR/scripts/backup-keys.sh"
 	$CRON_IP && add_cron "*/5 * * * * $DEPLOY_DIR/scripts/update-node-ip.sh >> \$HOME/openvoxa-node-ip.log 2>&1" "$DEPLOY_DIR/scripts/update-node-ip.sh"
 fi
