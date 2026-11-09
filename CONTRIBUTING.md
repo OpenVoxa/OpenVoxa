@@ -4,7 +4,7 @@ Thanks for looking. This project is early, built largely by one person learning 
 
 ## Before you start
 
-OpenVoxa is pre-alpha. The architecture is settled but very little is implemented. Read [`docs/decisions.md`](docs/decisions.md) before proposing changes to the design, because most of the obvious questions ("why not federate?", "why Electron?", "why not just use Matrix?") already have recorded answers and recorded tradeoffs.
+OpenVoxa is in beta: text, voice, screen share and end-to-end encryption are built and in daily use by a small group, and nothing has been independently reviewed. Read [`docs/decisions.md`](docs/decisions.md) before proposing changes to the design, because most of the obvious questions ("why not federate?", "why Electron?", "why not just use Matrix?") already have recorded answers and recorded tradeoffs.
 
 If you disagree with one of those decisions, that's a great Discussion. Just start from what's written rather than from scratch.
 
@@ -16,7 +16,7 @@ In rough order of value:
 2. **Protocol design feedback.** Especially around MLS integration, key handoff on channel join, and multi-device identity.
 3. **Go and TypeScript code review.** Idiomatic corrections, concurrency bugs, anything that would embarrass us later.
 4. **Documentation.** Including telling us where the docs are wrong or misleading.
-5. **Features.** Useful, but the core has to exist first. Please open a Discussion before building something large.
+5. **Features.** Useful. Please open a Discussion before building something large: `docs/decisions.md`, "Open items", lists what is planned.
 
 ## Where things go
 
@@ -86,24 +86,35 @@ Not `Added stuff` or `fixes`.
 ## Code style
 
 - **Go:** `gofmt` is non-negotiable. `go vet` must pass. Prefer the standard library where it's reasonable.
-- **TypeScript:** Prettier and ESLint configs live in the repo. Run them before pushing.
+- **TypeScript:** `npx tsc --noEmit` must pass in `client-core`, and `npm run build` (which type-checks) in `client-web`. There is no lint or formatter config yet; match the style of the file you're in.
 - **Everything:** no commented-out code in a merged PR, and no `TODO` without an issue number next to it.
 
 ## Cryptography: the hard rule
 
 **Do not write cryptographic primitives.** Not a cipher, not a key derivation, not a protocol, not a "small improvement" to an existing one.
 
-OpenVoxa uses established implementations ([OpenMLS](https://github.com/openmls/openmls), LiveKit's E2EE) and uses them as documented. A PR that hand-rolls crypto will be closed regardless of how correct it looks, because "looks correct" is exactly how cryptographic bugs get shipped.
+OpenVoxa uses established implementations ([ts-mls](https://github.com/LukaJCB/ts-mls) for MLS, LiveKit's E2EE for media, the browser's Web Crypto) and uses them as documented. A PR that hand-rolls crypto will be closed regardless of how correct it looks, because "looks correct" is exactly how cryptographic bugs get shipped.
 
 If you believe an existing library is being used incorrectly, that's an extremely valuable issue. Please open one.
 
 ## Building and running
 
-Nothing to build yet. When there is, the instructions will be here and the whole thing will come up with `docker-compose up`.
+To run a server of your own, follow [`deploy/README.md`](deploy/README.md): `./setup.sh` builds everything from your clone, so your changes go into the image with `docker compose --profile tls up -d --build`.
+
+Checks before a PR, by part:
+
+| Part | Where | Check |
+| --- | --- | --- |
+| Server (Go) | `server/` | `go vet ./... && go test ./...` (tests that need Postgres skip unless `OPENVOXA_TEST_DATABASE_URL` is set) |
+| Protocol and crypto (TypeScript, no UI) | `client-core/` | `npm ci && npm run build && npx tsc --noEmit` |
+| Web client (React) | `client-web/` | `npm ci && npm run build` |
+| Desktop app (Electron) | `client-desktop/` | `npm ci && npm run build`; installers: [`deploy/README.md`](deploy/README.md), "Desktop app" |
+
+Go isn't needed on your machine: `docker run --rm -v "$PWD":/src -w /src golang:1.26 go test ./...` from `server/` works too. The server image (`server/Dockerfile`) builds `client-core` and `client-web` and embeds the web client, so a successful image build is the final check.
 
 ## Code of conduct
 
-The [Contributor Covenant](CODE_OF_CONDUCT.md) applies. In short: be decent. Disagree about code as much as you like, but not about people.
+Be decent. Disagree about code as much as you like, but not about people.
 
 ## Licensing of contributions
 
