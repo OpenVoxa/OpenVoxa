@@ -16,7 +16,7 @@ services:
     image: postgres:17-alpine
     environment:
       POSTGRES_USER: openvoxa
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpassword}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (setup.sh does it for you)}
       POSTGRES_DB: openvoxa
     volumes:
       - postgres-data:/var/lib/postgresql/data
@@ -62,7 +62,7 @@ services:
         gitdir: ../.git
     environment:
       OPENVOXA_LISTEN_ADDR: ":8080"
-      OPENVOXA_DATABASE_URL: "postgres://openvoxa:${POSTGRES_PASSWORD:-devpassword}@postgres:5432/openvoxa?sslmode=disable"
+      OPENVOXA_DATABASE_URL: "postgres://openvoxa:${POSTGRES_PASSWORD}@postgres:5432/openvoxa?sslmode=disable"
 
       # Only safe when a proxy you control sits in front. The tls profile
       # provides exactly that; without it this stays false.
