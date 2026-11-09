@@ -875,7 +875,7 @@ with Hide (stop showing it), Listen and Fullscreen. Decided the same day:
   **Changed 2026-11-08 (Ryan):** the small copy runs at the share's
   chosen frame rate, not capped at 30. With every viewer on a tile the
   full copy is paused, so a 60 fps game share went out as 30 (found on
-  PROD with WoW). Gaming is the point of the project: smooth for every
+  the live server with WoW). Gaming is the point of the project: smooth for every
   viewer beats saving upload. Own share's Stats line also shows the
   capture (asked / agreed / got fps).
 - **Letter circles for now**, as in the sidebar; uploaded avatars
@@ -1289,7 +1289,7 @@ unchanged.
   except OpenVoxa's own, so the call never hears itself (the SD2 risk).
 - **A. Separate helper program, not an addon.** `openvoxa-audio.exe`
   (Rust, `client-desktop/audio-helper/`, `build-windows.sh` cross-builds
-  on Docker; system DLLs only) ships in the app folder. The main process
+  in Docker; system DLLs only) ships in the app folder. The main process
   starts it when Share is clicked and reads raw PCM from its stdout. A
   crash costs only the share's sound, no rebuild per Electron version.
   About 5-20 ms extra latency, fine for share sound. The helper finds the
@@ -1364,7 +1364,7 @@ that.
   downloaded by the app normally don't. **Signing will be SignPath
   Foundation** (Ryan, 2026-11-08; free for open-source projects, signed
   under their name), parked for now. It needs the installer built in
-  public CI (GitHub Actions) instead of on Docker, and SignPath may want
+  public CI (GitHub Actions) instead of on a maintainer's machine, and SignPath may want
   a more established project first. SmartScreen reputation then
   accumulates on the certificate across versions instead of starting
   from zero per file; EV certificates no longer skip that (2024). Until
@@ -1396,7 +1396,7 @@ Built 2026-11-08 (`client-web/src/appDownload.tsx`; Ryan's picks).
   top-level `path:` line of `/desktop-updates/latest.yml` (the file the
   installed apps check), so nothing in Caddy or the server changes per
   release. A server without an update folder shows no link.
-- Tested: DL1-DL6 on DEV; DL7 (the link on PROD after beta.2.1) passed.
+- Tested: DL1-DL6 on the test server; DL7 (the link on the live server after beta.2.1) passed.
 
 #### Public DNS record follows the IP
 
@@ -1419,7 +1419,7 @@ Built 2026-11-08 (`deploy/scripts/update-node-ip.sh`).
   changes, so a failed update is retried and a hand edit gets corrected.
 - No `jq` on Debian by default, so the JSON is read with `grep`/`sed`
   (shapes checked against the live API).
-- Tested 2026-11-08 against the live zone with DEV's token: correct
+- Tested 2026-11-08 against the live zone with the test server's token: correct
   record, missing record, unknown zone and LAN-only change nothing;
   DD1, a temporary `ddns-test` A record at 192.0.2.1, moved to the
   public IP with proxy and TTL kept, a second run silent, then deleted.
@@ -1875,8 +1875,8 @@ account's groups uses the per-account path, as a role change did.
 
 **Clients keep an event socket.** `GET /ws` with no channel is a
 socket for server-wide events only (perms_changed, channel_changed,
-access_changed, channel_deleted, user_purged). Found on Docker
-2026-10-31: losing a group closed staff's only socket, so the re-add
+access_changed, channel_deleted, user_purged). Found on the test server
+2026-10-31: losing a group closed the account's only socket, so the re-add
 never arrived and the channel list stayed stale until a reload. Client-core's
 `Chat` opens one at sign-in and reconnects it; channel sockets
 skip those event types while it is up.
@@ -2129,17 +2129,17 @@ this channel?", which since step 12 is the permission-group allow-list.
 Membership is built against that question, so custom groups changed its
 answer without touching the encryption code.
 
-Every device joining or leaving is shown in the channel ("staff added a
-device", "ryan's laptop was removed"). That is the mitigation for the
+Every device joining or leaving is shown in the channel ("sam added a
+device", "sam's laptop was removed"). That is the mitigation for the
 tension below and is part of the feature, not polish.
 
 **Notices are per person by default, per device on request.** Decided by
 Ryan, 2026-10-31. Most users care who is in a channel, not which of
 their devices is. So chat shows, by default:
 
-- "staff joined" when an account's first device enters the group, and
-  "staff left" when its last device leaves;
-- "ryan joined on a new device" when an account already present gains
+- "sam joined" when an account's first device enters the group, and
+  "sam left" when its last device leaves;
+- "sam joined on a new device" when an account already present gains
   another one. Not silent, because a device slipped in under an existing
   account is exactly what the announcement exists to expose;
 - nothing when one of several devices leaves, which lets no one read
@@ -2573,7 +2573,7 @@ The details themselves:
   shrinks the tree past its leaf (removing the rightmost leaves):
   "Could not find common ancestor" or "RangeError: Invalid array
   length". Removing a leaf in the middle reports `removedFromGroup` as
-  documented. Found on Docker 2026-10-31 (staff stuck reopening
+  documented. Found on the test server 2026-10-31 (a second account stuck reopening
   `stuck-test`), reproduced in Node. So catch-up treats any commit it
   cannot apply as removal: drop the state, rejoin by welcome or
   GroupInfo.
@@ -2829,7 +2829,7 @@ would overwrite the old key mid-handover; the client subclasses
 default of 10 a member who is briefly behind would discard the right key).
 
 **Losing access removes you from the call, and old media keys expire.**
-Found on Docker 2026-10-31: a banned account stayed in the call and stayed
+Found on the test server 2026-10-31: a banned account stayed in the call and stayed
 audible. A LiveKit token only gates joining, and with `failureTolerance:
 -1` nothing ever retired the old epochs' keys, which are all a removed
 device can encrypt with. Two fixes. The server calls LiveKit's
@@ -2857,7 +2857,7 @@ an empty list means every source. livekit-client did not notice the
 server-side unpublish on its own: the share button stayed lit and the
 browser kept capturing until the client handled it.
 
-**LiveKit stops a local track the server unpublishes.** Found on Docker
+**LiveKit stops a local track the server unpublishes.** Found on the test server
 2026-11-04 (livekit-client 2.23.0): when the server takes a source away,
 the client calls `unpublishTrack` with the Room option
 `stopLocalTrackOnUnpublish`, true by default, which ends the capture. A
@@ -3335,25 +3335,25 @@ named; Docker is the test server.
    device identity, key package storage, group state, epoch-ordered
    commits, handshake log, welcome delivery; client identity in
    IndexedDB; tree and state serialisation; encrypted messages.
-   Two-party test on Docker 2026-10-30 (admin + staff): welcome path and
+   Two-party test on the test server 2026-10-30 (two accounts): welcome path and
    forward-secrecy boundary. Encrypted attachments verified the same day
    (image, mp3, PDF; stored blob opaque, row shows `encrypted` /
    octet-stream).
 10. ✅ Media encryption keyed off the MLS exporter secret. Members agree
     on the key, it changes per epoch and channel (Node); LiveKit E2EE
     with epoch-indexed key slots, LiveKit 2.23.0 self-hosted and pinned.
-    Two-party call on Docker 2026-10-30: a device outside the group is
+    Two-party call on the test server 2026-10-30: a device outside the group is
     refused; adding it rotates the key; audio and screen share both ways.
 11. ✅ Automatic group membership from channel access (Encryption, "Group
-    membership follows channel access"). All verified on Docker
-    2026-10-31 with admin + staff:
+    membership follows channel access"). All verified on the test server
+    2026-10-31 with two accounts:
     - ts-mls external commit and removal behaviour proven in Node.
     - Server: one access rule (`access.go`), allowed-devices endpoint,
       welcome recipients checked, key package claims scoped to a channel
       (every refusal case checked).
     - Client `groups.reconcile` (removals, then additions, own-leaf check
-      after every commit). Node run with a real epoch race; on Docker
-      staff was added, removed and re-added while offline, then joined
+      after every commit). Node run with a real epoch race; on the test server
+      the second account was added, removed and re-added while offline, then joined
       from the newest welcome.
     - Triggers (`reconcileSoon`, `access_changed`, demotion closes lost
       sockets): demote, promote, self-revoke and a new device each made
@@ -3368,10 +3368,10 @@ named; Docker is the test server.
       rejoining.
     - "Forget this device" revokes it on the server first.
 12. ✅ Custom permission groups replacing the fixed roles (migration 0012,
-    `groups.go`, `perm`). Verified on Docker 2026-10-31 (admin, staff,
+    `groups.go`, `perm`). Verified on the test server 2026-10-31 (two accounts,
     tester): upgrade kept every account's access; removal and re-add
-    while connected; losing access mid-call removed staff via the LiveKit
-    sweep; a ban-only group at rank 12 acted on a Member but not on staff.
+    while connected; losing access mid-call removed the second account via the LiveKit
+    sweep; a ban-only group at rank 12 acted on a Member but not on a higher-ranked account.
     Found on the way: retiring old voice keys switched every device onto
     junk keys 10 s after a key change (fixed `efc38c6`).
 13. ✅ The real client, `client-web` (Architecture, "How the web client is
@@ -3390,7 +3390,7 @@ named; Docker is the test server.
     - @mentions (2026-11-03).
     - Local storage encrypted under the password (2026-11-03).
 14. ✅ Crypto-shredding (2026-11-03; Encryption, "Account deletion is
-    crypto-shredding"). One commit per step, each tested on Docker:
+    crypto-shredding"). One commit per step, each tested on the test server:
     - S1 key folder (`internal/keystore`: a file per account, created on
       first seal via temp file + link, cached) and sealing of new
       plaintext bodies and edits (`httpapi/sealing.go`: AES-256-GCM,
@@ -3447,7 +3447,7 @@ verified; the section named holds the design.
   names, SO0a-SO0c, SO1-SO7.
 - 2026-11-04 Password strength with zxcvbn, ZX1-ZX7.
 - 2026-11-04 Desktop step 1, Electron shell with the server pane: ED1-ED7,
-  ED9-ED11, ED7b. Unsigned Windows zip built on Docker
+  ED9-ED11, ED7b. Unsigned Windows zip built in Docker
   (`npm run package:win`, pure-JS packager, no Wine).
 - 2026-11-04 Stay signed in (after ED5); speaking indicator tuned (ED7).
 - 2026-11-04 Desktop step 2, screen share picker: ED8, SP1-SP7, SD1 (SD2
@@ -3532,129 +3532,79 @@ verified; the section named holds the design.
 
 ### Next up (Ryan picks; each gets a design talk first)
 
-- [ ] **Self-host audit, whole repo** (Ryan, 2026-11-08; next
-      session): make sure nothing in the repo is particular to Ryan's
-      setup and anyone can clone it and host their own OpenVoxa (server,
-      web client, desktop app pointed at their server). Go through every
-      tracked file (`git ls-files`), not samples:
-      1. Personal details: IPs, hostnames, domains, account and channel
-         names, usernames, NAS paths, emails beyond the DCO author.
-         Compare against private memory (DEV/PROD details) with grep.
-      2. DEV/PROD-specific content: two-stack routines, `ssh prod`,
-         hand-copy steps, defaults that assume a NAS, a LAN, Cloudflare,
-         port 8443 or Ryan's router. Each find: remove, generalise
-         (option with a sensible default), or move to private memory.
-      3. The self-host path end to end: README, deploy/README,
-         `setup.sh`, `.env.example` (every variable the code reads is
-         listed and explained), compose profiles, Caddyfiles, crons,
-         backup script. A newcomer on a fresh Linux box should need
-         nothing outside the repo.
-      4. Desktop app for someone else's server: how they build it, set
-         their update address and publish updates; what `release:win`
-         assumes (Docker, Wine image, a Linux host).
-      5. Dev notes (CLAUDE.md, decisions.md): decide with Ryan whether
-         they stay public as the project's notes, and strip Ryan's
-         environment out of them either way.
-      First give Ryan the findings list grouped by these five, with a
-      proposed fix each; change nothing before he picks. Then fix in
-      small commits, and finish with `setup.sh --dry-run` plus a fresh
-      clone install in a throwaway container or VM if feasible.
-- [ ] **Beta v1: DEV and PROD** (Ryan, 2026-11-07). Instead of wiping
-      the current server, set up a clean PROD beside it:
-      - **PROD** on a new VM (Debian, Docker), reached from Docker over
-        SSH with a key used only for this. It takes the public domain,
-        the router forwards (8443, UDP 50000-50100, TCP 7881), the
-        public-IP cron and the desktop update folder, so installed apps
-        and bookmarks keep working.
-      - **DEV** is today's Docker stack, test data kept, moved to a new
-        `dev.` name, LAN only:
-        `Caddyfile.dns` still gets it a real certificate without inbound
-        ports, and `LIVEKIT_NODE_IP` becomes the LAN address.
-      - **Stage 1 built 2026-11-07: `deploy/setup.sh`** (Ryan's picks).
-        Runs as the normal user, sudo only where needed; refuses if
-        `.env` or the override exists. Installs Docker from Docker's apt
-        repo on Debian/Ubuntu (and curl), adds the docker group and
-        continues via `sg`. Asks: TLS path (http / Cloudflare dns / internal),
-        domain + Let's Encrypt email (+ token), HTTPS port (override
-        `ports: !override` when not 443), internet or LAN (media IP
-        detected: 1.1.1.1 trace or the route's src), uploads folder
-        (Enter = volume; a path is write-tested as 65532, gets the server
-        volume override and a docker.service drop-in
-        `RequiresMountsFor`; NFS/CIFS on an `allow-hotplug` NIC offers
-        `auto` + `ifupdown-wait-online`, found on PROD), and the two
-        crons. KEK always generated, shown once, continues only after
-        typing `saved`. Secrets are hex (URL-safe in the database URL).
-        Starts, waits for the setup code and `/health` (curl `--resolve`
-        to 127.0.0.1, no hairpin), prints address, code and forwards.
-        `--dry-run` writes to a temp dir. Tested: shellcheck, dry runs
-        on Debian 13 (dns + 8443 + folder; internal), `compose config`
-        on the override, refusal on DEV. Real run = stage 2: SU1 git +
+- [x] **Self-host audit, whole repo** (2026-11-09): checked every
+      tracked file so anyone can clone and host their own server. No
+      personal network or account details were in the repo. Fixed:
+      `down -v` in Resetting deleted certificates too (verified by
+      experiment; now named volumes); a fresh clone's
+      `deploy/desktop-updates` was created by Docker as root, so
+      `release:win` couldn't write (now kept with a `.gitkeep`); database
+      backups added (`scripts/backup-db.sh`, offered by `setup.sh`,
+      restore tested); `.env.example` lists every setting and no longer
+      ships a password (compose refuses an empty one); README leads with
+      `setup.sh`, calls the project beta; deploy/README documents release
+      tags for updating and building the desktop app; CONTRIBUTING has real
+      build checks. Dev notes stay public and generic: the maintainer's
+      own workflow and hosts moved to a gitignored `CLAUDE.local.md`.
+      Verified: `setup.sh --dry-run` from a fresh clone on Debian 13.
+      Still open: a full install from a fresh clone on a throwaway VM;
+      `release:win` bumps `package.json` in a self-hoster's clone (see
+      deploy/README "Publishing updates"; a version taken from the update
+      folder instead would avoid it).
+- [x] **Beta v1** (2026-11-07 to 11-08): the first install of a live
+      server from scratch with the setup script, then releases from tags.
+      - **`deploy/setup.sh`.** Runs as the normal user, sudo only where
+        needed; refuses if `.env` or the override exists. Installs Docker
+        from Docker's apt repo on Debian/Ubuntu (and curl), adds the
+        docker group and continues via `sg`. Asks: TLS path (http /
+        Cloudflare dns / internal), domain + Let's Encrypt email (+
+        token), HTTPS port (override `ports: !override` when not 443),
+        internet or LAN (media IP detected: 1.1.1.1 trace or the route's
+        src), uploads folder (Enter = volume; a path is write-tested as
+        65532, gets the server volume override and a docker.service
+        drop-in `RequiresMountsFor`; NFS/CIFS on an `allow-hotplug` NIC
+        offers `auto` + `ifupdown-wait-online`, found on the first real
+        install), and the crons. KEK always generated, shown once,
+        continues only after typing `saved`. Secrets are hex (URL-safe in
+        the database URL). Starts, waits for the setup code and `/health`
+        (curl `--resolve` to 127.0.0.1, no hairpin), prints address, code
+        and forwards. `--dry-run` writes to a temp dir. Tested: shellcheck,
+        dry runs on Debian 13, `compose config` on the override, refusal
+        on a set-up server, and a real install on a fresh Debian 13 VM
+        (Cloudflare path, a non-443 port, NAS folder, internet): SU1 git +
         clone; SU2 Docker installed, carries on after the group change
-        without a new login; SU3 questions (dns path, 8443, internet,
-        detected public IP right); SU4 uploads folder passes the write
-        test, drop-in written; SU5 key shown, `saved` gate; SU6 build,
-        setup code and HTTPS health reported; SU7 (after cutover)
-        register the first account at the domain; SU8 reboot: share
-        mounted before Docker, stack back up.
-        README Requirements/Quick start now use it; the manual path and
-        the boot-order traps are documented.
-      - **Stage 2 done 2026-11-08:** PROD installed from scratch with
-        `setup.sh` (Cloudflare path, 8443, NAS folder, internet).
-        SU1-SU8 and GF1 passed: Docker carried on via `sg`, the write
-        test and drop-in worked, the first account took the setup code,
-        reachable from outside, and after a reboot the share mounted a
-        second before Docker and the stack came back. Cutover: router
-        forwards and the LAN DNS record moved to PROD, a public A record
-        added (DNS only; there was none before), DEV renamed to its
-        LAN-only `dev.` name with a LAN node IP and no IP cron, desktop
-        update files copied to PROD, PROD has its own GIPHY key and
-        Cloudflare token. Learned (README updated): the router has no
-        NAT loopback, so LAN users need the local DNS record; the
-        user's own shell needs a new login for the docker group;
-        "memory almost full" in the hypervisor was page cache from the
-        build (about 600 MB really used). Gaps for stage 3:
-        `release:win` still writes to DEV's `deploy/desktop-updates`
-        (copied to PROD by hand); the public A record doesn't follow a
-        changed WAN IP (the IP cron only updates LiveKit). Both closed
-        2026-11-08: the A record in "Public DNS record follows the IP";
-        the desktop copy to PROD is a private script on Docker, outside
-        the repo (Ryan: the repo serves single-server self-hosters, so
-        nothing that only fits a DEV/PROD pair goes in it). A single
-        server needs nothing: `release:win` writes its own update folder
-        (or `OPENVOXA_DESKTOP_UPDATES_DIR`).
-      - **First release, v1.0.0-beta.1 (2026-11-08):** the 60 fps small
-        copy fix, shipped while friends were on. Routine used: tag on
-        Docker and push the tag; on PROD (over SSH, no sudo) `git fetch
-        --tags && git checkout <tag>`, `docker compose --profile tls
-        build` while the old containers serve, then `up -d`. Only the
-        changed server container was recreated (about 5 s); LiveKit and
-        Caddy kept running, so voice stayed up; clients reconnected by
-        themselves and pick up the new web client on reload. Confirmed
-        with the served `index-*.js` matching DEV's. SS32-SS33 passed
-        (over 30 fps on PROD). Seen: each client fetched a WebSocket
-        ticket twice, about 3 s apart, after the restart (Open items).
+        without a new login; SU3 questions, detected public IP right; SU4
+        uploads folder passes the write test, drop-in written; SU5 key
+        shown, `saved` gate; SU6 build, setup code and HTTPS health
+        reported; SU7 first account registered at the domain; SU8 reboot:
+        share mounted before Docker, stack back up. All passed. Learned
+        (deploy/README updated): routers without NAT loopback need a local
+        DNS record for LAN users; the user's own shell needs a new login
+        for the docker group; "memory almost full" in a hypervisor during
+        the build is page cache (about 600 MB really used).
+      - **Releasing.** Tag and push the tag; on the server (no sudo) `git
+        fetch --tags && git checkout <tag>`, `docker compose --profile tls
+        build` while the old containers serve, then `up -d`. Only changed
+        containers are recreated (the server: about 5 s); LiveKit and
+        Caddy keep running, so calls stay up; clients reconnect by
+        themselves and load the new web client on reload. A **hotfix**
+        (`v1.0.0-beta.N.M`, which semver orders between beta.N and
+        beta.N+1, where a `-hotfix` suffix would sort after beta.N+1) is
+        for a change that needs nobody to rejoin a call, no desktop app
+        update, and doesn't touch voice, screen share or LiveKit.
+      - **v1.0.0-beta.1 (2026-11-08):** the 60 fps small copy fix, shipped
+        while people were in calls. SS32-SS33 passed (over 30 fps).
+        Seen: each client fetched a WebSocket ticket twice, about 3 s
+        apart, after the restart (Open items).
       - **v1.0.0-beta.2 (2026-11-08):** Move members, direct messages
         (all three stages, with blocks), the one-minute DM and @mention
         sound cooldowns; migrations 0035-0036. Server and web client
-        only: no desktop app update. Same routine as beta.1.
+        only.
       - **v1.0.0-beta.2.1 (2026-11-08, hotfix):** the login page download
         link and the public DNS record following the IP (Feature
-        decisions). Web client and a host script only; same routine.
-      - **Releases:** DEV runs work in progress; PROD only moves to a
-        tagged version (e.g. `v1.0.0-beta.1`) when Ryan says "release".
-        **Hotfixes** (Ryan, 2026-11-08): a change that has passed on DEV
-        goes to PROD at once, same routine, if it needs nobody to end or
-        rejoin a call, needs no desktop app install or update, and
-        doesn't affect voice (voice client, voice UI, screen share,
-        LiveKit). Tagged `v1.0.0-beta.N.M` (`v1.0.0-beta.1.1`, ...):
-        semver orders that between beta.N and beta.N+1, where a
-        `-hotfix` suffix would sort after beta.N+1.
-      - **Stages:** (1) setup script and rewritten install docs; (2)
-        install PROD with them from scratch (the real test of the
-        self-host path) and cut the network over; (3) the release and
-        PROD update routine. Open for later: an official desktop app on
-        GitHub Releases for other people's servers; prebuilt server
-        images; the README's "do not use" warning for beta.
+        decisions). Web client and a host script only.
+      - **Open for later:** an official desktop app on GitHub Releases
+        for other people's servers; prebuilt server images.
 - [ ] **Desktop app icon** (Ryan, 2026-11-07): replace the Electron
       logo. Waiting on a PNG from Ryan's graphic artist (square, 1024 px
       ideal, at least 512, transparent). Then: generate a multi-size
@@ -3716,7 +3666,7 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
 
 ### Untested
 
-- [x] **Double reconnect after a server restart** (2026-11-08, PROD
+- [x] **Double reconnect after a server restart** (2026-11-08, live server
       v1.0.0-beta.1): each of three clients fetched a WebSocket ticket
       twice, about 3 s apart, all 200. Explained 2026-11-08, no change:
       a client in a channel has two sockets, the events socket (`Chat`,
@@ -3728,7 +3678,7 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
       command).
 - [ ] VA7c: lifting a channel's forced push-to-talk sometimes left the
       *other* device stuck in it (crossed-out mic, not orange, can't
-      unmute; seen twice, staff on the iPad, an admin in the desktop
+      unmute; seen twice, a second account on the iPad, an admin in the desktop
       app). `#applyMic` now redraws before and after the mute switch and
       reports failures; Ryan couldn't reproduce afterwards. Possibly
       Safari. If it returns: what the voice bar says, and any notice.
