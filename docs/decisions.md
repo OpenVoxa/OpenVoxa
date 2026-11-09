@@ -3766,6 +3766,10 @@ verified; the section named holds the design.
       - **v1.0.0-beta.4 (2026-11-09):** user avatars, profiles stage 1
         (AV1-AV12); migration 0037. Server and web client only: no
         desktop app update. Same routine; served bundle matched DEV.
+      - **v1.0.0-beta.4.1 (2026-11-09, hotfix):** the new version notice
+        (NV1-NV6). Web client only; same routine; served bundle matched
+        DEV. Pages opened before it have no notice; from the next release
+        on, open pages offer Reload.
       - **Open for later:** an official desktop app on GitHub Releases
         for other people's servers; prebuilt server images.
 - [ ] **Desktop app icon** (Ryan, 2026-11-07): replace the Electron
