@@ -3603,6 +3603,10 @@ verified; the section named holds the design.
       - **v1.0.0-beta.2.1 (2026-11-08, hotfix):** the login page download
         link and the public DNS record following the IP (Feature
         decisions). Web client and a host script only.
+      - **v1.0.0-beta.2.2 (2026-11-09, hotfix):** the self-host audit
+        (deploy files and docs only; nightly `scripts/backup-db.sh`).
+        No server or client change, so the server needs no rebuild:
+        `git checkout` the tag and add the cron line.
       - **Open for later:** an official desktop app on GitHub Releases
         for other people's servers; prebuilt server images.
 - [ ] **Desktop app icon** (Ryan, 2026-11-07): replace the Electron
