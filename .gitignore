@@ -36,3 +36,6 @@ deploy/docker-compose.override.yml
 deploy/desktop-updates/*
 !deploy/desktop-updates/.gitkeep
 /client-desktop/update-url.local
+
+# Maintainer-local notes for Claude Code
+CLAUDE.local.md
