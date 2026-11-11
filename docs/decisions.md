@@ -1847,6 +1847,36 @@ at the end.
       server makes the session; the QR stands in for both the password
       and the two-factor code, since the approving device passed both.
 
+### Planned: picture-in-picture for streams
+
+Agreed with Ryan 2026-11-11; not built. Test IDs PP.
+
+- **What:** a floating, always-on-top window showing the screen share
+  you're watching, so you can keep watching over other apps (borderless
+  or windowed games; nothing can draw over exclusive fullscreen).
+- **Document Picture-in-Picture** (Chromium's `documentPictureInPicture`,
+  a small window holding our own HTML), not plain video PiP (one
+  `<video>` with only the browser's play/pause). Fallback to video PiP
+  only where Document PiP is missing.
+- **Opened only by a PiP button** on the stream tile. Never automatic
+  (Ryan: visually invasive; the user should choose it).
+- **Contents, first version:** the stream plus Mute, Deafen and Leave.
+  Later: speaking indicators, several streams.
+- **Stays open** while you move to other channels (the video keeps
+  running outside the voice view) until you close it, the share ends,
+  or you leave the call. (Proposed; Ryan didn't object.)
+- **Why it should just work:** E2EE decrypts before the `<video>`
+  element, so PiP shows plain frames; livekit-client 2.23's
+  adaptiveStream already counts an element inside a Document PiP window
+  as visible (`isElementInPiP`), so the stream doesn't pause when the
+  main window is hidden; the PiP window's size picks the layer, and
+  "pin quality" keeps the top one.
+- **To verify by experiment first (DEV):** that Electron 45 exposes
+  `documentPictureInPicture` in a server view (and the web client in
+  Chrome/Edge); which layer LiveKit picks inside PiP; that the window
+  survives switching channels; that styles (our CSS variables) carry
+  into the PiP document.
+
 ### Planned: replies, links and code blocks
 
 Decided with Ryan, 2026-11-06 (all as recommended). Related: a reply
@@ -3820,6 +3850,10 @@ verified; the section named holds the design.
       bio, joined, last seen built 2026-11-10, PR1-PR11 pass; next
       stage 2b custom status (ST). Feature decisions, "Planned", "User avatars and
       profiles".
+- [ ] **Picture-in-picture for streams** (design agreed 2026-11-11):
+      Document PiP from a button on the stream tile, stream plus
+      Mute/Deafen/Leave; starts with a DEV experiment. Feature decisions,
+      "Planned: picture-in-picture for streams".
 - [x] Server icon and name in the pane, set in Server settings: built
       2026-11-07 (Feature decisions, "Server name and icon"; SI1-SI9).
 - [ ] Audio quality per voice channel (Feature decisions, "Voice
