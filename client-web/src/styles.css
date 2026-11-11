@@ -1288,3 +1288,7 @@ button.name-btn:hover { text-decoration: underline; }
 .update-bar-text { flex: 1; min-width: 0; }
 .update-bar button.primary { flex: none; font-size: 13px; font-weight: 700; padding: 3px 10px; border: 1px solid var(--accent); }
 .update-bar .reply-x { flex: none; font-size: 18px; }
+
+/* The picture-in-picture source (pip.ts): invisible but in the viewport,
+   so LiveKit keeps the video coming; sized like the PiP window. */
+.pip-source { position: fixed; right: 0; bottom: 0; width: 320px; height: 180px; opacity: 0; pointer-events: none; z-index: -1; }

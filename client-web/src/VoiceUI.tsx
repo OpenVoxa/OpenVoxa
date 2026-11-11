@@ -19,6 +19,7 @@ import { localStore } from "./core";
 import { ColouredName } from "./names";
 import { PRESETS, presetAllowed, type ShareLimit } from "./shareLimit";
 import { Avatar } from "./avatars";
+import { pipSupported, togglePip, usePipShare } from "./pip";
 
 export function useVoiceSnapshot(voice: VoiceClient | null): VoiceSnapshot | null {
   const subscribe = useCallback((cb: () => void) => (voice ? voice.on(cb) : () => {}), [voice]);
@@ -1266,6 +1267,23 @@ function LevelMeter({ voice, threshold, onThreshold }: {
  * One click and a double click on the same element: the single click
  * waits 250 ms, so a double click (fullscreen) doesn't also run it.
  */
+/**
+ * Opens a share in a picture-in-picture window (pip.ts), or closes it.
+ * Greyed out where the browser has no video PiP (Firefox).
+ */
+function PipButton({ voice, share }: { voice: VoiceClient; share: ScreenShare }) {
+  const on = usePipShare() === share.id;
+  return (
+    <button className={on ? "primary" : "secondary"} aria-pressed={on} disabled={!pipSupported}
+      title={!pipSupported ? "This browser can't show picture-in-picture"
+        : on ? "Close the picture-in-picture window"
+        : "Watch in a small window that stays on top of other apps"}
+      onClick={() => void togglePip(voice, share)}>
+      {on ? "Close PiP" : "PiP"}
+    </button>
+  );
+}
+
 function useClickOrDouble(single: () => void, double: () => void) {
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
@@ -1446,6 +1464,7 @@ function PersonTile({ voice, person, share, mutedTalking, hidden, onHide, onWatc
             </button>
           )}
           <button className="secondary" onClick={fullscreen}>Fullscreen</button>
+          <PipButton voice={voice} share={showing} />
           {person.isLocal && <button className="secondary" onClick={() => switchFromTile(voice)}>Switch</button>}
           {/* Hiding a share means not following it: its sound stops too. */}
           <button className="secondary" onClick={() => {
@@ -1533,6 +1552,7 @@ function ScreenTile({ voice, share, stats, onClick }: {
           </button>
         )}
         <button className="secondary" onClick={fullscreen}>Fullscreen</button>
+        <PipButton voice={voice} share={share} />
         {share.isLocal && <button className="secondary" onClick={() => switchFromTile(voice)}>Switch</button>}
       </figcaption>
     </figure>

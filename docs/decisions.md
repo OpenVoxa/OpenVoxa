@@ -1849,33 +1849,40 @@ at the end.
 
 ### Planned: picture-in-picture for streams
 
-Agreed with Ryan 2026-11-11; not built. Test IDs PP.
+Agreed with Ryan 2026-11-11; built the same day (`client-web/src/pip.ts`),
+PP1-PP10 pass (desktop app watching a Chrome share); the Firefox
+greyed-out button is untested.
 
 - **What:** a floating, always-on-top window showing the screen share
   you're watching, so you can keep watching over other apps (borderless
   or windowed games; nothing can draw over exclusive fullscreen).
-- **Document Picture-in-Picture** (Chromium's `documentPictureInPicture`,
-  a small window holding our own HTML), not plain video PiP (one
-  `<video>` with only the browser's play/pause). Fallback to video PiP
-  only where Document PiP is missing.
-- **Opened only by a PiP button** on the stream tile. Never automatic
-  (Ryan: visually invasive; the user should choose it).
-- **Contents, first version:** the stream plus Mute, Deafen and Leave.
-  Later: speaking indicators, several streams.
-- **Stays open** while you move to other channels (the video keeps
-  running outside the voice view) until you close it, the share ends,
-  or you leave the call. (Proposed; Ryan didn't object.)
-- **Why it should just work:** E2EE decrypts before the `<video>`
-  element, so PiP shows plain frames; livekit-client 2.23's
-  adaptiveStream already counts an element inside a Document PiP window
-  as visible (`isElementInPiP`), so the stream doesn't pause when the
-  main window is hidden; the PiP window's size picks the layer, and
-  "pin quality" keeps the top one.
-- **To verify by experiment first (DEV):** that Electron 45 exposes
-  `documentPictureInPicture` in a server view (and the web client in
-  Chrome/Edge); which layer LiveKit picks inside PiP; that the window
-  survives switching channels; that styles (our CSS variables) carry
-  into the PiP document.
+- **Video PiP, not Document PiP** (changed after the experiment, Ryan's
+  pick): the browser's own PiP window for one `<video>`, with **Mute and
+  Leave** from the Media Session API (`togglemicrophone`, `hangup`;
+  Chromium's video-call PiP buttons). The same everywhere: desktop app,
+  Chrome, Edge, Safari. Firefox has no PiP API, so the button is greyed
+  out. The agreed design was Document PiP (our own HTML: stream plus
+  Mute/Deafen/Leave), but Electron doesn't implement it (Implementation
+  notes, Electron, "Picture-in-picture"). No Deafen in the window for
+  now; revisit if Electron gains Document PiP.
+- **Opened only by a PiP button** on share tiles (call view and Watch
+  view), beside Fullscreen; "Close PiP" (filled) while open. Never
+  automatic (Ryan: visually invasive; the user should choose it). One
+  PiP at a time: PiP on another share moves it there.
+- **Closes** with the window's X (or back-to-tab), Close PiP, the share
+  ending, or leaving the call. **Stays open** when switching channels or
+  going back to chat: the video is our own element outside React.
+- **Mic button** follows the voice bar's mute button: shown only when
+  that one works (hidden when server-muted or in push-to-talk, forced or
+  chosen); shown off while muted or deafened, and turning it on
+  undeafens, as the voice bar does.
+- **Quality:** LiveKit's adaptiveStream picks the layer from the
+  element's size *in the page*, not the PiP window's, so the hidden
+  element follows the PiP window's size (`resize` on the
+  PictureInPictureWindow). It sits invisible (opacity 0) inside the
+  viewport: off screen, adaptiveStream would count it hidden and pause
+  the video before PiP opens. Once in PiP, livekit-client 2.23 counts it
+  visible even when the app is minimised (`isElementInPiP`).
 
 ### Planned: replies, links and code blocks
 
@@ -3196,6 +3203,18 @@ feature. Windows sends packets continuously while the target is silent
 (WH3), so the reader gets a steady 192,000 bytes a second. Electron's
 `desktopCapturer` window IDs are `window:<HWND as decimal>:0`.
 
+**Picture-in-picture in Electron (2026-11-11, by experiment, Electron
+45.2.2 / Chromium 156).** `documentPictureInPicture` exists (secure
+contexts only: a `data:` page doesn't have it) and `requestWindow()`
+resolves, but no window or WebContents is ever created: the returned
+window stays 0x0 and an element moved into it just disappears. The
+request does go through the page's `setWindowOpenHandler` first (url
+`about:blank`, disposition `other`), and denying it rejects the
+promise. Plain video PiP (`video.requestPictureInPicture()`) works: a
+real always-on-top window, playing, with the Media Session call buttons
+(`togglemicrophone`, `togglecamera`, `hangup`) shown on hover. Video
+PiP needs the element's metadata first and the page's user activation.
+
 ### Server (Go, Postgres, HTTP)
 
 **Middleware that wraps `ResponseWriter` breaks WebSockets.** Wrapping
@@ -3736,6 +3755,11 @@ verified; the section named holds the design.
   moderators' Clear Bio, logged, rank-checked; migration 0038),
   PR1-PR11 pass (Feature decisions, "Planned", "User avatars and
   profiles", "Stage 2a as built").
+- 2026-11-11 Picture-in-picture for streams (video PiP from a PiP button
+  on share tiles, Mute and Leave in the window from Media Session; stays
+  open across channels; Document PiP ruled out by experiment in
+  Electron), PP1-PP10 pass; the Firefox greyed-out button untested
+  (Feature decisions, "Planned: picture-in-picture for streams").
 
 ## Open items
 
@@ -3850,10 +3874,11 @@ verified; the section named holds the design.
       bio, joined, last seen built 2026-11-10, PR1-PR11 pass; next
       stage 2b custom status (ST). Feature decisions, "Planned", "User avatars and
       profiles".
-- [ ] **Picture-in-picture for streams** (design agreed 2026-11-11):
-      Document PiP from a button on the stream tile, stream plus
-      Mute/Deafen/Leave; starts with a DEV experiment. Feature decisions,
-      "Planned: picture-in-picture for streams".
+- [x] **Picture-in-picture for streams** (design agreed 2026-11-11):
+      video PiP from a PiP button on share tiles, with Mute and Leave
+      (Electron has no working Document PiP); built 2026-11-11, PP1-PP10
+      pass. Feature decisions, "Planned: picture-in-picture for
+      streams".
 - [x] Server icon and name in the pane, set in Server settings: built
       2026-11-07 (Feature decisions, "Server name and icon"; SI1-SI9).
 - [ ] Audio quality per voice channel (Feature decisions, "Voice
@@ -3903,6 +3928,9 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
 
 ### Untested
 
+- [ ] **PiP button greyed out in Firefox** (2026-11-11): Firefox has no
+      video PiP API, so the button should be disabled with a tooltip.
+      Not checked (picture-in-picture for streams, PP1-PP10 passed).
 - [x] **Double reconnect after a server restart** (2026-11-08, live server
       v1.0.0-beta.1): each of three clients fetched a WebSocket ticket
       twice, about 3 s apart, all 200. Explained 2026-11-08, no change:
