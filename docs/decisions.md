@@ -3857,6 +3857,11 @@ verified; the section named holds the design.
         menus (a View Profile item) but no media or LiveKit code, and
         nobody has to rejoin, so it qualified as a hotfix. Same routine;
         LiveKit kept running; served bundle matched DEV.
+      - **v1.0.0-beta.4.3 (2026-11-11, hotfix):** picture-in-picture for
+        streams (PP1-PP10). Web client only. It changes the voice UI (a
+        PiP button and Media Session handlers) but no media or LiveKit
+        code and needs nobody to rejoin, so Ryan chose a hotfix. Same
+        routine; only the server restarted; served bundle matched DEV.
       - **Open for later:** an official desktop app on GitHub Releases
         for other people's servers; prebuilt server images.
 - [ ] **Desktop app icon** (Ryan, 2026-11-07): replace the Electron
