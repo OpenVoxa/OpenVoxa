@@ -3797,6 +3797,12 @@ verified; the section named holds the design.
         (NV1-NV6). Web client only; same routine; served bundle matched
         DEV. Pages opened before it have no notice; from the next release
         on, open pages offer Reload.
+      - **v1.0.0-beta.4.2 (2026-11-11, hotfix):** profiles stage 2a
+        (profile card, bio, Joined, last seen, Clear Bio; PR1-PR11);
+        migration 0038. Server and web client only. It edits the voice
+        menus (a View Profile item) but no media or LiveKit code, and
+        nobody has to rejoin, so it qualified as a hotfix. Same routine;
+        LiveKit kept running; served bundle matched DEV.
       - **Open for later:** an official desktop app on GitHub Releases
         for other people's servers; prebuilt server images.
 - [ ] **Desktop app icon** (Ryan, 2026-11-07): replace the Electron
