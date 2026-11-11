@@ -727,12 +727,12 @@ function Message({ m, link: address, jumped, original, blockedAuthor, blockedRep
   return (
     <article className={classes} data-id={m.id} aria-label={`${name} at ${formatTime(m.createdAt)}`}>
       {m.reply && !m.deleted && <ReplyLine to={m.reply} original={original} blocked={blockedReply} onClick={onJumpToOriginal} />}
-      {!compact && (onName && !m.own && !gone ? (
+      {!compact && (onName && !gone ? (
         <button className="msg-avatar" tabIndex={-1} aria-hidden
-          onClick={(e) => onName({ id: m.authorId, username: name }, { x: e.clientX, y: e.clientY })}
+          onClick={(e) => onName({ id: m.own ? userId : m.authorId, username: name }, { x: e.clientX, y: e.clientY })}
           onContextMenu={(e) => {
             e.preventDefault();
-            onName({ id: m.authorId, username: name }, { x: e.clientX, y: e.clientY });
+            onName({ id: m.own ? userId : m.authorId, username: name }, { x: e.clientX, y: e.clientY });
           }}>
           <Avatar userId={m.authorId} name={name} />
         </button>
@@ -744,12 +744,12 @@ function Message({ m, link: address, jumped, original, blockedAuthor, blockedRep
         : (
           <header>
             <strong className={m.own ? "own" : gone ? "muted" : undefined} style={nameStyle(colour)}>
-              {onName && !m.own && !gone ? (
-                <button className="name-btn" title="Message (or right-click)"
-                  onClick={(e) => onName({ id: m.authorId, username: name }, { x: e.clientX, y: e.clientY })}
+              {onName && !gone ? (
+                <button className="name-btn" title="Profile"
+                  onClick={(e) => onName({ id: m.own ? userId : m.authorId, username: name }, { x: e.clientX, y: e.clientY })}
                   onContextMenu={(e) => {
                     e.preventDefault();
-                    onName({ id: m.authorId, username: name }, { x: e.clientX, y: e.clientY });
+                    onName({ id: m.own ? userId : m.authorId, username: name }, { x: e.clientX, y: e.clientY });
                   }}>
                   {name}
                 </button>

@@ -519,6 +519,11 @@ func (a *API) eventSocket(w http.ResponseWriter, r *http.Request, session Sessio
 	a.hub.SubscribeEvents(client)
 	defer a.hub.Unsubscribe("", client)
 
+	// Last seen (profiles.go): the date now, and again on leaving, in
+	// case the socket stayed open past midnight (UTC).
+	a.touchLastSeen(session.UserID)
+	defer a.touchLastSeen(session.UserID)
+
 	go writePump(ctx, cancel, conn, client)
 
 	for {

@@ -21,6 +21,8 @@
   --danger: #ff8f87;
   /* Save buttons for pending changes; white text on it is 5.1:1. */
   --save: #2e7d32;
+  /* The "Online now" dot on the profile card. */
+  --online: #43a047;
   --on-save: #ffffff;
   --alert: #e5483d;
   /* Code block syntax colours, on --input (#262626): each at least 4.5:1. */
@@ -1253,6 +1255,30 @@ button.name-btn:hover { text-decoration: underline; }
   flex: none; width: 72px; height: 72px; border-radius: 50%; display: grid; place-items: center;
   font-size: 30px; font-weight: 700; background: var(--sidebar-active); color: var(--text); margin: 8px 0;
 }
+/* The profile card (profiles.tsx): the name menu's look, wider, with
+   the person above the actions. */
+.menu.profile-card { width: 300px; outline: none; }
+.profile-head { display: flex; align-items: center; gap: 12px; padding: 6px 8px 8px; }
+.avatar.profile-card-avatar {
+  flex: none; width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 24px; font-weight: 700; background: var(--sidebar-active); color: var(--text);
+}
+.profile-who { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.profile-card-name { font-size: 16px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-groups { display: flex; flex-wrap: wrap; gap: 4px; }
+.profile-group { font-size: 12px; padding: 1px 6px; border-radius: 4px; background: var(--input); color: var(--muted); }
+.profile-bio {
+  margin: 0; padding: 0 8px 6px; font-size: 14px; line-height: 1.4;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.menu p.profile-line { padding: 0 8px 4px; display: flex; align-items: center; gap: 6px; }
+.online-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--online); flex: none; }
+/* Settings, Profile: the bio box. */
+.bio-input { width: 100%; max-width: 480px; min-height: 96px; resize: vertical; }
+.bio-count { margin: 4px 0 0; }
+.person-actions { display: flex; gap: 8px; }
+.person-actions button { flex: 1; padding-left: 4px; padding-right: 4px; white-space: nowrap; }
+
 /* "New features are available" (newVersion.ts): the reply bar's look,
    at the top of the main pane. */
 .update-bar {

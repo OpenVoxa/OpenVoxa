@@ -432,28 +432,44 @@ export interface MessageAction {
   onClick: () => void;
 }
 
-function MessageButton({ message, onClose }: { message: MessageAction; onClose: () => void }) {
+function MessageButton({ message, onProfile, onClose }: {
+  message: MessageAction;
+  onProfile?: () => void;
+  onClose: () => void;
+}) {
   return (
-    <button className="outline" disabled={message.disabled}
-      title={message.disabled ? "You can't send direct messages on this server" : undefined}
-      onClick={() => {
-        onClose();
-        message.onClick();
-      }}>
-      Message
-    </button>
+    <div className="person-actions">
+      {onProfile && (
+        <button className="outline" onClick={() => {
+          onClose();
+          onProfile();
+        }}>
+          View Profile
+        </button>
+      )}
+      <button className="outline" disabled={message.disabled}
+        title={message.disabled ? "You can't send direct messages on this server" : undefined}
+        onClick={() => {
+          onClose();
+          message.onClick();
+        }}>
+        Message
+      </button>
+    </div>
   );
 }
 const MESSAGE_BUTTON_HEIGHT = 44;
 
 /** For holders of move_members: someone in a call you're not in. */
-export function MoveMenu({ person, from, channels, at, call, message, onClose }: {
+export function MoveMenu({ person, from, channels, at, call, message, onProfile, onClose }: {
   person: { user_id: string; username: string };
   from: string;
   channels: readonly MoveTarget[];
   at: { x: number; y: number };
   call: ApiCall;
   message?: MessageAction;
+  /** View Profile: opens the profile card (profiles.tsx). */
+  onProfile?: () => void;
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -464,7 +480,7 @@ export function MoveMenu({ person, from, channels, at, call, message, onClose }:
   return (
     <div ref={ref} className="menu" style={{ left, top }} role="dialog" aria-label={`Move ${person.username}`}>
       <strong>{person.username}</strong>
-      {message && <MessageButton message={message} onClose={onClose} />}
+      {message && <MessageButton message={message} onProfile={onProfile} onClose={onClose} />}
       <MoveSection userId={person.user_id} from={from} channels={channels} call={call} onDone={onClose} />
     </div>
   );
@@ -475,7 +491,7 @@ export function MoveMenu({ person, from, channels, at, call, message, onClose }:
  * holders of server_mute, the server mute too, and for holders of
  * move_members, Move and Disconnect.
  */
-export function PersonMenu({ voice, person, at, call, canServerMute, move, message, onClose }: {
+export function PersonMenu({ voice, person, at, call, canServerMute, move, message, onProfile, onClose }: {
   voice: VoiceClient;
   person: VoiceParticipant;
   at: { x: number; y: number };
@@ -484,6 +500,8 @@ export function PersonMenu({ voice, person, at, call, canServerMute, move, messa
   /** Set for holders of move_members: the call they're in and where they can go. */
   move?: { from: string; channels: readonly MoveTarget[] };
   message?: MessageAction;
+  /** View Profile: opens the profile card (profiles.tsx). */
+  onProfile?: () => void;
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -514,7 +532,7 @@ export function PersonMenu({ voice, person, at, call, canServerMute, move, messa
   return (
     <div ref={ref} className="menu" style={{ left, top }} role="dialog" aria-label={`${person.name} volume`}>
       <strong>{person.name}</strong>
-      {message && <MessageButton message={message} onClose={onClose} />}
+      {message && <MessageButton message={message} onProfile={onProfile} onClose={onClose} />}
       <label>
         Volume {vol}%
         <input type="range" min={0} max={100} value={vol}

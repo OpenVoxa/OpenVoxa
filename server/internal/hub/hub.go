@@ -101,6 +101,20 @@ func (h *Hub) Unsubscribe(channelID string, c *Client) {
 	c.close()
 }
 
+// Online reports whether the account has any socket open (an events or
+// a channel socket, in any tab or app). For "Online now" on the profile
+// card (httpapi/profiles.go).
+func (h *Hub) Online(userID string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for c := range h.all {
+		if c.UserID == userID {
+			return true
+		}
+	}
+	return false
+}
+
 // Broadcast delivers payload to every subscriber of channelID.
 //
 // The send is non-blocking: a client whose buffer is full gets dropped

@@ -11,7 +11,7 @@
  * only draws their snapshots and forwards what the user does.
  */
 
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent } from "react";
 import { Chat, dmChannel, type ChannelView, type ChannelInfo, type DMInfo, type VoicePresence } from "@core/chat";
 import type { VoiceClient, VoiceParticipant } from "@core/voice";
 import type { BackupStatus } from "@core/recovery";
@@ -39,6 +39,7 @@ import { configureHome, HomeIcon, HomePane, markHomeSeen, refreshHome, useHome }
 import type { ServerTab } from "./ServerSettings";
 import { isStaffPerms } from "./perms";
 import { DMList, NewMessageDialog } from "./dms";
+import { ProfileCard } from "./profiles";
 import { mayDM, NO_DM_REASON } from "./dmText";
 
 const LAST_CHANNEL = (userId: string) => `lastChannel.${userId}`;
@@ -152,13 +153,15 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   >(null);
   // The right-click (or long-press) menu on a channel in the sidebar.
   const [chanMenu, setChanMenu] = useState<{ id: string; at: { x: number; y: number } } | null>(null);
-  // The menu on someone's name (a message author, someone in a call).
   // A newer web client on the server (newVersion.ts), and the one the
   // notice was closed for.
   const [newVersion, setNewVersion] = useState<string | null>(null);
   const [dismissedVersion, setDismissedVersion] = useState<string | null>(null);
+  // The profile card on someone's name (a message author; someone in a
+  // call through View Profile): profiles.tsx.
   const [nameMenu, setNameMenu] = useState<{ user: NamedUser; at: { x: number; y: number } } | null>(null);
   const nameMenuHasAvatar = useAvatarVersion(nameMenu?.user.id) !== undefined;
+  const closeNameMenu = useCallback(() => setNameMenu(null), []);
   const menuTrigger = useMenuTrigger((id, at) => setChanMenu({ id, at }));
   const [presence, setPresence] = useState<VoicePresence>({});
   // Created on first join: loading it pulls in LiveKit, which text-only
@@ -625,6 +628,11 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
       () => avatarChanged(u.id, null),
       (err) => setDropNote({ title: `Couldn't remove ${u.username}'s avatar`, text: err instanceof Error ? err.message : String(err), at }));
   };
+  /** Moderators: Clear Bio (logged; the server checks rank). */
+  const clearBio = (u: NamedUser, at: { x: number; y: number }) => {
+    void call(`/api/v1/users/${u.id}/bio`, { method: "DELETE" }).catch((err) =>
+      setDropNote({ title: `Couldn't clear ${u.username}'s bio`, text: err instanceof Error ? err.message : String(err), at }));
+  };
   const blockItem = (u: NamedUser, at: { x: number; y: number }): MenuItem => blocked.has(u.id)
     ? { label: "Unblock", onClick: () => toggleBlock(u, at) }
     : { label: "Block", onClick: () => toggleBlock(u, at), danger: true };
@@ -646,7 +654,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   const canDM = mayDM(perms);
   const dmAlerts = dms.filter((d) => mentions.has(d.channel_id)).length;
   const onName = (u: NamedUser, at: { x: number; y: number }) => {
-    if (u.id && u.id !== session.user_id) setNameMenu({ user: u, at });
+    if (u.id) setNameMenu({ user: u, at });
   };
   const settingsFor = (c: ChannelInfo) => canManage || (c.kind === "voice" && canForcePTT);
   const dialogChannel = dialog?.k === "settings" ? channels.find((c) => c.id === dialog.id) : undefined;
@@ -965,6 +973,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           at={person.at} call={call} canServerMute={can("server_mute")}
           move={canMove && vsnap?.channelId ? { from: vsnap.channelId, channels: voiceChannels } : undefined}
           message={{ disabled: !canDM, onClick: () => messageFrom({ id: person.p.id, username: person.p.name }, person.at) }}
+          onProfile={() => setNameMenu({ user: { id: person.p.id, username: person.p.name }, at: person.at })}
           onClose={() => setPerson(null)} />
       )}
       {dropNote && <MenuNote {...dropNote} onClose={() => setDropNote(null)} />}
@@ -972,6 +981,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
         <MoveMenu person={moveMenu.p} from={moveMenu.from} channels={voiceChannels}
           at={moveMenu.at} call={call}
           message={{ disabled: !canDM, onClick: () => messageFrom({ id: moveMenu.p.user_id, username: moveMenu.p.username }, moveMenu.at) }}
+          onProfile={() => setNameMenu({ user: { id: moveMenu.p.user_id, username: moveMenu.p.username }, at: moveMenu.at })}
           onClose={() => setMoveMenu(null)} />
       )}
       {chanMenu && menuChannel && (
@@ -979,14 +989,18 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           items={menuItems(menuChannel)} onClose={() => setChanMenu(null)} />
       )}
       {nameMenu && (
-        <ChannelMenu title={nameMenu.user.username} at={nameMenu.at}
-          items={[{ label: "Message", disabled: !canDM, reason: NO_DM_REASON,
-            onClick: () => messageFrom(nameMenu.user, nameMenu.at) },
-            "sep", blockItem(nameMenu.user, nameMenu.at),
-            ...(canDeleteAny ? ["sep" as const, {
-              label: "Remove Avatar", danger: true, disabled: !nameMenuHasAvatar, reason: "No avatar to remove",
-              onClick: () => removeAvatar(nameMenu.user, nameMenu.at) }] : [])]}
-          onClose={() => setNameMenu(null)} />
+        <ProfileCard userId={nameMenu.user.id} username={nameMenu.user.username} at={nameMenu.at} call={call}
+          items={(p) => nameMenu.user.id === session.user_id
+            ? ["sep", { label: "Edit Profile", onClick: () => setDialog({ k: "prefs", tab: "profile" }) }]
+            : ["sep", { label: "Message", disabled: !canDM, reason: NO_DM_REASON,
+              onClick: () => messageFrom(nameMenu.user, nameMenu.at) },
+              blockItem(nameMenu.user, nameMenu.at),
+              ...(canDeleteAny ? ["sep" as const, {
+                label: "Remove Avatar", danger: true, disabled: !nameMenuHasAvatar, reason: "No avatar to remove",
+                onClick: () => removeAvatar(nameMenu.user, nameMenu.at) }, {
+                label: "Clear Bio", danger: true, disabled: !p?.bio, reason: "No bio to clear",
+                onClick: () => clearBio(nameMenu.user, nameMenu.at) }] : [])]}
+          onClose={closeNameMenu} />
       )}
       {dialog?.k === "newdm" && (
         <NewMessageDialog call={call} onClose={() => setDialog(null)}

@@ -1712,6 +1712,27 @@ at the end.
     socket is open; otherwise coarse ("Today", "Yesterday", "4 days
     ago"), never an exact time. A Profile setting "Show when I was last
     online" (default on) hides it both ways when off.
+  - *Stage 2a as built* (2026-11-10, PR1-PR11 pass 2026-11-11; custom
+    status is stage 2b, ST). Ryan's calls: split card and status; voice
+    menus keep their controls and gain a View Profile button beside
+    Message; last seen follows the same rule for staff; the card is a
+    pop-up at the click, not a dialog. Server `profiles.go`, migration
+    0038: table `user_profiles` (one row per account, cascades): `bio`
+    sealed under the account key (context `openvoxa/bio/v1`; at most 300
+    characters and 8 lines; control and bidi-override characters dropped,
+    runs of blank lines squashed, `normaliseBio`), `show_last_seen`,
+    `last_seen_on` (a UTC **date only**, never a time, so nothing finer
+    can be read out of it; written when an events socket opens and
+    closes; erased and not recorded while the setting is off). "Online
+    now" is `hub.Online` (any socket open). Routes: `GET
+    /api/v1/users/{id}/profile` (groups without Everyone, joined date,
+    bio, last seen only when both sides show theirs), `GET`/`PATCH
+    /api/v1/me/profile`, `DELETE /api/v1/users/{id}/bio` (delete_messages,
+    rank above the owner, logged `clear_bio`). No live event: the card is
+    fetched each time it opens. Web client: `profiles.tsx` (`ProfileCard`
+    replaces the name menu; your own name opens it too, with Edit
+    Profile), Settings > Profile gains Bio (Save bottom left; the tab
+    draws its own body and footer) and "Show when I was last online".
   - *Custom status* (stage 2). An optional emoji plus up to 60
     characters. Set in the Profile tab and from a "Set Status" item on
     your own name. Shown on the profile card and in small grey text
@@ -3679,6 +3700,12 @@ verified; the section named holds the design.
 - 2026-11-09 New version notice (a Reload bar after a server update
   brings a new web client, hidden during calls), NV1-NV6 (Feature
   decisions, "New version notice").
+- 2026-11-11 Profiles stage 2a (profile card from names, avatars and
+  voice menus; bio sealed under the account key, 300 characters;
+  "Joined"; last seen with a Profile setting that hides it both ways;
+  moderators' Clear Bio, logged, rank-checked; migration 0038),
+  PR1-PR11 pass (Feature decisions, "Planned", "User avatars and
+  profiles", "Stage 2a as built").
 
 ## Open items
 
@@ -3783,8 +3810,9 @@ verified; the section named holds the design.
       the old shortcut icon until its icon cache refreshes.
 
 - [ ] **User avatars and profiles** (design agreed 2026-11-09): stage 1
-      avatars (AV) built 2026-11-09, AV1-AV12 pass; next stage 2 profile card with bio, joined, last seen and
-      custom status (PR). Feature decisions, "Planned", "User avatars and
+      avatars (AV) built 2026-11-09, AV1-AV12 pass; stage 2a profile card,
+      bio, joined, last seen built 2026-11-10, PR1-PR11 pass; next
+      stage 2b custom status (ST). Feature decisions, "Planned", "User avatars and
       profiles".
 - [x] Server icon and name in the pane, set in Server settings: built
       2026-11-07 (Feature decisions, "Server name and icon"; SI1-SI9).

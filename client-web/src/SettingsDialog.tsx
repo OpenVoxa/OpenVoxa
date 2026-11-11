@@ -77,12 +77,15 @@ export function SettingsDialog({ tab: initialTab, session, call, chat, deviceId,
             onClick={() => setTab(id)}>{label}</button>
         ))}
       </div>
-      <div className="modal-body">
+      {/* Profile draws its own body and footer, with Save for the bio. */}
+      {tab === "profile" && (
+        <ProfileSettings call={call} userId={session.user_id} username={session.username} onClose={onClose} />
+      )}
+      {tab !== "profile" && <div className="modal-body">
         {tab === "account" && (
           <AccountSettings session={session} call={call} deviceId={deviceId} backup={backup} busy={busy}
             actions={actions} onClose={onClose} />
         )}
-        {tab === "profile" && <ProfileSettings call={call} userId={session.user_id} username={session.username} />}
         {tab === "voice" && (voice
           ? <VoiceSettings voice={voice} snap={snap} />
           : voiceError ? <p className="error" role="alert">{voiceError}</p> : <p className="muted">Loading…</p>)}
@@ -90,10 +93,12 @@ export function SettingsDialog({ tab: initialTab, session, call, chat, deviceId,
         {tab === "sounds" && <SoundSettings />}
         {tab === "appearance" && <AppearanceSettings />}
         {tab === "about" && <AboutSettings call={call} chat={chat} voice={voice} snap={snap} />}
-      </div>
-      <div className="modal-actions modal-foot">
-        <button className="primary" onClick={onClose}>Done</button>
-      </div>
+      </div>}
+      {tab !== "profile" && (
+        <div className="modal-actions modal-foot">
+          <button className="primary" onClick={onClose}>Done</button>
+        </div>
+      )}
     </Modal>
   );
 }

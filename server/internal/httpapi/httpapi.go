@@ -273,6 +273,14 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 	mux.HandleFunc("PUT /api/v1/me/avatar", api.requireAuth(api.putOwnAvatar))
 	mux.HandleFunc("DELETE /api/v1/me/avatar", api.requireAuth(api.deleteOwnAvatar))
 
+	// Profiles (profiles.go, migration 0038): the profile card, your own
+	// bio and last-seen setting; moderators clear others' bios (logged).
+	mux.HandleFunc("GET /api/v1/users/{id}/profile", withUUIDPath(api.requireAuth(api.getProfile)))
+	mux.HandleFunc("GET /api/v1/me/profile", api.requireAuth(api.getOwnProfile))
+	mux.HandleFunc("PATCH /api/v1/me/profile", api.requireAuth(api.patchOwnProfile))
+	mux.HandleFunc("DELETE /api/v1/users/{id}/bio",
+		withUUIDPath(api.requirePerm(perm.DeleteMessages, api.clearBio)))
+
 	// Username colours by group (namecolours.go, migration 0025).
 	mux.HandleFunc("GET /api/v1/name-colours", api.requireAuth(api.listNameColours))
 	mux.HandleFunc("PUT /api/v1/name-colours",
