@@ -3891,6 +3891,11 @@ verified; the section named holds the design.
         PiP button and Media Session handlers) but no media or LiveKit
         code and needs nobody to rejoin, so Ryan chose a hotfix. Same
         routine; only the server restarted; served bundle matched DEV.
+      - **v1.0.0-beta.4.4 (2026-11-12, hotfix):** custom status, profiles
+        stage 2b (ST1-ST12); migration 0039. Server and web client only.
+        It adds a status line under names in the voice member list but
+        no media or LiveKit code, and nobody has to rejoin. Same routine;
+        only the server restarted; served bundle matched DEV.
       - **Open for later:** an official desktop app on GitHub Releases
         for other people's servers; prebuilt server images.
 - [ ] **Desktop app icon** (Ryan, 2026-11-07): replace the Electron
