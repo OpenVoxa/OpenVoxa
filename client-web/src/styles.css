@@ -444,6 +444,13 @@ button.icon:hover:not(:disabled) { color: var(--text); }
 .drop-before { box-shadow: inset 0 2px 0 var(--accent); }
 .drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
 .drop-into { background: var(--sidebar-hover); box-shadow: inset 0 0 0 2px var(--accent); border-radius: var(--radius); }
+/* A finger drag (long press, then move): the row being carried, and its name under the finger. */
+.dragging { opacity: 0.4; }
+.drag-ghost {
+  position: fixed; z-index: 100; pointer-events: none; transform: translate(-50%, calc(-100% - 24px));
+  padding: 4px 10px; border-radius: var(--radius); background: var(--sidebar-active); color: var(--text);
+  box-shadow: 0 0 0 2px var(--accent); font-size: 14px; white-space: nowrap;
+}
 .tag { padding: 0 4px; border: 1px solid var(--muted); border-radius: 3px; font-size: 10px; flex: none; }
 
 .modal-backdrop {

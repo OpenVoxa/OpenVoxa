@@ -1206,8 +1206,28 @@ colour.
 - **Drag details:** the row is draggable, not the button (Firefox won't
   drag a button); drags that start inside a row (people in a voice
   roster) are ignored, and voice rows take both kinds of drop, each
-  handler ignoring the other's drag type. HTML drag and drop doesn't work
-  on touchscreens: reordering needs a mouse.
+  handler ignoring the other's drag type. Mouse and finger drags share one
+  set of drop rules (`whereOn`, `land` in `channelCategories.tsx`).
+- **Touchscreens** (Ryan, 2026-11-12; TR1-TR9, TT1-TT11 pass). HTML drag
+  and drop doesn't work with a finger, so the sidebar's rows (channels,
+  category headers, DMs) handle touches themselves (`useMenuTrigger` in
+  `ChannelMenu.tsx`): a **tap** acts at once without waiting for the
+  browser's click (on a draggable row some touch browsers never sent it:
+  the row lit up but didn't open); a **long press** (500 ms) opens the
+  menu, which stays open on lifting; a **long press, then moving** the
+  finger closes the menu and drags the row (manage_channels): it fades,
+  its name follows above the finger, the same orange hints show (target
+  found with `elementFromPoint` on `data-drop-key`), and the list scrolls
+  near its edges. Moving before the long press is a scroll. The browser's
+  own dragging is switched off for touches on pointerdown; the window
+  touchmove listener is non-passive only during a press (React's is
+  passive, so it can't stop the page scrolling under a held finger).
+  The menus also have **Move Up / Move Down** (within the channel's place;
+  they keep the menu open, and wait for the refetched layout so a quick
+  second tap moves from the new place) and **Move to Category…** (a second
+  menu: No Category, then the section's categories; the channel goes to
+  the end). Category headers open their menu on a long press too (iPhone
+  Safari never turned one into a right-click), with Move Up / Move Down.
 
 #### Server password
 
@@ -3870,16 +3890,19 @@ verified; the section named holds the design.
   per browser, header colour with the name-colour contrast rule;
   migrations 0040-0041), CG1-CG14 and CC1-CC10 pass (Feature decisions,
   "Channel ordering and categories").
+- 2026-11-12 Reordering on touchscreens (tap opens at once, long press
+  opens the menu, long press then move drags; Move Up / Move Down / Move
+  to Category… in the menus; long press on category headers), TR1-TR9
+  and TT1-TT11 pass (Feature decisions, "Channel ordering and
+  categories", "Touchscreens").
 
 ## Open items
 
 ### Next up (Ryan picks; each gets a design talk first)
 
-- [ ] **Reordering on touchscreens** (Ryan, 2026-11-12): HTML drag and
-      drop doesn't work on phones and tablets, so channels and categories
-      can only be reordered with a mouse. Likely: Move Up / Move Down /
-      Move to Category in the long-press menu, using the same move
-      routes. Feature decisions, "Channel ordering and categories".
+- [x] **Reordering on touchscreens** (Ryan, 2026-11-12): built
+      2026-11-12, TR1-TR9 and TT1-TT11 pass (Feature decisions, "Channel
+      ordering and categories", "Touchscreens").
 - [ ] **Per-category permissions** (Ryan, 2026-11-12): a category
       allow-list its channels can follow (a staff-only area in one step),
       on top of today's labels-only categories where each channel keeps

@@ -20,7 +20,7 @@ import { dmName, NO_DM_REASON, readOnlyText } from "./dmText";
 import { Avatar } from "./avatars";
 
 /** The sidebar's Messages tab: your conversations, newest first. */
-export function DMList({ dms, openId, unread, mentions, muted, canStart, onOpen, onNew, menuHandlers, consumeLongPress }: {
+export function DMList({ dms, openId, unread, mentions, muted, canStart, onOpen, onNew, menuHandlers, touchHandled }: {
   dms: readonly DMInfo[];
   /** The conversation in the main pane, if one is. */
   openId: string | null;
@@ -31,8 +31,8 @@ export function DMList({ dms, openId, unread, mentions, muted, canStart, onOpen,
   onOpen: (channelId: string) => void;
   onNew: () => void;
   /** Right-click / long-press handlers for a row (ChannelMenu's useMenuTrigger). */
-  menuHandlers: (channelId: string) => object;
-  consumeLongPress: () => boolean;
+  menuHandlers: (channelId: string, onTap?: () => void) => object;
+  touchHandled: () => boolean;
 }) {
   return (
     <>
@@ -50,9 +50,9 @@ export function DMList({ dms, openId, unread, mentions, muted, canStart, onOpen,
             <li key={id} className="channel-row">
               <button
                 className={`channel dm${id === openId ? " active" : ""}${unread.has(id) || alert ? " unread" : ""}`}
-                {...menuHandlers(id)}
+                {...menuHandlers(id, () => onOpen(id))}
                 onClick={() => {
-                  if (consumeLongPress()) return;
+                  if (touchHandled()) return;
                   onOpen(id);
                 }}
                 aria-current={id === openId ? "page" : undefined}

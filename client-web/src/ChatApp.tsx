@@ -44,7 +44,7 @@ import { configureStatuses, refreshStatuses, SetStatusDialog, statusChanged, Sta
 import { mayDM, NO_DM_REASON } from "./dmText";
 import { SidebarResizer, useSidebarWidth } from "./sidebarWidth";
 import {
-  CategoryDialog, DeleteCategoryDialog, mergeDrop, sectionLayout, useCollapsedCategories, useLayoutDrag,
+  CategoryDialog, DeleteCategoryDialog, mergeDrop, sectionLayout, stepMoves, useCollapsedCategories, useLayoutDrag,
 } from "./channelCategories";
 
 const LAST_CHANNEL = (userId: string) => `lastChannel.${userId}`;
@@ -168,6 +168,8 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   const [chanMenu, setChanMenu] = useState<{ id: string; at: { x: number; y: number } } | null>(null);
   // The menu on a category header (catId), or the section's + menu.
   const [layoutMenu, setLayoutMenu] = useState<{ kind: "text" | "voice"; catId?: string; at: { x: number; y: number } } | null>(null);
+  // Move to Category from a channel's menu: the categories to pick from.
+  const [catPicker, setCatPicker] = useState<{ id: string; at: { x: number; y: number } } | null>(null);
   // A newer web client on the server (newVersion.ts), and the one the
   // notice was closed for.
   const [newVersion, setNewVersion] = useState<string | null>(null);
@@ -178,7 +180,35 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   const nameMenuHasAvatar = useAvatarVersion(nameMenu?.user.id) !== undefined;
   const nameMenuHasStatus = useStatus(nameMenu?.user.id) !== undefined;
   const closeNameMenu = useCallback(() => setNameMenu(null), []);
-  const menuTrigger = useMenuTrigger((id, at) => setChanMenu({ id, at }));
+  // Channel rows and category headers: a tap opens, a long press opens
+  // the menu, a long press then moving the finger drags (manage_channels).
+  const rowAt = (id: string) => document.querySelector(`[data-drop-key="${CSS.escape(id)}"]`);
+  const menuTrigger = useMenuTrigger((id, at) => setChanMenu({ id, at }), {
+    start: (id, at) => {
+      const c = channels.find((x) => x.id === id);
+      if (!c || (c.kind !== "text" && c.kind !== "voice")) return false;
+      const ok = layoutDrag.touch.start({ what: "channel", id, kind: c.kind },
+        `${c.kind === "text" ? "#" : ""}${c.name}`, at, rowAt(id));
+      if (ok) setChanMenu(null);
+      return ok;
+    },
+    move: (at) => layoutDrag.touch.move(at),
+    end: (at) => layoutDrag.touch.end(at),
+  });
+  const catMenuTrigger = useMenuTrigger((id, at) => {
+    const cat = categories.find((c) => c.id === id);
+    if (cat) setLayoutMenu({ kind: cat.kind, catId: id, at });
+  }, {
+    start: (id, at) => {
+      const cat = categories.find((x) => x.id === id);
+      if (!cat) return false;
+      const ok = layoutDrag.touch.start({ what: "category", id, kind: cat.kind }, cat.name, at, rowAt(id));
+      if (ok) setLayoutMenu(null);
+      return ok;
+    },
+    move: (at) => layoutDrag.touch.move(at),
+    end: (at) => layoutDrag.touch.end(at),
+  });
   const [presence, setPresence] = useState<VoicePresence>({});
   // Created on first join: loading it pulls in LiveKit, which text-only
   // use never needs.
@@ -213,6 +243,20 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
     setDropNote({ title, text: err instanceof Error ? err.message : String(err), at }), []);
   const layoutDrag = useLayoutDrag(call,
     perms.includes("manage_channels") || perms.includes("administrator"), layoutError);
+  // A Move Up / Move Down from a menu is on its way: those entries wait
+  // for the refetched layout (channel_layout_changed), so a quick second
+  // tap moves from the new place, not the old one.
+  const [moving, setMoving] = useState(false);
+  useEffect(() => setMoving(false), [channels, categories]);
+  useEffect(() => {
+    if (!moving) return;
+    const t = window.setTimeout(() => setMoving(false), 3000);
+    return () => clearTimeout(t);
+  }, [moving]);
+  const runMove = (p: Promise<boolean>) => {
+    setMoving(true);
+    void p.then((ok) => { if (!ok) setMoving(false); });
+  };
 
   // Sticker images need the token (stickers.tsx).
   useEffect(() => configureStickers(call, session.token), [call, session.token]);
@@ -699,8 +743,35 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
     </button>
   );
   const NEEDS_MANAGE = "Needs the Manage channels permission";
+  // Move Up / Move Down: greyed without manage_channels, at either end,
+  // and while the last move is on its way.
+  const stepItems = (up: string | undefined, down: string | null | undefined,
+    move: (before: string | null) => Promise<boolean>): MenuItem[] => {
+    const why = (end: string) => !canManage ? NEEDS_MANAGE : moving ? "Moving…" : end;
+    return [
+      { label: "Move Up", keepOpen: true, disabled: !canManage || moving || up === undefined,
+        reason: why("Already at the top"), onClick: () => up !== undefined && runMove(move(up)) },
+      { label: "Move Down", keepOpen: true, disabled: !canManage || moving || down === undefined,
+        reason: why("Already at the bottom"), onClick: () => down !== undefined && runMove(move(down)) },
+    ];
+  };
   const menuItems = (c: ChannelInfo): (MenuItem | "sep")[] => {
+    const at = chanMenu?.at ?? { x: 0, y: 0 };
+    const moves: MenuItem[] = [];
+    if (c.kind === "text" || c.kind === "voice") {
+      // Its place: the top level, or the category it's in.
+      const lay = sectionLayout(channels, categories, c.kind);
+      const group = lay.groups.find((g) => g.cat.id === c.category_id);
+      const place = group ? group.channels : lay.top;
+      const { up, down } = stepMoves(place, c.id);
+      moves.push(
+        ...stepItems(up, down, (before) => layoutDrag.moveChannel(c.id, group?.cat.id ?? null, before, at)),
+        { label: "Move to Category…", onClick: () => setCatPicker({ id: c.id, at }),
+          disabled: !canManage, reason: NEEDS_MANAGE },
+      );
+    }
     const manage: MenuItem[] = [
+      ...moves,
       { label: "Rename Channel", onClick: () => setDialog({ k: "settings", id: c.id, focus: "name" }),
         disabled: !canManage, reason: NEEDS_MANAGE },
       { label: "Channel Settings", onClick: () => setDialog({ k: "settings", id: c.id }),
@@ -741,6 +812,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
       ...manage,
     ];
   };
+  const pickerChannel = catPicker ? channels.find((c) => c.id === catPicker.id) : undefined;
   const menuChannel = chanMenu ? channels.find((c) => c.id === chanMenu.id)
     ?? (() => {
       const d = dms.find((x) => x.channel_id === chanMenu.id);
@@ -762,18 +834,26 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
     </div>
   );
 
+  const openText = (id: string) => {
+    setOpenId(id);
+    setHomeOpen(false);
+    setStage(null);
+    setCallView(false);
+  };
+  const openVoice = (id: string) => {
+    setStage(null);
+    setCallView(true);
+    void joinVoice(id);
+  };
   const textRow = (c: ChannelInfo, scope: readonly ChannelInfo[]) => (
     <li key={c.id} className={`channel-row${layoutDrag.hintClass(c.id)}`}
       {...layoutDrag.channelDrop(c, scope)} {...layoutDrag.channelDrag(c)}>
       <button
         className={`channel${c.id === openId && !homeOpen ? " active" : ""}${unread.has(c.id) || mentions.has(c.id) ? " unread" : ""}`}
-        {...menuTrigger.handlers(c.id)}
+        {...menuTrigger.handlers(c.id, () => openText(c.id))}
         onClick={() => {
-          if (menuTrigger.consumeLongPress()) return;
-          setOpenId(c.id);
-          setHomeOpen(false);
-          setStage(null);
-          setCallView(false);
+          if (menuTrigger.touchHandled()) return;
+          openText(c.id);
         }}
         aria-current={c.id === openId && !homeOpen ? "page" : undefined}
         title={c.encrypted ? "End-to-end encrypted" : "Not encrypted"}
@@ -828,12 +908,10 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
         {...mergeDrop(memberDrop, layoutDrag.channelDrop(c, scope))}>
         <div className="channel-row" {...layoutDrag.channelDrag(c)}>
           <button className={`channel${here ? " active" : ""}`}
-            {...menuTrigger.handlers(c.id)}
+            {...menuTrigger.handlers(c.id, () => openVoice(c.id))}
             onClick={() => {
-              if (menuTrigger.consumeLongPress()) return;
-              setStage(null);
-              setCallView(true);
-              void joinVoice(c.id);
+              if (menuTrigger.touchHandled()) return;
+              openVoice(c.id);
             }}
             title={here ? "Show the call" : "Join the call"}>
             <SpeakerIcon />
@@ -886,10 +964,10 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
                   style={cat.colour ? { color: cat.colour } : undefined}
                   aria-expanded={!shut}
                   title={shut ? "Show channels" : "Hide channels"}
-                  onClick={() => setCollapsedCat(cat.id, !shut)}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    setLayoutMenu({ kind, catId: cat.id, at: { x: e.clientX, y: e.clientY } });
+                  {...catMenuTrigger.handlers(cat.id, () => setCollapsedCat(cat.id, !shut))}
+                  onClick={() => {
+                    if (catMenuTrigger.touchHandled()) return;
+                    setCollapsedCat(cat.id, !shut);
                   }}>
                   <span className={`chevron${shut ? " shut" : ""}`} aria-hidden>▾</span>
                   <span className="name">{cat.name}</span>
@@ -929,9 +1007,12 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
     }
     const cat = layoutMenuCat;
     const shut = collapsedCats.has(cat.id);
+    const at = layoutMenu.at;
+    const { up, down } = stepMoves(categories.filter((c) => c.kind === kind), cat.id);
     return [
       { label: shut ? "Expand Category" : "Collapse Category", onClick: () => setCollapsedCat(cat.id, !shut) },
       "sep",
+      ...stepItems(up, down, (before) => layoutDrag.moveCategory(cat.id, before, at)),
       { label: "Create Channel", onClick: () => setDialog({ k: "create", kind, categoryId: cat.id }),
         disabled: !canManage, reason: NEEDS_MANAGE },
       { label: "Edit Category", onClick: () => setDialog({ k: "category", kind, id: cat.id }),
@@ -977,7 +1058,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
                 setCallView(false);
               }}
               onNew={() => setDialog({ k: "newdm" })}
-              menuHandlers={menuTrigger.handlers} consumeLongPress={menuTrigger.consumeLongPress} />
+              menuHandlers={menuTrigger.handlers} touchHandled={menuTrigger.touchHandled} />
           ) : (<>
           <div className="channel-row home-row">
             <button className={`channel home${homeShown ? " active" : ""}${home && home.version > home.seen_version ? " unread" : ""}`}
@@ -1121,6 +1202,23 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           message={{ disabled: !canDM, onClick: () => messageFrom({ id: moveMenu.p.user_id, username: moveMenu.p.username }, moveMenu.at) }}
           onProfile={() => setNameMenu({ user: { id: moveMenu.p.user_id, username: moveMenu.p.username }, at: moveMenu.at })}
           onClose={() => setMoveMenu(null)} />
+      )}
+      {layoutDrag.ghost && (
+        <div className="drag-ghost" style={{ left: layoutDrag.ghost.x, top: layoutDrag.ghost.y }} aria-hidden>
+          {layoutDrag.ghost.label}
+        </div>
+      )}
+      {catPicker && pickerChannel && (pickerChannel.kind === "text" || pickerChannel.kind === "voice") && (
+        <ChannelMenu title={`Move ${pickerChannel.kind === "text" ? "#" : ""}${pickerChannel.name} to`} at={catPicker.at}
+          items={[
+            { label: "No Category", disabled: !pickerChannel.category_id, reason: "It's already here",
+              onClick: () => void layoutDrag.moveChannel(pickerChannel.id, null, null, catPicker.at) },
+            ...categories.filter((g) => g.kind === pickerChannel.kind).map((g): MenuItem => ({
+              label: g.name, disabled: g.id === pickerChannel.category_id, reason: "It's already here",
+              onClick: () => void layoutDrag.moveChannel(pickerChannel.id, g.id, null, catPicker.at),
+            })),
+          ]}
+          onClose={() => setCatPicker(null)} />
       )}
       {chanMenu && menuChannel && (
         <ChannelMenu title={`${menuChannel.kind === "text" ? "#" : menuChannel.kind === "dm" ? "@" : ""}${menuChannel.name}`} at={chanMenu.at}
