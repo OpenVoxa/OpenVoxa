@@ -468,6 +468,23 @@ Built 2026-11-03 (step 13, M4 session B).
   off by default; Ryan asked for the choice). Ctrl/middle-click always
   opens a tab.
 
+#### Resizable sidebar
+
+Asked for by Ryan and built 2026-11-12 (`client-web/src/sidebarWidth.tsx`),
+SB1-SB8 pass.
+
+- **Drag the sidebar's right edge** (the line between the channel list
+  and the stage, cards or chat): 200 to 480 px, default 240.
+  Double-click resets. The handle is an invisible 8 px strip showing a
+  thin accent line on hover; it is also a focusable separator (arrow
+  keys step 16 px, Home resets).
+- **Per browser, not per account:** kept in localStorage
+  (`openvoxa.layout.sidebarWidth`), so each browser and each desktop app
+  server view remembers its own. A layout preference doesn't need the
+  server.
+- The width is a CSS variable (`--sidebar-width` on `.app`), so the
+  narrow-screen rule (under 640 px: 180 px, no handle) still wins.
+
 ### Voice and screen share
 
 #### Voice and screen share in the web client
@@ -3789,6 +3806,9 @@ verified; the section named holds the design.
   on the card, in voice channels and the user panel; moderators' Clear
   Status, logged; migration 0039), ST1-ST12 pass (Feature decisions,
   "Planned", "User avatars and profiles", "Stage 2b as built").
+- 2026-11-12 Resizable sidebar (drag the right edge, 200-480 px,
+  double-click resets, kept per browser), SB1-SB8 pass (Feature
+  decisions, "Resizable sidebar").
 
 ## Open items
 
@@ -3938,8 +3958,12 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
 - [ ] **Channel groups and ordering:** text channels are sorted by name
       (`listChannels`, `ORDER BY c.name`). Wanted: named groups
       (categories) that collapse, and drag-to-reorder for channels and
-      groups (`manage_channels`). Open: voice channels in the same
-      groups, per-group permissions.
+      groups (`manage_channels`). Ryan, 2026-11-12: Discord-style
+      categories (named folders, not joinable channels), one level deep;
+      ordering and categories built together (one schema change), next.
+      Open: voice channels in the same categories or separate sections,
+      per-category permissions, collapse per browser or shared, drag
+      details.
 - [x] **Direct messages** ("whispers" = DMs): all three stages built
       2026-11-08 (Feature decisions, "Direct messages"). Later, offered:
       "Message" on @mention chips.

@@ -11,7 +11,7 @@
  * only draws their snapshots and forwards what the user does.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type DragEvent } from "react";
 import { Chat, dmChannel, type ChannelView, type ChannelInfo, type DMInfo, type VoicePresence } from "@core/chat";
 import type { VoiceClient, VoiceParticipant } from "@core/voice";
 import type { BackupStatus } from "@core/recovery";
@@ -42,6 +42,7 @@ import { DMList, NewMessageDialog } from "./dms";
 import { ProfileCard } from "./profiles";
 import { configureStatuses, refreshStatuses, SetStatusDialog, statusChanged, StatusLine, useStatus } from "./statuses";
 import { mayDM, NO_DM_REASON } from "./dmText";
+import { SidebarResizer, useSidebarWidth } from "./sidebarWidth";
 
 const LAST_CHANNEL = (userId: string) => `lastChannel.${userId}`;
 /** "1" when Home was the last thing open: you come back to it. */
@@ -83,6 +84,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   const dmsRef = useRef<readonly DMInfo[]>([]);
   dmsRef.current = dms;
   // Which list the sidebar shows: the channels or your direct messages.
+  const [sidebarWidth, setSidebarWidth] = useSidebarWidth();
   const [sideTab, setSideTabState] = useState<"channels" | "dms">(
     () => localStore.get(SIDE_TAB(session.user_id)) === "dms" ? "dms" : "channels");
   const setSideTab = (t: "channels" | "dms") => {
@@ -737,7 +739,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
 
   return (
     <LinksContext value={links}>
-    <div className="app">
+    <div className="app" style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Channels">
         <header className="sidebar-head">
           OpenVoxa
@@ -909,6 +911,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           onSettings={() => setDialog({ k: "prefs", tab: "account" })}
           onStatus={() => setDialog({ k: "status" })}
           onSetUpKey={onSetUpKey} onEnterKey={onEnterKey} />
+        <SidebarResizer width={sidebarWidth} onWidth={setSidebarWidth} />
       </nav>
       <main className="pane">
         {/* Not during a call: reloading would drop it (gaming first). */}

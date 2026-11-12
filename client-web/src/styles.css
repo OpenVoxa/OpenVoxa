@@ -202,7 +202,9 @@ button.secondary:hover:not(:disabled) { background: var(--sidebar-active); }
 .app { display: flex; height: 100%; overflow: hidden; }
 
 .sidebar {
-  width: 240px;
+  /* Set by dragging its right edge (sidebarWidth.tsx). */
+  width: var(--sidebar-width, 240px);
+  position: relative;
   flex: none;
   display: flex;
   flex-direction: column;
@@ -371,10 +373,26 @@ button.msg-avatar { cursor: pointer; }
 
 @media (max-width: 640px) {
   .sidebar { width: 180px; }
+  .sidebar-resizer { display: none; }
   .msg { padding-left: 16px; }
   .msg .msg-avatar { display: none; }
   .msg .side-time { display: none; }
 }
+
+/* Drag handle on the sidebar's right edge: invisible until hovered, then
+   a thin accent line. Wider than it looks so it is easy to grab. */
+.sidebar-resizer {
+  position: absolute; top: 0; bottom: 0; right: -4px; width: 8px;
+  z-index: 5; cursor: col-resize; touch-action: none;
+}
+.sidebar-resizer::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px;
+  background: transparent; transition: background 0.1s;
+}
+.sidebar-resizer:hover::after, .sidebar-resizer.dragging::after,
+.sidebar-resizer:focus-visible::after { background: var(--accent); }
+.sidebar-resizer:focus-visible { outline: none; }
+body.resizing-sidebar, body.resizing-sidebar * { cursor: col-resize !important; user-select: none !important; }
 
 /* ------------------------------------------- channel management (M2) */
 button.icon {
