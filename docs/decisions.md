@@ -1163,8 +1163,8 @@ Ryan's calls: Discord-style categories (named folders you can't open or
 join), not TeamSpeak-style channels inside channels; one level deep;
 **separate Text and Voice sections**, each with its own categories (no
 mixed categories); categories are **labels only**, with no permissions of
-their own; collapsing is **per person**; a category can have a header
-colour.
+their own (changed the same day: see "Category permissions" below);
+collapsing is **per person**; a category can have a header colour.
 
 - **Order is shared** and changed by dragging (manage_channels): a
   channel above or below another (orange line), onto a category header to
@@ -1228,6 +1228,39 @@ colour.
   menu: No Category, then the section's categories; the channel goes to
   the end). Category headers open their menu on a long press too (iPhone
   Safari never turned one into a right-click), with Move Up / Move Down.
+- **Category permissions** (Ryan, 2026-11-12; migration 0042,
+  `setCategoryAccess` in `categories.go`; built, **CP/MV tests pending**).
+  Ryan: a default permission set for channels, made more specific per
+  channel when one needs it. Three levels: the server default (what new
+  channels start with), the **category's permissions** (same table as a
+  channel's: View/Post or Join/Speak per group), and the channel's, which
+  are either **Same as category** or **Custom** (its own; switching to
+  Custom starts from a copy of the category's). No mixing per group: no
+  deny rules means no precedence question.
+  - **Copied, not looked up:** a following channel's permissions are
+    copied into its own `channel_access` whenever the category's change or
+    it moves (`channels.follows_category`, `category_access`). Every access
+    check, voice kick and encryption sweep still reads `channel_access`
+    alone and didn't change.
+  - **Existing channels started Custom** (nothing changed on upgrade);
+    existing and new categories start with the server default. Edit
+    Category has a Permissions table and "Make all channels in this
+    category use these" (switches the Custom ones). A new channel created
+    in a category defaults to Same as category. Category permissions are
+    sent to manage_channels only.
+  - **Every move to another place asks** (Ryan: permissions are
+    important; make the move and its effect clear, even when nothing
+    changes): a Move Channel dialog, for drags and Move to Category…, says
+    "Move #x from A to B" and offers Use B's permissions (Same as
+    category) or Keep its own (Custom), each listing what changes per
+    group or "No changes". It starts on what the channel does now.
+    Moving to No Category: it keeps its permissions and becomes Custom.
+    Reordering within one place doesn't ask. API: `POST
+    /channels/{id}/move` takes `keep_access` / `follow_category`; `PUT
+    /channels/{id}/access` takes `follow_category`; `PUT
+    /channel-categories/{id}/access` `{access, apply_to_all}`.
+  - **Deleting a category** leaves its channels Custom with the
+    permissions they had: nobody gains or loses access.
 
 #### Server password
 
@@ -3903,12 +3936,10 @@ verified; the section named holds the design.
 - [x] **Reordering on touchscreens** (Ryan, 2026-11-12): built
       2026-11-12, TR1-TR9 and TT1-TT11 pass (Feature decisions, "Channel
       ordering and categories", "Touchscreens").
-- [ ] **Per-category permissions** (Ryan, 2026-11-12): a category
-      allow-list its channels can follow (a staff-only area in one step),
-      on top of today's labels-only categories where each channel keeps
-      its own list. Open: follow by default or opt in per channel, what
-      happens on moving a channel in or out, how it shows in Channel
-      Settings.
+- [ ] **Per-category permissions** (Ryan, 2026-11-12): designed and
+      built and committed 2026-11-12; CP1-CP7 run (no problems
+      reported), MV1-MV7 and CP11-CP14 to test (Feature decisions,
+      "Channel ordering and categories", "Category permissions").
 - [x] **Self-host audit, whole repo** (2026-11-09): checked every
       tracked file so anyone can clone and host their own server. No
       personal network or account details were in the repo. Fixed:

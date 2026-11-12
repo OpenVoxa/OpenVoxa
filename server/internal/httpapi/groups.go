@@ -517,6 +517,10 @@ type channelAccessRequest struct {
 		GroupID string `json:"group_id"`
 		CanPost bool   `json:"can_post"`
 	} `json:"access"`
+	// FollowCategory: take the channel's category's permissions and keep
+	// following them ("Same as category"); Access is then ignored. False:
+	// Access is the channel's own ("Custom").
+	FollowCategory bool `json:"follow_category"`
 }
 
 // setChannelAccess replaces a channel's allow-list. An empty list leaves
@@ -543,19 +547,41 @@ func (a *API) setChannelAccess(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 
-	var exists bool
-	if err := tx.QueryRow(r.Context(),
-		`SELECT EXISTS (SELECT 1 FROM channels WHERE id = $1 AND kind <> 'dm' FOR UPDATE)`,
-		channelID).Scan(&exists); err != nil {
+	// The layout lock keeps the channel from changing category meanwhile.
+	if _, err := tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock($1)`, layoutLock); err != nil {
+		slog.Error("locking channel layout", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not change access")
+		return
+	}
+	var inCategory bool
+	err = tx.QueryRow(r.Context(),
+		`SELECT category_id IS NOT NULL FROM channels WHERE id = $1 AND kind <> 'dm' FOR UPDATE`,
+		channelID).Scan(&inCategory)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "channel not found")
+		return
+	}
+	if err != nil {
 		slog.Error("locking channel", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not change access")
 		return
 	}
-	if !exists {
-		writeError(w, http.StatusNotFound, "channel not found")
+	if req.FollowCategory && !inCategory {
+		writeError(w, http.StatusBadRequest, "the channel isn't in a category")
 		return
 	}
-	if err := writeChannelAccess(r.Context(), tx, channelID, req); err != nil {
+	if _, err := tx.Exec(r.Context(),
+		`UPDATE channels SET follows_category = $2 WHERE id = $1`, channelID, req.FollowCategory); err != nil {
+		slog.Error("setting follows_category", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not change access")
+		return
+	}
+	if req.FollowCategory {
+		err = copyCategoryAccess(r.Context(), tx, []string{channelID})
+	} else {
+		err = writeChannelAccess(r.Context(), tx, channelID, req)
+	}
+	if err != nil {
 		if errors.Is(err, errUnknownGroup) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return

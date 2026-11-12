@@ -13,10 +13,10 @@
  * browser like the sidebar width.
  */
 
-import { useCallback, useRef, useState, useSyncExternalStore, type DragEvent, type FormEvent, type PointerEvent } from "react";
-import type { ChannelCategory, ChannelInfo } from "@core/chat";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type DragEvent, type FormEvent, type PointerEvent } from "react";
+import type { ChannelAccess, ChannelCategory, ChannelInfo } from "@core/chat";
 import { localStore } from "./core";
-import { Modal } from "./ChannelDialogs";
+import { AccessEditor, accessBody, accessKey, defaultRows, Modal, rowsFrom, useGroups, type AccessRow } from "./ChannelDialogs";
 import { MIN_NAME_CONTRAST, nameContrast } from "./names";
 import type { ApiCall } from "@core/identity";
 
@@ -172,7 +172,16 @@ const EDGE_SPEED = 12;
  * then refetches.
  */
 export function useLayoutDrag(call: ApiCall, enabled: boolean,
-  onError: (title: string, err: unknown, at: Point) => void) {
+  onError: (title: string, err: unknown, at: Point) => void,
+  /**
+   * Before a channel moves: resolves to extra fields for the move
+   * (keep_access, follow_category), or null to cancel. Asks before every
+   * move to another place (MoveChannelDialog).
+   */
+  confirmMove?: (channelId: string, categoryId: string | null) =>
+    Promise<{ keep_access?: boolean; follow_category?: boolean } | null>) {
+  const confirmRef = useRef(confirmMove);
+  confirmRef.current = confirmMove;
   const dragged = useRef<Dragged | null>(null);
   const [hint, setHint] = useState<DropHint>(null);
   // Every drop target from the last render, for finding one under a finger.
@@ -188,21 +197,27 @@ export function useLayoutDrag(call: ApiCall, enabled: boolean,
       return false;
     }), [call, onError]);
 
+  const moveCh = useCallback(async (id: string, categoryId: string | null, before: string | null, at: Point) => {
+    const extra = confirmRef.current ? await confirmRef.current(id, categoryId) : {};
+    if (!extra) return false;
+    return send(`/api/v1/channels/${id}/move`, { category_id: categoryId, before_id: before, ...extra },
+      "Couldn't move the channel", at);
+  }, [send]);
+
   /** Drop `d` on `t`. */
   const land = (d: Dragged, t: Target, where: Where, at: Point) => {
     if (t.type === "channel") {
       const before = where === "before" ? t.c.id : nextAfter(t.scope, t.c.id, d.id);
-      void send(`/api/v1/channels/${d.id}/move`, { category_id: t.c.category_id ?? null, before_id: before },
-        "Couldn't move the channel", at);
+      void moveCh(d.id, t.c.category_id ?? null, before, at);
     } else if (t.type === "category") {
       if (d.what === "channel") {
-        void send(`/api/v1/channels/${d.id}/move`, { category_id: t.cat.id, before_id: null }, "Couldn't move the channel", at);
+        void moveCh(d.id, t.cat.id, null, at);
       } else {
         const before = where === "before" ? t.cat.id : nextAfter(t.cats, t.cat.id, d.id);
         void send(`/api/v1/channel-categories/${d.id}/move`, { before_id: before }, "Couldn't move the category", at);
       }
     } else {
-      void send(`/api/v1/channels/${d.id}/move`, { category_id: null, before_id: null }, "Couldn't move the channel", at);
+      void moveCh(d.id, null, null, at);
     }
   };
 
@@ -341,8 +356,7 @@ export function useLayoutDrag(call: ApiCall, enabled: boolean,
     /** The section heading: a channel dropped on it goes to the end of the top level. */
     sectionDrop: (kind: Kind) => dropFor({ type: "section", kind }),
     /** The same moves from a menu; resolves false if it failed (shown via onError). */
-    moveChannel: (id: string, categoryId: string | null, before: string | null, at: Point) =>
-      send(`/api/v1/channels/${id}/move`, { category_id: categoryId, before_id: before }, "Couldn't move the channel", at),
+    moveChannel: moveCh,
     moveCategory: (id: string, before: string | null, at: Point) =>
       send(`/api/v1/channel-categories/${id}/move`, { before_id: before }, "Couldn't move the category", at),
   };
@@ -366,14 +380,29 @@ function errText(err: unknown): string {
 
 const SECTION = { text: "Text channels", voice: "Voice channels" } as const;
 
-/** Create a category in a section, or edit one's name and colour. */
-export function CategoryDialog({ call, kind, category, onClose }: {
+/**
+ * Create a category in a section, or edit one's name, colour and
+ * permissions. Channels in it set to Same as category use its
+ * permissions; saving can also switch the Custom ones over.
+ */
+export function CategoryDialog({ call, kind, category, channels, onClose }: {
   call: ApiCall;
   kind: Kind;
   /** Set: edit this one. */
   category?: ChannelCategory;
+  /** The channels in it (editing). */
+  channels?: readonly ChannelInfo[];
   onClose: () => void;
 }) {
+  const { groups, error: groupsError } = useGroups(call);
+  const [rows, setRows] = useState<AccessRow[] | null>(null);
+  useEffect(() => {
+    if (groups && !rows) setRows(category?.access ? rowsFrom(groups, category.access) : defaultRows(groups));
+  }, [groups, rows, category]);
+  const [applyAll, setApplyAll] = useState(false);
+  const following = (channels ?? []).filter((c) => c.follows_category).length;
+  const custom = (channels ?? []).length - following;
+  const accessChanged = !!category && !!rows && accessKey(accessBody(rows)) !== accessKey(category.access ?? []);
   const [name, setName] = useState(category?.name ?? "");
   // "" is no colour (the default grey); otherwise what's typed or picked.
   const [colour, setColour] = useState(category?.colour ?? "");
@@ -385,7 +414,8 @@ export function CategoryDialog({ call, kind, category, onClose }: {
   // The same contrast rule as name colours (the server checks it too).
   const colourOk = colour === "" || (!!hex && ratio >= MIN_NAME_CONTRAST);
   const valid = trimmed.length > 0 && [...trimmed].length <= 32 && colourOk;
-  const dirty = !category || trimmed !== category.name || (hex ?? "") !== (category.colour ?? "");
+  const labelChanged = !category || trimmed !== category.name || (hex ?? "") !== (category.colour ?? "");
+  const dirty = labelChanged || accessChanged || applyAll;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -394,12 +424,20 @@ export function CategoryDialog({ call, kind, category, onClose }: {
     setError(null);
     try {
       if (category) {
-        await call(`/api/v1/channel-categories/${category.id}`, {
-          method: "PATCH", body: JSON.stringify({ name: trimmed, colour: hex ?? "" }),
-        });
+        if (labelChanged) {
+          await call(`/api/v1/channel-categories/${category.id}`, {
+            method: "PATCH", body: JSON.stringify({ name: trimmed, colour: hex ?? "" }),
+          });
+        }
+        if ((accessChanged || applyAll) && rows) {
+          await call(`/api/v1/channel-categories/${category.id}/access`, {
+            method: "PUT", body: JSON.stringify({ access: accessBody(rows), apply_to_all: applyAll }),
+          });
+        }
       } else {
         await call("/api/v1/channel-categories", {
-          method: "POST", body: JSON.stringify({ kind, name: trimmed, colour: hex ?? "" }),
+          method: "POST",
+          body: JSON.stringify({ kind, name: trimmed, colour: hex ?? "", ...(rows ? { access: accessBody(rows) } : {}) }),
         });
       }
       onClose();
@@ -438,10 +476,32 @@ export function CategoryDialog({ call, kind, category, onClose }: {
               : `Contrast ${ratio.toFixed(1)}:1 is too low (needs ${MIN_NAME_CONTRAST}:1). Pick a lighter colour.`}
           </p>
         </div>
+        {groupsError && <p className="error">Couldn't load groups: {groupsError}</p>}
+        {rows && <AccessEditor rows={rows} setRows={setRows} kind={kind} legend="Permissions"
+          note={category
+            ? <>
+              {following === 0 ? "No channel in it uses these yet."
+                : `${following} ${following === 1 ? "channel uses" : "channels use"} these (Same as category) and ${following === 1 ? "changes" : "change"} with them.`}
+              {" "}Administrators can always see and use every channel.
+            </>
+            : <>Channels created in it use these unless set to Custom. Administrators can always see and use every channel.</>} />}
+        {category && (
+          <label className={`check${custom ? "" : " disabled"}`} title={custom ? undefined : "Every channel in it already uses these"}>
+            <input type="checkbox" checked={applyAll} disabled={!custom} onChange={(e) => setApplyAll(e.target.checked)} />
+            <span>
+              Make all channels in this category use these
+              <span className="muted small block">
+                {custom
+                  ? `${custom} ${custom === 1 ? "channel has" : "channels have"} Custom permissions; ${custom === 1 ? "it" : "they"} would be set to Same as category.`
+                  : "Every channel in it already does."}
+              </span>
+            </span>
+          </label>
+        )}
         {!category && (
           <p className="muted small">
             A folder in {SECTION[kind]}. Drag channels onto its name to put them in it, or use Move to Category in a
-            channel's menu. It has no permissions of its own: each channel keeps its own.
+            channel's menu.
           </p>
         )}
         {error && <p className="error" role="alert">{error}</p>}
@@ -495,6 +555,102 @@ export function DeleteCategoryDialog({ call, category, onClose }: {
           <button type="button" className="danger solid" onClick={() => void remove()} disabled={busy}>
             {busy ? "Deleting…" : "Delete Category"}
           </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** What a group may do, in words, for MoveAccessDialog. */
+function levelOf(access: readonly { group_id: string; can_post: boolean }[], groupId: string, kind: Kind): string {
+  const a = access.find((x) => x.group_id === groupId);
+  if (!a) return "no access";
+  if (kind === "voice") return a.can_post ? "join and speak" : "join";
+  return a.can_post ? "view and post" : "view";
+}
+
+/** What changes for each group going from `from` to `to`. */
+function accessChanges(from: readonly ChannelAccess[], to: readonly ChannelAccess[], kind: Kind) {
+  const names = new Map<string, string>();
+  for (const a of [...from, ...to]) names.set(a.group_id, a.group);
+  return [...names].flatMap(([id, group]) => {
+    const was = levelOf(from, id, kind);
+    const now = levelOf(to, id, kind);
+    return was === now ? [] : [{ group, was, now }];
+  });
+}
+
+/** One choice's outcome: each group whose access changes, or "No changes". */
+function ChangeList({ changes }: { changes: { group: string; was: string; now: string }[] }) {
+  if (!changes.length) return <span className="muted small block">No changes: everyone keeps the access they have.</span>;
+  return (
+    <ul className="small access-changes">
+      {changes.map((c) => <li key={c.group}><strong>{c.group}</strong>: {c.was} → {c.now}</li>)}
+    </ul>
+  );
+}
+
+/**
+ * Asked before every move of a channel to another place (into, out of or
+ * between categories; dragged or from Move to Category…): says what is
+ * moving where, and what each permissions choice changes, even when it
+ * changes nothing. Starts on what the channel does now: Same as category
+ * takes the new category's, Custom keeps its own. Reordering within one
+ * place doesn't ask (permissions can't change).
+ */
+export function MoveChannelDialog({ channel, from, to, onPick }: {
+  channel: ChannelInfo;
+  /** Where it is now; undefined: No Category. */
+  from: ChannelCategory | undefined;
+  /** Where it's going; undefined: No Category. */
+  to: ChannelCategory | undefined;
+  /** The move's extra fields, or null to cancel. */
+  onPick: (choice: { keep_access?: boolean; follow_category?: boolean } | null) => void;
+}) {
+  const kind: Kind = channel.kind === "voice" ? "voice" : "text";
+  const following = !!channel.follows_category;
+  const [use, setUse] = useState(following && !!to);
+  const label = `${kind === "text" ? "#" : ""}${channel.name}`;
+  const fromName = from ? from.name : "No Category";
+  const toName = to ? to.name : "No Category";
+  const move = () => onPick(!to ? {} : use ? { follow_category: true } : { keep_access: true });
+  return (
+    <Modal title="Move Channel" onClose={() => onPick(null)}>
+      <div className="modal-body">
+        <p>Move <strong>{label}</strong> from <strong>{fromName}</strong> to <strong>{toName}</strong>.</p>
+        {to ? (
+          <div className="follow-pick" role="radiogroup" aria-label="Permissions">
+            <span>Permissions</span>
+            <label className="check">
+              <input type="radio" name="move-perms" checked={use} onChange={() => setUse(true)} />
+              <span>
+                Use {to.name}'s permissions (Same as category)
+                <ChangeList changes={accessChanges(channel.access, to.access ?? [], kind)} />
+              </span>
+            </label>
+            <label className="check">
+              <input type="radio" name="move-perms" checked={!use} onChange={() => setUse(false)} />
+              <span>
+                Keep its own permissions (Custom)
+                <ChangeList changes={[]} />
+              </span>
+            </label>
+          </div>
+        ) : (
+          <div className="follow-pick">
+            <span>Permissions</span>
+            <p className="small">
+              It keeps the permissions it has now{following ? " and becomes Custom" : ""}.
+              <span className="muted block">No changes: everyone keeps the access they have.</span>
+            </p>
+          </div>
+        )}
+        {to && use && channel.encrypted && accessChanges(channel.access, to.access ?? [], kind).length > 0 && (
+          <p className="muted small">People who lose access are removed from the channel's encryption.</p>
+        )}
+        <div className="modal-actions">
+          <button type="button" className="secondary" onClick={() => onPick(null)}>Cancel</button>
+          <button type="button" className="primary" autoFocus onClick={move}>Move</button>
         </div>
       </div>
     </Modal>

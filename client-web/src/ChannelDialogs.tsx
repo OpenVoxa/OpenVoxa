@@ -16,10 +16,10 @@
 
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import type { ApiCall } from "@core/identity";
-import type { ChannelCategory, ChannelInfo } from "@core/chat";
+import type { ChannelAccess, ChannelCategory, ChannelInfo } from "@core/chat";
 
 /** A permission group as GET /api/v1/groups lists it. */
-interface PermGroup {
+export interface PermGroup {
   id: string;
   name: string;
   position: number;
@@ -27,8 +27,8 @@ interface PermGroup {
   auto_assign: boolean;
 }
 
-/** One row of the allow-list editor. */
-interface AccessRow {
+/** One row of the permissions editor. */
+export interface AccessRow {
   id: string;
   name: string;
   view: boolean;
@@ -73,7 +73,7 @@ export function Modal({ title, onClose, children, wide, fixed }: {
 
 // ----------------------------------------------------- shared editors
 
-function useGroups(call: ApiCall): { groups: PermGroup[] | null; error: string | null } {
+export function useGroups(call: ApiCall): { groups: PermGroup[] | null; error: string | null } {
   const [groups, setGroups] = useState<PermGroup[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -88,10 +88,33 @@ function useGroups(call: ApiCall): { groups: PermGroup[] | null; error: string |
   return { groups, error };
 }
 
-function AccessEditor({ rows, setRows, kind }: {
+/** Every group as a row, ticked as `access` says. */
+export function rowsFrom(groups: readonly PermGroup[], access: readonly ChannelAccess[]): AccessRow[] {
+  const on = new Map(access.map((a) => [a.group_id, a.can_post]));
+  return groups.map((g) => ({ id: g.id, name: g.name, view: on.has(g.id), post: on.get(g.id) ?? false }));
+}
+
+/** The server's default for new channels: Everyone may view, groups new
+ * accounts join may post. */
+export function defaultRows(groups: readonly PermGroup[]): AccessRow[] {
+  return groups.map((g) => ({
+    id: g.id, name: g.name, view: g.is_everyone || g.auto_assign, post: g.auto_assign,
+  }));
+}
+
+/** Permissions as one comparable string (order doesn't matter). */
+export function accessKey(access: readonly { group_id: string; can_post: boolean }[]): string {
+  return access.map((a) => `${a.group_id}:${a.can_post}`).sort().join(",");
+}
+
+export function AccessEditor({ rows, setRows, kind, disabled, legend = "Who can use it", note }: {
   rows: AccessRow[];
   setRows: (r: AccessRow[]) => void;
   kind: "text" | "voice";
+  /** Shown greyed out (Same as category: edit the category instead). */
+  disabled?: boolean;
+  legend?: string;
+  note?: ReactNode;
 }) {
   const set = (id: string, change: Partial<AccessRow>) =>
     setRows(rows.map((r) => {
@@ -103,8 +126,8 @@ function AccessEditor({ rows, setRows, kind }: {
       return next;
     }));
   return (
-    <fieldset className="access">
-      <legend>Who can use it</legend>
+    <fieldset className="access" disabled={disabled}>
+      <legend>{legend}</legend>
       <table>
         <thead>
           <tr><th>Group</th><th>{kind === "voice" ? "Join" : "View"}</th><th>{kind === "voice" ? "Speak" : "Post"}</th></tr>
@@ -122,14 +145,16 @@ function AccessEditor({ rows, setRows, kind }: {
         </tbody>
       </table>
       <p className="muted small">
-        Administrators can always see and use every channel.
-        {!rows.some((r) => r.view) && " With nothing ticked, only administrators can."}
+        {note ?? <>
+          Administrators can always see and use every channel.
+          {!rows.some((r) => r.view) && " With nothing ticked, only administrators can."}
+        </>}
       </p>
     </fieldset>
   );
 }
 
-function accessBody(rows: AccessRow[]) {
+export function accessBody(rows: AccessRow[]) {
   return rows.filter((r) => r.view).map((r) => ({ group_id: r.id, can_post: r.post }));
 }
 
@@ -161,6 +186,36 @@ export function describeRetention(r: string): string {
 
 // ------------------------------------------------------------- create
 
+/**
+ * Same as category / Custom, above a channel's permissions. Same as
+ * category is greyed out for a channel outside any category.
+ */
+function FollowPick({ category, follow, setFollow }: {
+  category: ChannelCategory | undefined;
+  follow: boolean;
+  setFollow: (on: boolean) => void;
+}) {
+  return (
+    <div className="follow-pick" role="radiogroup" aria-label="Permissions">
+      <span>Permissions</span>
+      <label className={`check${category ? "" : " disabled"}`} title={category ? undefined : "It isn't in a category"}>
+        <input type="radio" name="follow" checked={follow} disabled={!category} onChange={() => setFollow(true)} />
+        <span>
+          Same as category{category ? ` (${category.name})` : ""}
+          <span className="muted small block">Changes when the category's permissions change.</span>
+        </span>
+      </label>
+      <label className="check">
+        <input type="radio" name="follow" checked={!follow} onChange={() => setFollow(false)} />
+        <span>
+          Custom
+          <span className="muted small block">Its own permissions, set here.</span>
+        </span>
+      </label>
+    </div>
+  );
+}
+
 export function CreateChannelDialog({ call, kind: initialKind, categories, categoryId, onClose, onCreated }: {
   call: ApiCall;
   kind: "text" | "voice";
@@ -178,18 +233,23 @@ export function CreateChannelDialog({ call, kind: initialKind, categories, categ
   const [name, setName] = useState("");
   const [encrypted, setEncrypted] = useState(true);
   const [rows, setRows] = useState<AccessRow[] | null>(null);
+  // In a category, a new channel uses its permissions unless set to Custom.
+  const [follow, setFollow] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const cat = kindCategories.find((c) => c.id === category);
+  const following = !!cat && follow;
 
-  // The server's default: Everyone may view, groups new accounts join
-  // may post.
+  // Custom starts from the server default (Everyone may view, groups new
+  // accounts join may post), or from the category's when in one.
   useEffect(() => {
-    if (groups && !rows) {
-      setRows(groups.map((g) => ({
-        id: g.id, name: g.name, view: g.is_everyone || g.auto_assign, post: g.auto_assign,
-      })));
-    }
+    if (groups && !rows) setRows(defaultRows(groups));
   }, [groups, rows]);
+  const catRows = groups && cat?.access ? rowsFrom(groups, cat.access) : null;
+  const pickFollow = (on: boolean) => {
+    if (!on && follow && catRows) setRows(catRows);
+    setFollow(on);
+  };
 
   const valid = /^[a-z0-9-]{1,32}$/.test(name);
 
@@ -207,7 +267,8 @@ export function CreateChannelDialog({ call, kind: initialKind, categories, categ
           // Voice is always end-to-end encrypted; the flag is for text.
           encrypted: kind === "text" ? encrypted : false,
           access: accessBody(rows),
-          category_id: kindCategories.some((c) => c.id === category) ? category : null,
+          category_id: cat ? cat.id : null,
+          follow_category: following,
         }),
       })) as ChannelInfo;
       onCreated(c);
@@ -269,7 +330,11 @@ export function CreateChannelDialog({ call, kind: initialKind, categories, categ
           <p className="muted small">Voice and screen sharing are always end-to-end encrypted.</p>
         )}
         {groupsError && <p className="error">Couldn't load groups: {groupsError}</p>}
-        {rows && <AccessEditor rows={rows} setRows={setRows} kind={kind} />}
+        <FollowPick category={cat} follow={following} setFollow={pickFollow} />
+        {following
+          ? catRows && <AccessEditor rows={catRows} setRows={() => {}} kind={kind} disabled
+            note={<>The category's permissions. Change them with Edit Category.</>} />
+          : rows && <AccessEditor rows={rows} setRows={setRows} kind={kind} />}
         {error && <p className="error" role="alert">{error}</p>}
         <div className="modal-actions">
           <button type="button" className="secondary" onClick={onClose}>Cancel</button>
@@ -284,9 +349,11 @@ export function CreateChannelDialog({ call, kind: initialKind, categories, categ
 
 // ----------------------------------------------------------- settings
 
-export function ChannelSettingsDialog({ call, channel, canManage, canForcePTT, focus, onClose, onDeleted }: {
+export function ChannelSettingsDialog({ call, channel, categories, canManage, canForcePTT, focus, onClose, onDeleted }: {
   call: ApiCall;
   channel: ChannelInfo;
+  /** For Same as category: the channel's category and its permissions. */
+  categories: readonly ChannelCategory[];
   /** Opened from the channel menu: put the cursor in the name, or go straight to the delete confirmation. */
   focus?: "name" | "delete";
   canManage: boolean;
@@ -307,16 +374,24 @@ export function ChannelSettingsDialog({ call, channel, canManage, canForcePTT, f
   const [confirmDelete, setConfirmDelete] = useState(focus === "delete" && canManage);
   const [name, setName] = useState(channel.name);
 
-  useEffect(() => {
-    if (groups && !rows) {
-      const on = new Map(channel.access.map((a) => [a.group_id, a.can_post]));
-      setRows(groups.map((g) => ({ id: g.id, name: g.name, view: on.has(g.id), post: on.get(g.id) ?? false })));
-    }
-  }, [groups, rows, channel.access]);
+  const voice = channel.kind === "voice";
+  const cat = categories.find((c) => c.id === channel.category_id);
+  const wasFollowing = !!cat && !!channel.follows_category;
+  const [follow, setFollow] = useState(wasFollowing);
 
-  const accessChanged = !!rows && JSON.stringify(accessBody(rows).sort((a, b) => a.group_id.localeCompare(b.group_id))) !==
-    JSON.stringify(channel.access.map((a) => ({ group_id: a.group_id, can_post: a.can_post }))
-      .sort((a, b) => a.group_id.localeCompare(b.group_id)));
+  useEffect(() => {
+    if (groups && !rows) setRows(rowsFrom(groups, channel.access));
+  }, [groups, rows, channel.access]);
+  const catRows = groups && cat?.access ? rowsFrom(groups, cat.access) : null;
+  // Custom starts as a copy of what it has now (the category's, if it
+  // was following them).
+  const pickFollow = (on: boolean) => {
+    if (!on && follow && catRows) setRows(catRows);
+    setFollow(on);
+  };
+
+  const accessChanged = follow !== wasFollowing ||
+    (!follow && !!rows && accessKey(accessBody(rows)) !== accessKey(channel.access));
   const retentionValue = retention === "custom" ? customRetention.trim() : retention;
   const retentionChanged = retention === "custom"
     ? customRetention.trim() !== "" && customRetention.trim() !== describeRetention(channel.retention)
@@ -341,7 +416,10 @@ export function ChannelSettingsDialog({ call, channel, canManage, canForcePTT, f
         await call(`${base}/name`, { method: "PATCH", body: JSON.stringify({ name: newName }) });
       }
       if (canManage && accessChanged && rows) {
-        await call(`${base}/access`, { method: "PUT", body: JSON.stringify({ access: accessBody(rows) }) });
+        await call(`${base}/access`, {
+          method: "PUT",
+          body: JSON.stringify(follow ? { follow_category: true } : { access: accessBody(rows), follow_category: false }),
+        });
       }
       if (canManage && retentionChanged) {
         await call(`${base}/retention`, { method: "PATCH", body: JSON.stringify({ retention: retentionValue }) });
@@ -371,7 +449,6 @@ export function ChannelSettingsDialog({ call, channel, canManage, canForcePTT, f
     }
   }
 
-  const voice = channel.kind === "voice";
   return (
     <Modal title={`${voice ? "" : "#"}${channel.name} settings`} onClose={onClose}>
       <form className="modal-body" onSubmit={save}>
@@ -391,7 +468,11 @@ export function ChannelSettingsDialog({ call, channel, canManage, canForcePTT, f
             </label>
             {nameChanged && !nameValid && <p className="error small">A name needs at least one character.</p>}
             {groupsError && <p className="error">Couldn't load groups: {groupsError}</p>}
-            {rows && <AccessEditor rows={rows} setRows={setRows} kind={channel.kind === "voice" ? "voice" : "text"} />}
+            <FollowPick category={cat} follow={follow} setFollow={pickFollow} />
+            {follow
+              ? catRows && <AccessEditor rows={catRows} setRows={() => {}} kind={voice ? "voice" : "text"} disabled
+                note={<>The category's permissions. Change them with Edit Category.</>} />
+              : rows && <AccessEditor rows={rows} setRows={setRows} kind={voice ? "voice" : "text"} />}
 
             {!voice && (
               <label>

@@ -434,6 +434,8 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 		withUUIDPath(api.requirePerm(perm.ManageChannels, api.editCategory)))
 	mux.HandleFunc("DELETE /api/v1/channel-categories/{id}",
 		withUUIDPath(api.requirePerm(perm.ManageChannels, api.deleteCategory)))
+	mux.HandleFunc("PUT /api/v1/channel-categories/{id}/access",
+		withUUIDPath(api.requirePerm(perm.ManageChannels, api.setCategoryAccess)))
 	mux.HandleFunc("POST /api/v1/channel-categories/{id}/move",
 		withUUIDPath(api.requirePerm(perm.ManageChannels, api.moveCategory)))
 
@@ -551,6 +553,11 @@ type channelResponse struct {
 	CategoryID *string `json:"category_id"`
 	Position   int     `json:"position"`
 
+	// FollowsCategory: its permissions are its category's ("Same as
+	// category"), copied into Access whenever they change; false: its own
+	// ("Custom"). See categories.go, "Category permissions".
+	FollowsCategory bool `json:"follows_category"`
+
 	// HistorySharing: new members of this encrypted channel are sent the
 	// messages existing members hold. Shown beside retention.
 	HistorySharing bool `json:"history_sharing"`
@@ -599,7 +606,7 @@ func (a *API) listChannels(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.pool.Query(r.Context(),
 		`SELECT c.id, c.name, c.kind, c.encrypted,
 		        EXTRACT(EPOCH FROM c.retention)::float8,
-		        c.force_ptt, c.history_sharing, c.category_id::text, c.position,
+		        c.force_ptt, c.history_sharing, c.category_id::text, c.position, c.follows_category,
 		        `+canPostSQL+`, `+channelAccessJSON+`,
 		        (SELECT max(m.created_at) FROM messages m WHERE m.channel_id = c.id),
 		        (SELECT max(m.created_at) FROM message_mentions mm
@@ -628,7 +635,7 @@ func (a *API) listChannels(w http.ResponseWriter, r *http.Request) {
 		var retentionSeconds *float64
 
 		if err := rows.Scan(&c.ID, &c.Name, &c.Kind, &c.Encrypted, &retentionSeconds,
-			&c.ForcePTT, &c.HistorySharing, &c.CategoryID, &c.Position, &c.CanPost, &c.Access, &c.LastMessageAt, &c.LastMentionAt); err != nil {
+			&c.ForcePTT, &c.HistorySharing, &c.CategoryID, &c.Position, &c.FollowsCategory, &c.CanPost, &c.Access, &c.LastMessageAt, &c.LastMentionAt); err != nil {
 			slog.Error("scanning channel", "err", err)
 			writeError(w, http.StatusInternalServerError, "could not list channels")
 			return

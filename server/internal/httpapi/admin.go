@@ -106,6 +106,9 @@ type createChannelRequest struct {
 	// CategoryID: put it in this category of its section (categories.go);
 	// absent or null for the top level. Either way it goes at the end.
 	CategoryID *string `json:"category_id"`
+	// FollowCategory: use the category's permissions and keep following
+	// them ("Same as category"); Access is then ignored.
+	FollowCategory bool `json:"follow_category"`
 }
 
 func (a *API) createChannel(w http.ResponseWriter, r *http.Request) {
@@ -127,6 +130,10 @@ func (a *API) createChannel(w http.ResponseWriter, r *http.Request) {
 
 	if req.CategoryID != nil && !uuidPattern.MatchString(*req.CategoryID) {
 		writeError(w, http.StatusBadRequest, "invalid category id")
+		return
+	}
+	if req.FollowCategory && req.CategoryID == nil {
+		writeError(w, http.StatusBadRequest, "only a channel in a category can follow its permissions")
 		return
 	}
 
@@ -159,13 +166,13 @@ func (a *API) createChannel(w http.ResponseWriter, r *http.Request) {
 
 	var c channelResponse
 	err = tx.QueryRow(r.Context(),
-		`INSERT INTO channels (name, kind, encrypted, category_id, position)
+		`INSERT INTO channels (name, kind, encrypted, category_id, position, follows_category)
 		 VALUES ($1, $2, $3, $4::uuid,
 		         (SELECT COALESCE(max(position), 0) + 1 FROM channels
-		           WHERE kind = $2 AND category_id IS NOT DISTINCT FROM $4::uuid))
-		 RETURNING id, name, kind, encrypted, category_id::text, position`,
-		req.Name, req.Kind, req.Encrypted, req.CategoryID,
-	).Scan(&c.ID, &c.Name, &c.Kind, &c.Encrypted, &c.CategoryID, &c.Position)
+		           WHERE kind = $2 AND category_id IS NOT DISTINCT FROM $4::uuid), $5)
+		 RETURNING id, name, kind, encrypted, category_id::text, position, follows_category`,
+		req.Name, req.Kind, req.Encrypted, req.CategoryID, req.FollowCategory,
+	).Scan(&c.ID, &c.Name, &c.Kind, &c.Encrypted, &c.CategoryID, &c.Position, &c.FollowsCategory)
 	if err != nil {
 		if isUniqueViolation(err) {
 			writeError(w, http.StatusConflict, "a channel with that name already exists")
@@ -176,7 +183,9 @@ func (a *API) createChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Access != nil {
+	if req.FollowCategory {
+		err = copyCategoryAccess(r.Context(), tx, []string{c.ID})
+	} else if req.Access != nil {
 		var access channelAccessRequest
 		for _, e := range *req.Access {
 			if !uuidPattern.MatchString(e.GroupID) {

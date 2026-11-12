@@ -44,7 +44,7 @@ import { configureStatuses, refreshStatuses, SetStatusDialog, statusChanged, Sta
 import { mayDM, NO_DM_REASON } from "./dmText";
 import { SidebarResizer, useSidebarWidth } from "./sidebarWidth";
 import {
-  CategoryDialog, DeleteCategoryDialog, mergeDrop, sectionLayout, stepMoves, useCollapsedCategories, useLayoutDrag,
+  CategoryDialog, DeleteCategoryDialog, MoveChannelDialog, mergeDrop, sectionLayout, stepMoves, useCollapsedCategories, useLayoutDrag,
 } from "./channelCategories";
 
 const LAST_CHANNEL = (userId: string) => `lastChannel.${userId}`;
@@ -241,8 +241,23 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   // Drag-to-reorder channels and categories (manage_channels).
   const layoutError = useCallback((title: string, err: unknown, at: { x: number; y: number }) =>
     setDropNote({ title, text: err instanceof Error ? err.message : String(err), at }), []);
+  // Every move of a channel to another place asks first, showing what
+  // each permissions choice changes (MoveChannelDialog); the answer
+  // settles the move's promise. Reordering within one place doesn't.
+  type MoveChoice = { keep_access?: boolean; follow_category?: boolean } | null;
+  const [moveAsk, setMoveAsk] = useState<{
+    channel: ChannelInfo; from?: ChannelCategory; to?: ChannelCategory; answer: (c: MoveChoice) => void;
+  } | null>(null);
+  const confirmMove = useCallback((channelId: string, categoryId: string | null) => {
+    const c = channels.find((x) => x.id === channelId);
+    if (!c || (c.category_id ?? null) === categoryId) return Promise.resolve({});
+    const from = categories.find((x) => x.id === c.category_id);
+    const to = categoryId ? categories.find((x) => x.id === categoryId) : undefined;
+    return new Promise<MoveChoice>((resolve) =>
+      setMoveAsk({ channel: c, from, to, answer: (choice) => { setMoveAsk(null); resolve(choice); } }));
+  }, [channels, categories]);
   const layoutDrag = useLayoutDrag(call,
-    perms.includes("manage_channels") || perms.includes("administrator"), layoutError);
+    perms.includes("manage_channels") || perms.includes("administrator"), layoutError, confirmMove);
   // A Move Up / Move Down from a menu is on its way: those entries wait
   // for the refetched layout (channel_layout_changed), so a quick second
   // tap moves from the new place, not the old one.
@@ -1158,6 +1173,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
       {dialog?.k === "category" && (
         <CategoryDialog call={call} kind={dialog.kind}
           category={dialog.id ? categories.find((c) => c.id === dialog.id) : undefined}
+          channels={dialog.id ? channels.filter((c) => c.category_id === dialog.id) : undefined}
           onClose={() => setDialog(null)} />
       )}
       {dialog?.k === "deleteCategory" && (() => {
@@ -1196,6 +1212,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           onClose={() => setPerson(null)} />
       )}
       {dropNote && <MenuNote {...dropNote} onClose={() => setDropNote(null)} />}
+      {moveAsk && <MoveChannelDialog channel={moveAsk.channel} from={moveAsk.from} to={moveAsk.to} onPick={moveAsk.answer} />}
       {moveMenu && (
         <MoveMenu person={moveMenu.p} from={moveMenu.from} channels={voiceChannels}
           at={moveMenu.at} call={call}
@@ -1258,6 +1275,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           focus={dialog?.k === "settings" ? dialog.focus : undefined}
           call={call}
           channel={dialogChannel}
+          categories={categories}
           canManage={canManage}
           canForcePTT={canForcePTT}
           onClose={() => {

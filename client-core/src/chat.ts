@@ -50,12 +50,16 @@ export interface ChannelInfo {
   readonly category_id?: string | null;
   /** Its place within that category or top level (lower first). */
   readonly position?: number;
+  /** Its permissions are its category's ("Same as category"), copied into
+   * `access`; false or absent: its own ("Custom"). */
+  readonly follows_category?: boolean;
 }
 
 /**
  * A named folder in the Text or Voice section of the sidebar (server
- * categories.go). A label only: channel allow-lists still decide who sees
- * what, and a category with nothing you can see isn't sent to you
+ * categories.go). It has permissions of its own, which the channels in it
+ * set to "Same as category" use; channel allow-lists still decide who
+ * sees what. A category with nothing you can see isn't sent to you
  * (unless you have manage_channels).
  */
 export interface ChannelCategory {
@@ -65,6 +69,8 @@ export interface ChannelCategory {
   readonly position: number;
   /** Header text colour (#rrggbb), or null for the default. */
   readonly colour: string | null;
+  /** Its permissions; sent to manage_channels only. */
+  readonly access?: readonly ChannelAccess[];
 }
 
 /** Why a direct message is read-only, from your side (server dms.go). */

@@ -531,6 +531,11 @@ fieldset.access th, fieldset.access td { padding: 6px 10px; text-align: left; fo
 fieldset.access th { color: var(--muted); font-weight: 600; font-size: 12px; }
 fieldset.access th:not(:first-child), fieldset.access td:not(:first-child) { width: 64px; text-align: center; }
 fieldset.access input { accent-color: var(--accent); width: 16px; height: 16px; }
+/* Same as category: the category's permissions, shown greyed out. */
+fieldset.access:disabled table { opacity: 0.6; }
+.follow-pick { display: flex; flex-direction: column; gap: 8px; }
+.access-changes { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 2px; }
+.follow-pick > span { font-size: 12px; font-weight: 700; text-transform: uppercase; color: var(--muted); }
 .danger-zone { border-top: 1px solid var(--line); padding-top: 14px; display: flex; flex-direction: column; gap: 10px; }
 .danger-zone > button.danger { align-self: flex-start; }
 button.danger { background: none; color: var(--danger); padding: 6px 0; font-size: 14px; }
