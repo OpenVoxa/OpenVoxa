@@ -3875,6 +3875,17 @@ verified; the section named holds the design.
 
 ### Next up (Ryan picks; each gets a design talk first)
 
+- [ ] **Reordering on touchscreens** (Ryan, 2026-11-12): HTML drag and
+      drop doesn't work on phones and tablets, so channels and categories
+      can only be reordered with a mouse. Likely: Move Up / Move Down /
+      Move to Category in the long-press menu, using the same move
+      routes. Feature decisions, "Channel ordering and categories".
+- [ ] **Per-category permissions** (Ryan, 2026-11-12): a category
+      allow-list its channels can follow (a staff-only area in one step),
+      on top of today's labels-only categories where each channel keeps
+      its own list. Open: follow by default or opt in per channel, what
+      happens on moving a channel in or out, how it shows in Channel
+      Settings.
 - [x] **Self-host audit, whole repo** (2026-11-09): checked every
       tracked file so anyone can clone and host their own server. No
       personal network or account details were in the repo. Fixed:
@@ -3977,6 +3988,14 @@ verified; the section named holds the design.
         It adds a status line under names in the voice member list but
         no media or LiveKit code, and nobody has to rejoin. Same routine;
         only the server restarted; served bundle matched DEV.
+      - **v1.0.0-beta.4.5 (2026-11-12, hotfix):** the resizable sidebar
+        (SB1-SB8) and channel ordering and categories with header colours
+        (CG1-CG14, CC1-CC10); migrations 0040-0041 (PROD's channels
+        started in alphabetical order, no categories). Server and web
+        client only. It changes the voice channel list (drag handles,
+        categories) but no media or LiveKit code, and nobody has to
+        rejoin. Same routine; only the server restarted; served bundle
+        matched DEV.
       - **Open for later:** an official desktop app on GitHub Releases
         for other people's servers; prebuilt server images.
 - [ ] **Desktop app icon** (Ryan, 2026-11-07): replace the Electron
