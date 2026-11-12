@@ -1,4 +1,4 @@
-# OpenVoxa
+<h1 align="center"><img src="docs/images/banner.png" alt="OpenVoxa" width="800"></h1>
 
 **Self-hosted chat, voice, and screen sharing that doesn't sell you out.**
 

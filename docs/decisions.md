@@ -4060,8 +4060,13 @@ verified; the section named holds the design.
       - **Open for later:** an official desktop app on GitHub Releases
         for other people's servers; prebuilt server images.
 - [ ] **Desktop app icon** (Ryan, 2026-11-07): replace the Electron
-      logo. Waiting on a PNG from Ryan's graphic artist (square, 1024 px
-      ideal, at least 512, transparent). Then: generate a multi-size
+      logo. PNG received 2026-11-12 (1024 px, transparent: an orange
+      speech bubble with a white V on a dark hexagon); also the default
+      icon of the installable web app (Feature roadmap, 1). The banner
+      (1324x233) heads the README (`docs/images/banner.png`). The
+      installer stays one-click (Ryan, 2026-11-12): NSIS sidebar and
+      header pictures only show in the paged installer, which would add
+      3-4 clicks to a first install, so the banner isn't used there. Then: generate a multi-size
       `client-desktop/build/icon.ico` (16-256 px); set `icon` in
       `scripts/package.mjs` (the packager writes it into the exe, no
       Wine), `win.icon` / `nsis.installerIcon` / `uninstallerIcon` in
@@ -4112,6 +4117,88 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
       (overlay icon: online, in voice, muted, deafened), maybe a tray
       icon with Mute/Deafen. Needs the status from the server view
       through a preload (as badges do).
+
+**Feature roadmap** (Ryan picked the features 2026-11-12 from a list
+compared against Discord, TeamSpeak, Slack, Guilded, Revolt, Mumble and
+Element; ranked so popular and quick features come first and
+foundations come before what builds on them). Each still gets a design
+talk; one stage per session. "Hotfix" = could ship as one (no voice or
+LiveKit change, no rejoin, no desktop install); voice items are meant to
+ship together in one release.
+
+Stage 1, everyday chat (small, hotfix):
+
+1. [ ] **Installable web app (PWA)** (Ryan: high priority; the
+   OpenVoxa icon from Ryan is the default when a server has none): manifest,
+   icons, service worker for the app shell, "Install" on phones and
+   desktops. Web Push comes with 7.
+2. [ ] **Typing indicators.** The server sees who types where
+   (metadata, like mentions).
+3. [ ] **Unread jump and Mark as Read:** "jump to first unread" bar,
+   Mark Channel / Server Read.
+4. [ ] **Pinned messages** per channel (`manage_messages` or a new
+   permission). Encrypted channels: the server sees which message id is
+   pinned, not its content.
+5. [ ] **Spoiler tags:** `||text||` and blurred spoiler attachments
+   (markdown and attachments only).
+
+Stage 2, notifications (foundation for 7 and 15):
+
+6. [ ] **Per-channel notification settings:** All / Mentions / Nothing,
+   per channel and per server, mute for a time.
+7. [ ] **`@everyone` / `@group` mentions and notifications while the app
+   is closed** (Web Push via the PWA; the payload says where, never what,
+   for encrypted channels).
+
+Stage 3, voice for gaming (one release; desktop app update for 8):
+
+8. [ ] **Global push-to-talk and desktop status icon** (desktop app;
+   status icon from Next up above).
+9. [ ] **Webcam video in voice** (E2EE like shares).
+10. [ ] **Soundboard:** short clips per server, played into the call.
+11. [ ] **Temporary voice channels:** join "Create Squad", get your own
+    channel, removed when empty (inside a category, taking its
+    permissions).
+12. [ ] **Priority speaker and whisper lists** (TeamSpeak/Mumble).
+13. [ ] **Stage / listen-only mode:** join muted, speak by permission
+    or hand-raise.
+
+Stage 4, community:
+
+14. [ ] **Invite links**, single-use or expiring; the way in for guest
+    accounts (Features not built yet) and an alternative to the server
+    password.
+15. [ ] **Scheduled events** with RSVP and reminders (uses 6-7).
+16. [ ] **Polls**, in both kinds of channel (Ryan, 2026-11-12).
+    Plaintext: the server counts; anonymous polls possible. Encrypted:
+    votes are MLS messages counted by each client, so Anonymous is
+    greyed out with a tooltip, members who join later don't see the poll
+    (no earlier history), one vote per person and the closing time are
+    enforced by clients, and a deleted account's votes disappear.
+17. [ ] **Keyboard shortcuts:** quick switcher (Ctrl+K), Alt+Up/Down,
+    Esc to mark read.
+18. [ ] **Rich presence:** "In voice: Squads" on profiles and member
+    lists (no game detection).
+19. [ ] **Bookmarks / Save Message.**
+
+Stage 5, administration and integration:
+
+20. [ ] **Wider audit log:** channel and category edits, kicks, bans,
+    deletions, server settings (today: group changes only).
+21. [ ] **Webhooks / small bot API.** Rule (Ryan, 2026-11-12): only in
+    unencrypted channels (a webhook can't be an MLS member, so it can't
+    post into an encrypted one). Needs a token model.
+22. [ ] **Data export:** your own messages and files as an archive
+    (encrypted channels decrypted on the client).
+
+Dropped (Ryan, 2026-11-12): **message search** (a search index on
+every device for encrypted channels is too heavy) and **keyword
+alerts** (user reports stay the way moderators review messages; How
+reporting works under encryption).
+
+Later:
+
+23. [ ] **Accessibility pass and translations (i18n).**
 
 ### Features not built yet
 
