@@ -1153,6 +1153,62 @@ Moved forward from M5 at Ryan's request, 2026-11-01.
   dialog offers no switch for it.
 - Permissions refresh on perms_changed.
 
+#### Channel ordering and categories
+
+Asked for by Ryan and built 2026-11-12 (server `categories.go`, migrations
+0040-0041; web client `channelCategories.tsx`). CG1-CG14 and CC1-CC10
+pass.
+
+Ryan's calls: Discord-style categories (named folders you can't open or
+join), not TeamSpeak-style channels inside channels; one level deep;
+**separate Text and Voice sections**, each with its own categories (no
+mixed categories); categories are **labels only**, with no permissions of
+their own; collapsing is **per person**; a category can have a header
+colour.
+
+- **Order is shared** and changed by dragging (manage_channels): a
+  channel above or below another (orange line), onto a category header to
+  put it inside (orange box), or onto the section heading to take it back
+  to the top level; categories above or below each other. A section shows
+  its top-level channels, then its categories. New channels go to the end
+  of their place.
+- **Moves name a place, not the whole order:** `POST
+  /channels/{id}/move` `{category_id, before_id}` and `POST
+  /channel-categories/{id}/move` `{before_id}` (null: the end). The server
+  renumbers that one scope under an advisory lock (4244), so staff who
+  can't see every channel can still reorder: hidden channels keep their
+  places. Every change sends `channel_layout_changed` to every socket;
+  clients refetch `GET /channels` (now with `category_id`, `position`)
+  and `GET /channel-categories`.
+- **Schema:** `channel_categories` (kind, name unique per kind ignoring
+  case, position, colour); `channels.category_id` + `position`, with a
+  composite foreign key on (category_id, kind) so a text channel can't sit
+  in a voice category, `ON DELETE SET NULL (category_id)`. The migration
+  started everyone at today's alphabetical order.
+- **Visibility:** without manage_channels you only get categories holding
+  a channel you can see (a staff-only category's name doesn't leak).
+  Managers get them all, so they can drop channels into empty ones
+  ("Drag channels here.").
+- **Categories:** created from the section's + (now a menu: Create
+  Channel / Create Category); a hover + on the header creates a channel
+  inside (Create Channel also has a Category picker). Right-click: Collapse
+  / Expand, Create Channel, Edit Category, Delete Category (greyed without
+  manage_channels). Names: 1-32 characters, any case (shown in capitals),
+  one line. Delete moves its channels to the end of the top level;
+  nothing else is deleted. Create, rename and delete are in the
+  moderation log; moves and colour changes aren't (noise, cosmetic).
+- **Colour:** header text only, the same for everyone, picked like group
+  colours (picker, hex, preview, No Colour) with the same 3:1 contrast
+  rule (`checkNameColour`), checked by the dialog and the server.
+- **Collapse** is kept per browser (`openvoxa.layout.collapsedCategories`).
+  A collapsed category still shows the channel you have open or the call
+  you're in, and its header shows the unread dot or @ of what's inside.
+- **Drag details:** the row is draggable, not the button (Firefox won't
+  drag a button); drags that start inside a row (people in a voice
+  roster) are ignored, and voice rows take both kinds of drop, each
+  handler ignoring the other's drag type. HTML drag and drop doesn't work
+  on touchscreens: reordering needs a mouse.
+
 #### Server password
 
 Agreed with Ryan 2026-11-05 (SP tests); `httpapi/signup.go`, migration
@@ -3809,6 +3865,11 @@ verified; the section named holds the design.
 - 2026-11-12 Resizable sidebar (drag the right edge, 200-480 px,
   double-click resets, kept per browser), SB1-SB8 pass (Feature
   decisions, "Resizable sidebar").
+- 2026-11-12 Channel ordering and categories (drag to reorder, shared;
+  Discord-style categories per section, one level, labels only, collapse
+  per browser, header colour with the name-colour contrast rule;
+  migrations 0040-0041), CG1-CG14 and CC1-CC10 pass (Feature decisions,
+  "Channel ordering and categories").
 
 ## Open items
 
@@ -3955,15 +4016,13 @@ Added by Ryan 2026-11-06 (each still needs a design talk):
 
 - [x] **Switch stream:** built 2026-11-06 with live quality changes
       (Feature decisions, "Switch stream"; SW1-SW9 passed).
-- [ ] **Channel groups and ordering:** text channels are sorted by name
+- [x] **Channel groups and ordering:** text channels are sorted by name
       (`listChannels`, `ORDER BY c.name`). Wanted: named groups
       (categories) that collapse, and drag-to-reorder for channels and
-      groups (`manage_channels`). Ryan, 2026-11-12: Discord-style
-      categories (named folders, not joinable channels), one level deep;
-      ordering and categories built together (one schema change), next.
-      Open: voice channels in the same categories or separate sections,
-      per-category permissions, collapse per browser or shared, drag
-      details.
+      groups (`manage_channels`). Built 2026-11-12 with category
+      colours, CG1-CG14 and CC1-CC10 pass (Feature decisions, "Channel
+      ordering and categories"). Later, if wanted: reordering on
+      touchscreens (no HTML drag there), per-category permissions.
 - [x] **Direct messages** ("whispers" = DMs): all three stages built
       2026-11-08 (Feature decisions, "Direct messages"). Later, offered:
       "Message" on @mention chips.

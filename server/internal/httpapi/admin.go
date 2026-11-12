@@ -103,6 +103,9 @@ type createChannelRequest struct {
 		GroupID string `json:"group_id"`
 		CanPost bool   `json:"can_post"`
 	} `json:"access"`
+	// CategoryID: put it in this category of its section (categories.go);
+	// absent or null for the top level. Either way it goes at the end.
+	CategoryID *string `json:"category_id"`
 }
 
 func (a *API) createChannel(w http.ResponseWriter, r *http.Request) {
@@ -122,6 +125,11 @@ func (a *API) createChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.CategoryID != nil && !uuidPattern.MatchString(*req.CategoryID) {
+		writeError(w, http.StatusBadRequest, "invalid category id")
+		return
+	}
+
 	tx, err := a.pool.Begin(r.Context())
 	if err != nil {
 		slog.Error("starting channel creation", "err", err)
@@ -129,14 +137,35 @@ func (a *API) createChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
+	if _, err := tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock($1)`, layoutLock); err != nil {
+		slog.Error("locking channel layout", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not create channel")
+		return
+	}
+	if req.CategoryID != nil {
+		var found bool
+		if err := tx.QueryRow(r.Context(),
+			`SELECT EXISTS (SELECT 1 FROM channel_categories WHERE id = $1 AND kind = $2)`,
+			*req.CategoryID, req.Kind).Scan(&found); err != nil {
+			slog.Error("checking category", "err", err)
+			writeError(w, http.StatusInternalServerError, "could not create channel")
+			return
+		}
+		if !found {
+			writeError(w, http.StatusBadRequest, "no such category for this kind of channel")
+			return
+		}
+	}
 
 	var c channelResponse
 	err = tx.QueryRow(r.Context(),
-		`INSERT INTO channels (name, kind, encrypted)
-		 VALUES ($1, $2, $3)
-		 RETURNING id, name, kind, encrypted`,
-		req.Name, req.Kind, req.Encrypted,
-	).Scan(&c.ID, &c.Name, &c.Kind, &c.Encrypted)
+		`INSERT INTO channels (name, kind, encrypted, category_id, position)
+		 VALUES ($1, $2, $3, $4::uuid,
+		         (SELECT COALESCE(max(position), 0) + 1 FROM channels
+		           WHERE kind = $2 AND category_id IS NOT DISTINCT FROM $4::uuid))
+		 RETURNING id, name, kind, encrypted, category_id::text, position`,
+		req.Name, req.Kind, req.Encrypted, req.CategoryID,
+	).Scan(&c.ID, &c.Name, &c.Kind, &c.Encrypted, &c.CategoryID, &c.Position)
 	if err != nil {
 		if isUniqueViolation(err) {
 			writeError(w, http.StatusConflict, "a channel with that name already exists")

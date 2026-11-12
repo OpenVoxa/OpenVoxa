@@ -12,7 +12,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type DragEvent } from "react";
-import { Chat, dmChannel, type ChannelView, type ChannelInfo, type DMInfo, type VoicePresence } from "@core/chat";
+import { Chat, dmChannel, type ChannelCategory, type ChannelView, type ChannelInfo, type DMInfo, type VoicePresence } from "@core/chat";
 import type { VoiceClient, VoiceParticipant } from "@core/voice";
 import type { BackupStatus } from "@core/recovery";
 import type { Session } from "./api";
@@ -43,6 +43,9 @@ import { ProfileCard } from "./profiles";
 import { configureStatuses, refreshStatuses, SetStatusDialog, statusChanged, StatusLine, useStatus } from "./statuses";
 import { mayDM, NO_DM_REASON } from "./dmText";
 import { SidebarResizer, useSidebarWidth } from "./sidebarWidth";
+import {
+  CategoryDialog, DeleteCategoryDialog, mergeDrop, sectionLayout, useCollapsedCategories, useLayoutDrag,
+} from "./channelCategories";
 
 const LAST_CHANNEL = (userId: string) => `lastChannel.${userId}`;
 /** "1" when Home was the last thing open: you come back to it. */
@@ -78,6 +81,10 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   const [chat, setChat] = useState<Chat | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [channels, setChannels] = useState<readonly ChannelInfo[]>([]);
+  // Sidebar categories (channelCategories.tsx), and which ones this
+  // browser has collapsed.
+  const [categories, setCategories] = useState<readonly ChannelCategory[]>([]);
+  const [collapsedCats, setCollapsedCat] = useCollapsedCategories();
   const [dms, setDms] = useState<readonly DMInfo[]>([]);
   /** User ids you block (Chat.blocked). */
   const [blocked, setBlocked] = useState<ReadonlySet<string>>(new Set());
@@ -146,7 +153,9 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   const [openBugs, setOpenBugs] = useState(0);
   const [bugsTick, setBugsTick] = useState(0);
   const [dialog, setDialog] = useState<
-    | { k: "create"; kind: "text" | "voice" }
+    | { k: "create"; kind: "text" | "voice"; categoryId?: string }
+    | { k: "category"; kind: "text" | "voice"; id?: string }
+    | { k: "deleteCategory"; id: string }
     | { k: "settings"; id: string; focus?: "name" | "delete" }
     | { k: "share" }
     | { k: "prefs"; tab: SettingsTab }
@@ -157,6 +166,8 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   >(null);
   // The right-click (or long-press) menu on a channel in the sidebar.
   const [chanMenu, setChanMenu] = useState<{ id: string; at: { x: number; y: number } } | null>(null);
+  // The menu on a category header (catId), or the section's + menu.
+  const [layoutMenu, setLayoutMenu] = useState<{ kind: "text" | "voice"; catId?: string; at: { x: number; y: number } } | null>(null);
   // A newer web client on the server (newVersion.ts), and the one the
   // notice was closed for.
   const [newVersion, setNewVersion] = useState<string | null>(null);
@@ -197,6 +208,11 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   const call = useMemo(() => apiCall(session.token, onExpired),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [session.token]);
+  // Drag-to-reorder channels and categories (manage_channels).
+  const layoutError = useCallback((title: string, err: unknown, at: { x: number; y: number }) =>
+    setDropNote({ title, text: err instanceof Error ? err.message : String(err), at }), []);
+  const layoutDrag = useLayoutDrag(call,
+    perms.includes("manage_channels") || perms.includes("administrator"), layoutError);
 
   // Sticker images need the token (stickers.tsx).
   useEffect(() => configureStickers(call, session.token), [call, session.token]);
@@ -243,7 +259,10 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
         const mentionedIds = new Set<string>();
         const looking = () => document.visibilityState === "visible" && document.hasFocus();
         c.on((e) => {
-          if (e.type === "channels") setChannels(e.channels);
+          if (e.type === "channels") {
+            setChannels(e.channels);
+            setCategories(e.categories);
+          }
           else if (e.type === "dms") setDms(e.dms);
           else if (e.type === "blocks") setBlocked(c.blocked);
           else if (e.type === "unread") setUnread(e.unread);
@@ -363,6 +382,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           return;
         }
         setChannels(c.channels);
+        setCategories(c.categories);
         setDms(c.dms);
         setBlocked(c.blocked);
         setUnread(c.unread);
@@ -727,15 +747,199 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
       return d && dmChannel(d);
     })() : undefined;
 
+  // A section heading ("Text channels"): + opens Create Channel /
+  // Create Category; a channel dropped on it goes to the top level.
   const heading = (label: string, kind: "text" | "voice") => (
-    <div className="list-head">
+    <div className={`list-head${layoutDrag.hintClass(`section-${kind}`)}`} {...layoutDrag.sectionDrop(kind)}>
       <h2>{label}</h2>
       {canManage && (
-        <button className="icon" onClick={() => setDialog({ k: "create", kind })}
-          title={`Create a ${kind} channel`} aria-label={`Create a ${kind} channel`}>+</button>
+        <button className="icon" title={`Create a ${kind} channel or category`} aria-label={`Create a ${kind} channel or category`}
+          onClick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            setLayoutMenu({ kind, at: { x: r.left, y: r.bottom + 4 } });
+          }}>+</button>
       )}
     </div>
   );
+
+  const textRow = (c: ChannelInfo, scope: readonly ChannelInfo[]) => (
+    <li key={c.id} className={`channel-row${layoutDrag.hintClass(c.id)}`}
+      {...layoutDrag.channelDrop(c, scope)} {...layoutDrag.channelDrag(c)}>
+      <button
+        className={`channel${c.id === openId && !homeOpen ? " active" : ""}${unread.has(c.id) || mentions.has(c.id) ? " unread" : ""}`}
+        {...menuTrigger.handlers(c.id)}
+        onClick={() => {
+          if (menuTrigger.consumeLongPress()) return;
+          setOpenId(c.id);
+          setHomeOpen(false);
+          setStage(null);
+          setCallView(false);
+        }}
+        aria-current={c.id === openId && !homeOpen ? "page" : undefined}
+        title={c.encrypted ? "End-to-end encrypted" : "Not encrypted"}
+      >
+        <span className="hash" aria-hidden>#</span>
+        <span className="name">{c.name}</span>
+        {c.encrypted && <LockIcon />}
+        {muted.has(c.id) && <span className="muted-bell" title="Sounds muted"><BellIcon off size={12} /></span>}
+        {mentions.has(c.id)
+          ? <span className="mention-badge" aria-label="you were mentioned" title="You were mentioned">@</span>
+          : unread.has(c.id) && <span className="dot" aria-label="unread" />}
+      </button>
+      {gear(c)}
+    </li>
+  );
+
+  const voiceRow = (c: ChannelInfo, scope: readonly ChannelInfo[]) => {
+    const here = vsnap && vsnap.state !== "idle" && vsnap.channelId === c.id;
+    // Dragged people (move_members) and dragged channels (manage_channels)
+    // both land here; each handler ignores the other's drags.
+    const memberDrop = canMove ? {
+      onDragOver: (e: DragEvent) => {
+        const d = dragging.current;
+        if (!d || d.from === c.id || !e.dataTransfer.types.includes(MOVE_DRAG_TYPE)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        if (dropOn !== c.id) setDropOn(c.id);
+      },
+      onDragLeave: (e: DragEvent) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropOn(null);
+      },
+      onDrop: (e: DragEvent) => {
+        if (!e.dataTransfer.types.includes(MOVE_DRAG_TYPE)) return;
+        e.preventDefault();
+        setDropOn(null);
+        const d = dragging.current;
+        dragging.current = null;
+        if (!d || d.from === c.id) return;
+        const at = { x: e.clientX, y: e.clientY };
+        call(`/api/v1/users/${d.p.user_id}/voice-move`, {
+          method: "POST",
+          body: JSON.stringify({ from_channel_id: d.from, to_channel_id: c.id }),
+        }).catch((err) => setDropNote({
+          title: `Couldn't move ${d.p.username}`,
+          text: err instanceof Error ? err.message : String(err),
+          at,
+        }));
+      },
+    } : {};
+    return (
+      <li key={c.id} className={`voice-item${dropOn === c.id ? " drop-target" : ""}${layoutDrag.hintClass(c.id)}`}
+        {...mergeDrop(memberDrop, layoutDrag.channelDrop(c, scope))}>
+        <div className="channel-row" {...layoutDrag.channelDrag(c)}>
+          <button className={`channel${here ? " active" : ""}`}
+            {...menuTrigger.handlers(c.id)}
+            onClick={() => {
+              if (menuTrigger.consumeLongPress()) return;
+              setStage(null);
+              setCallView(true);
+              void joinVoice(c.id);
+            }}
+            title={here ? "Show the call" : "Join the call"}>
+            <SpeakerIcon />
+            <span className="name">{c.name}</span>
+            {c.force_ptt && <span className="tag small" title="Push-to-talk required">PTT</span>}
+          </button>
+          {gear(c)}
+        </div>
+        <VoiceRoster
+          live={here ? vsnap.participants : null}
+          others={presence[c.id] ?? []}
+          onWatch={(pid) => {
+            const s = screens.find((x) => x.participantId === pid);
+            setStage({ focus: s?.id ?? null });
+          }}
+          onPerson={(p, at) => setPerson({ p, at })}
+          onOther={canMove ? (p, at) => setMoveMenu({ p, from: c.id, at })
+            : (p, at) => onName({ id: p.user_id, username: p.username }, at)}
+          onDrag={canMove ? (p) => {
+            dragging.current = p && { p, from: c.id };
+            if (!p) setDropOn(null);
+          } : undefined}
+        />
+      </li>
+    );
+  };
+
+  // A section: top-level channels, then its categories. A collapsed
+  // category still shows the channel you have open or the call you're in.
+  const section = (kind: "text" | "voice") => {
+    const lay = sectionLayout(channels, categories, kind);
+    const row = kind === "text" ? textRow : voiceRow;
+    const cats = lay.groups.map((g) => g.cat);
+    const showing = (c: ChannelInfo) => kind === "text"
+      ? c.id === openId && !homeOpen
+      : !!vsnap && vsnap.state !== "idle" && vsnap.channelId === c.id;
+    return (
+      <ul>
+        {lay.top.map((c) => row(c, lay.top))}
+        {lay.groups.map(({ cat, channels: inside }) => {
+          const shut = collapsedCats.has(cat.id);
+          const shown = shut ? inside.filter(showing) : inside;
+          const mention = shut && inside.some((c) => mentions.has(c.id));
+          const unreadIn = shut && inside.some((c) => unread.has(c.id));
+          return (
+            <li key={cat.id} className="category">
+              <div className={`category-head${layoutDrag.hintClass(cat.id)}`}
+                {...layoutDrag.categoryDrop(cat, cats)} {...layoutDrag.categoryDrag(cat)}>
+                <button className={`category-toggle${mention || unreadIn ? " unread" : ""}`}
+                  style={cat.colour ? { color: cat.colour } : undefined}
+                  aria-expanded={!shut}
+                  title={shut ? "Show channels" : "Hide channels"}
+                  onClick={() => setCollapsedCat(cat.id, !shut)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setLayoutMenu({ kind, catId: cat.id, at: { x: e.clientX, y: e.clientY } });
+                  }}>
+                  <span className={`chevron${shut ? " shut" : ""}`} aria-hidden>▾</span>
+                  <span className="name">{cat.name}</span>
+                  {mention
+                    ? <span className="mention-badge" aria-label="you were mentioned" title="You were mentioned">@</span>
+                    : unreadIn && <span className="dot" aria-label="unread" />}
+                </button>
+                {canManage && (
+                  <button className="icon" title={`Create a channel in ${cat.name}`} aria-label={`Create a channel in ${cat.name}`}
+                    onClick={() => setDialog({ k: "create", kind, categoryId: cat.id })}>+</button>
+                )}
+              </div>
+              {shown.length > 0 && <ul>{shown.map((c) => row(c, inside))}</ul>}
+              {!shut && !inside.length && canManage && (
+                <p className="muted empty">Drag channels here.</p>
+              )}
+            </li>
+          );
+        })}
+        {!lay.top.length && !lay.groups.some((g) => g.channels.length) && (
+          <li className="muted empty">{kind === "text" ? "No channels you can see." : "No voice channels yet."}</li>
+        )}
+      </ul>
+    );
+  };
+
+  // The category menu, or the section's + menu.
+  const layoutMenuCat = layoutMenu?.catId ? categories.find((c) => c.id === layoutMenu.catId) : undefined;
+  const layoutMenuItems = (): (MenuItem | "sep")[] => {
+    if (!layoutMenu) return [];
+    const kind = layoutMenu.kind;
+    if (!layoutMenuCat) {
+      return [
+        { label: "Create Channel", onClick: () => setDialog({ k: "create", kind }) },
+        { label: "Create Category", onClick: () => setDialog({ k: "category", kind }) },
+      ];
+    }
+    const cat = layoutMenuCat;
+    const shut = collapsedCats.has(cat.id);
+    return [
+      { label: shut ? "Expand Category" : "Collapse Category", onClick: () => setCollapsedCat(cat.id, !shut) },
+      "sep",
+      { label: "Create Channel", onClick: () => setDialog({ k: "create", kind, categoryId: cat.id }),
+        disabled: !canManage, reason: NEEDS_MANAGE },
+      { label: "Edit Category", onClick: () => setDialog({ k: "category", kind, id: cat.id }),
+        disabled: !canManage, reason: NEEDS_MANAGE },
+      { label: "Delete Category", onClick: () => setDialog({ k: "deleteCategory", id: cat.id }),
+        disabled: !canManage, reason: NEEDS_MANAGE, danger: true },
+    ];
+  };
 
   return (
     <LinksContext value={links}>
@@ -790,107 +994,11 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
             </button>
           </div>
           {heading("Text channels", "text")}
-          <ul>
-            {text.map((c) => (
-              <li key={c.id} className="channel-row">
-                <button
-                  className={`channel${c.id === openId && !homeOpen ? " active" : ""}${unread.has(c.id) || mentions.has(c.id) ? " unread" : ""}`}
-                  {...menuTrigger.handlers(c.id)}
-                  onClick={() => {
-                    if (menuTrigger.consumeLongPress()) return;
-                    setOpenId(c.id);
-                    setHomeOpen(false);
-                    setStage(null);
-                    setCallView(false);
-                  }}
-                  aria-current={c.id === openId && !homeOpen ? "page" : undefined}
-                  title={c.encrypted ? "End-to-end encrypted" : "Not encrypted"}
-                >
-                  <span className="hash" aria-hidden>#</span>
-                  <span className="name">{c.name}</span>
-                  {c.encrypted && <LockIcon />}
-                  {muted.has(c.id) && <span className="muted-bell" title="Sounds muted"><BellIcon off size={12} /></span>}
-                  {mentions.has(c.id)
-                    ? <span className="mention-badge" aria-label="you were mentioned" title="You were mentioned">@</span>
-                    : unread.has(c.id) && <span className="dot" aria-label="unread" />}
-                </button>
-                {gear(c)}
-              </li>
-            ))}
-            {!text.length && <li className="muted empty">No channels you can see.</li>}
-          </ul>
+          {section("text")}
           {(voiceChannels.length > 0 || canManage) && (
             <>
               {heading("Voice channels", "voice")}
-              <ul>
-                {voiceChannels.map((c) => {
-                  const here = vsnap && vsnap.state !== "idle" && vsnap.channelId === c.id;
-                  return (
-                    <li key={c.id} className={`voice-item${dropOn === c.id ? " drop-target" : ""}`}
-                      {...(canMove && {
-                        onDragOver: (e: DragEvent) => {
-                          const d = dragging.current;
-                          if (!d || d.from === c.id || !e.dataTransfer.types.includes(MOVE_DRAG_TYPE)) return;
-                          e.preventDefault();
-                          e.dataTransfer.dropEffect = "move";
-                          if (dropOn !== c.id) setDropOn(c.id);
-                        },
-                        onDragLeave: (e: DragEvent) => {
-                          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropOn(null);
-                        },
-                        onDrop: (e: DragEvent) => {
-                          e.preventDefault();
-                          setDropOn(null);
-                          const d = dragging.current;
-                          dragging.current = null;
-                          if (!d || d.from === c.id) return;
-                          const at = { x: e.clientX, y: e.clientY };
-                          call(`/api/v1/users/${d.p.user_id}/voice-move`, {
-                            method: "POST",
-                            body: JSON.stringify({ from_channel_id: d.from, to_channel_id: c.id }),
-                          }).catch((err) => setDropNote({
-                            title: `Couldn't move ${d.p.username}`,
-                            text: err instanceof Error ? err.message : String(err),
-                            at,
-                          }));
-                        },
-                      })}>
-                      <div className="channel-row">
-                        <button className={`channel${here ? " active" : ""}`}
-                          {...menuTrigger.handlers(c.id)}
-                          onClick={() => {
-                            if (menuTrigger.consumeLongPress()) return;
-                            setStage(null);
-                            setCallView(true);
-                            void joinVoice(c.id);
-                          }}
-                          title={here ? "Show the call" : "Join the call"}>
-                          <SpeakerIcon />
-                          <span className="name">{c.name}</span>
-                          {c.force_ptt && <span className="tag small" title="Push-to-talk required">PTT</span>}
-                        </button>
-                        {gear(c)}
-                      </div>
-                      <VoiceRoster
-                        live={here ? vsnap.participants : null}
-                        others={presence[c.id] ?? []}
-                        onWatch={(pid) => {
-                          const s = screens.find((x) => x.participantId === pid);
-                          setStage({ focus: s?.id ?? null });
-                        }}
-                        onPerson={(p, at) => setPerson({ p, at })}
-                        onOther={canMove ? (p, at) => setMoveMenu({ p, from: c.id, at })
-                          : (p, at) => onName({ id: p.user_id, username: p.username }, at)}
-                        onDrag={canMove ? (p) => {
-                          dragging.current = p && { p, from: c.id };
-                          if (!p) setDropOn(null);
-                        } : undefined}
-                      />
-                    </li>
-                  );
-                })}
-                {!voiceChannels.length && <li className="muted empty">No voice channels yet.</li>}
-              </ul>
+              {section("voice")}
             </>
           )}
           </>)}
@@ -951,6 +1059,8 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
         <CreateChannelDialog
           call={call}
           kind={dialog.kind}
+          categories={categories}
+          categoryId={dialog.categoryId}
           onClose={() => setDialog(null)}
           onCreated={(c) => {
             setDialog(null);
@@ -963,6 +1073,19 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
             });
           }}
         />
+      )}
+      {dialog?.k === "category" && (
+        <CategoryDialog call={call} kind={dialog.kind}
+          category={dialog.id ? categories.find((c) => c.id === dialog.id) : undefined}
+          onClose={() => setDialog(null)} />
+      )}
+      {dialog?.k === "deleteCategory" && (() => {
+        const cat = categories.find((c) => c.id === dialog.id);
+        return cat && <DeleteCategoryDialog call={call} category={cat} onClose={() => setDialog(null)} />;
+      })()}
+      {layoutMenu && (layoutMenuCat || !layoutMenu.catId) && (
+        <ChannelMenu title={layoutMenuCat ? layoutMenuCat.name : layoutMenu.kind === "text" ? "Text channels" : "Voice channels"}
+          at={layoutMenu.at} items={layoutMenuItems()} onClose={() => setLayoutMenu(null)} />
       )}
       {dialog?.k === "share" && voiceClient && (
         <ShareDialog voice={voiceClient} onClose={() => setDialog(null)} />

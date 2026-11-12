@@ -46,6 +46,25 @@ export interface ChannelInfo {
   readonly access: readonly ChannelAccess[];
   /** Set on a direct message: the conversation it is. */
   readonly dm?: DMInfo;
+  /** The category it sits in; null (or absent on a DM): the section's top level. */
+  readonly category_id?: string | null;
+  /** Its place within that category or top level (lower first). */
+  readonly position?: number;
+}
+
+/**
+ * A named folder in the Text or Voice section of the sidebar (server
+ * categories.go). A label only: channel allow-lists still decide who sees
+ * what, and a category with nothing you can see isn't sent to you
+ * (unless you have manage_channels).
+ */
+export interface ChannelCategory {
+  readonly id: string;
+  readonly kind: "text" | "voice";
+  readonly name: string;
+  readonly position: number;
+  /** Header text colour (#rrggbb), or null for the default. */
+  readonly colour: string | null;
 }
 
 /** Why a direct message is read-only, from your side (server dms.go). */
@@ -271,7 +290,7 @@ export interface ChatOptions {
 
 /** Events a Chat reports that are not about the open channel. */
 export type ChatEvent =
-  | { type: "channels"; channels: readonly ChannelInfo[] }
+  | { type: "channels"; channels: readonly ChannelInfo[]; categories: readonly ChannelCategory[] }
   /** Your direct messages, newest activity first. */
   | { type: "dms"; dms: readonly DMInfo[] }
   /** The people you block, by name (Settings), and changed. */
@@ -364,7 +383,7 @@ function compareMessages(a: ChatMessage, b: ChatMessage): number {
 
 /** Server-wide event types (emitAll / emitUsers on the server). */
 const GLOBAL_EVENTS = new Set([
-  "user_purged", "access_changed", "channel_changed", "channel_deleted",
+  "user_purged", "access_changed", "channel_changed", "channel_deleted", "channel_layout_changed",
   "perms_changed", "channel_activity", "voice_changed", "reports_changed",
   "bug_reports_changed",
   "mention", "stickers_changed", "names_changed", "server_info_changed", "home_changed",
@@ -444,6 +463,7 @@ export class Chat {
   readonly #opts: ChatOptions;
   readonly #store: KeyValueStore;
   #channels: ChannelInfo[] = [];
+  #categories: ChannelCategory[] = [];
   #dms: DMInfo[] = [];
   #blocks: BlockInfo[] = [];
   #blocked: ReadonlySet<string> = new Set();
@@ -481,6 +501,11 @@ export class Chat {
 
   get channels(): readonly ChannelInfo[] {
     return this.#channels;
+  }
+
+  /** Sidebar categories, by section then position. */
+  get categories(): readonly ChannelCategory[] {
+    return this.#categories;
   }
 
   /** Your direct messages, newest activity first. */
@@ -662,10 +687,14 @@ export class Chat {
   }
 
   async refreshChannels(): Promise<void> {
-    const list = (await this.#opts.call("/api/v1/channels")) as ChannelInfo[];
+    const [list, categories] = (await Promise.all([
+      this.#opts.call("/api/v1/channels"),
+      this.#opts.call("/api/v1/channel-categories"),
+    ])) as [ChannelInfo[], ChannelCategory[]];
     this.#channels = list;
+    this.#categories = categories;
     this.#recomputeUnread();
-    this.#emit({ type: "channels", channels: list });
+    this.#emit({ type: "channels", channels: list, categories });
 
     // An open channel that is gone from the list was deleted or lost.
     // Direct messages aren't in this list (refreshDMs).
@@ -1090,6 +1119,10 @@ export class Chat {
         this.#view?.refreshMembers();
         this.refreshChannels().catch(() => {});
         this.#refreshVoiceSoon();
+        break;
+      case "channel_layout_changed":
+        // Order or categories changed; nothing about access.
+        this.refreshChannels().catch(() => {});
         break;
       case "channel_changed":
         this.#view?.refreshMembers();

@@ -1438,6 +1438,12 @@ function describe(e: LogEntry): { text: string; note?: string } {
       return { text: `renamed the channel ${e.detail}` };
     case "delete_channel":
       return { text: `deleted the channel ${e.detail}` };
+    case "create_category":
+      return { text: `created the category ${e.detail}` };
+    case "rename_category":
+      return { text: `renamed the category ${e.detail}` };
+    case "delete_category":
+      return { text: `deleted the category ${e.detail}` };
     case "set_server_name":
       return { text: e.detail ? `named the server ${e.detail}` : "removed the server's name" };
     case "set_server_icon":

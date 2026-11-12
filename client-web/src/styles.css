@@ -412,6 +412,38 @@ button.icon:hover:not(:disabled) { color: var(--text); }
 .channel-row:has(.gear) .channel { padding-right: 26px; }
 .channel-row:has(.gear):hover .channel .lock, .channel-row:has(.gear):hover .channel .dot,
 .channel-row:has(.gear):hover .channel .muted-bell { visibility: hidden; }
+
+/* Channel categories (channelCategories.tsx): a small capitals header
+   with a chevron, its channels indented a little under it. */
+.category-head { position: relative; display: flex; align-items: center; margin-top: 8px; border-radius: var(--radius); }
+.category-toggle {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px;
+  padding: 4px 4px 4px 2px; background: none; color: var(--muted);
+  font-size: 12px; font-weight: 700; text-transform: uppercase; text-align: left;
+  user-select: none; -webkit-touch-callout: none;
+}
+.category-toggle:hover { color: var(--text); }
+.category-toggle.unread { color: var(--text); }
+.category-toggle .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.category-toggle .chevron { width: 12px; flex: none; text-align: center; font-size: 10px; transition: transform 0.1s; }
+.category-toggle .chevron.shut { transform: rotate(-90deg); }
+.category-toggle .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--unread-dot); flex: none; }
+.category-head > button.icon { visibility: hidden; font-size: 14px; }
+.category-head:hover > button.icon, .category-head > button.icon:focus-visible { visibility: visible; }
+.category > ul { padding-left: 8px; }
+.category-colour { display: flex; flex-direction: column; gap: 4px; }
+.category-colour input.hex { width: 90px; font-family: monospace; }
+.category-colour .colour-row { padding: 2px 0; }
+.category-preview {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12px; font-weight: 700; text-transform: uppercase; color: var(--muted);
+}
+.category > .empty { margin: 0; padding: 2px 8px 2px 16px; font-size: 13px; }
+
+/* Where a dragged channel or category would land. */
+.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+.drop-into { background: var(--sidebar-hover); box-shadow: inset 0 0 0 2px var(--accent); border-radius: var(--radius); }
 .tag { padding: 0 4px; border: 1px solid var(--muted); border-radius: 3px; font-size: 10px; flex: none; }
 
 .modal-backdrop {
@@ -933,7 +965,7 @@ a.channel-chip:hover { background: var(--mention-me-bg); color: var(--text); }
   flex: none; font-size: 13px; font-weight: 700; padding: 3px 10px; border: 1px solid var(--accent);
 }
 .reply-bar .reply-x { flex: none; font-size: 18px; }
-.channel .mention-badge {
+.channel .mention-badge, .category-toggle .mention-badge {
   min-width: 18px;
   height: 18px;
   padding: 0 4px;

@@ -424,6 +424,18 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 		api.requirePerm(perm.ManageChannels, api.createChannel))
 	mux.HandleFunc("DELETE /api/v1/channels/{id}",
 		withUUIDPath(api.requirePerm(perm.ManageChannels, api.deleteChannel)))
+	// Channel ordering and categories (categories.go, migration 0040).
+	mux.HandleFunc("POST /api/v1/channels/{id}/move",
+		withUUIDPath(api.requirePerm(perm.ManageChannels, api.moveChannel)))
+	mux.HandleFunc("GET /api/v1/channel-categories", api.requireAuth(api.listCategories))
+	mux.HandleFunc("POST /api/v1/channel-categories",
+		api.requirePerm(perm.ManageChannels, api.createCategory))
+	mux.HandleFunc("PATCH /api/v1/channel-categories/{id}",
+		withUUIDPath(api.requirePerm(perm.ManageChannels, api.editCategory)))
+	mux.HandleFunc("DELETE /api/v1/channel-categories/{id}",
+		withUUIDPath(api.requirePerm(perm.ManageChannels, api.deleteCategory)))
+	mux.HandleFunc("POST /api/v1/channel-categories/{id}/move",
+		withUUIDPath(api.requirePerm(perm.ManageChannels, api.moveCategory)))
 
 	mux.HandleFunc("POST /api/v1/channels/{id}/voice-token",
 		withUUIDPath(api.requireAuth(api.voiceToken)))
@@ -534,6 +546,11 @@ type channelResponse struct {
 	Retention string `json:"retention"`
 	ForcePTT  bool   `json:"force_ptt"`
 
+	// CategoryID: the category it sits in (null: the section's top
+	// level); Position orders it there (categories.go).
+	CategoryID *string `json:"category_id"`
+	Position   int     `json:"position"`
+
 	// HistorySharing: new members of this encrypted channel are sent the
 	// messages existing members hold. Shown beside retention.
 	HistorySharing bool `json:"history_sharing"`
@@ -582,7 +599,8 @@ func (a *API) listChannels(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.pool.Query(r.Context(),
 		`SELECT c.id, c.name, c.kind, c.encrypted,
 		        EXTRACT(EPOCH FROM c.retention)::float8,
-		        c.force_ptt, c.history_sharing, `+canPostSQL+`, `+channelAccessJSON+`,
+		        c.force_ptt, c.history_sharing, c.category_id::text, c.position,
+		        `+canPostSQL+`, `+channelAccessJSON+`,
 		        (SELECT max(m.created_at) FROM messages m WHERE m.channel_id = c.id),
 		        (SELECT max(m.created_at) FROM message_mentions mm
 		           JOIN messages m ON m.id = mm.message_id
@@ -593,7 +611,7 @@ func (a *API) listChannels(w http.ResponseWriter, r *http.Request) {
 		                             WHERE ub.blocker_id = u.id AND ub.blocked_id = m.author_id))
 		   FROM channels c, users u
 		  WHERE u.id = $1 AND c.kind <> 'dm' AND `+canViewSQL+`
-		  ORDER BY c.name`,
+		  ORDER BY c.position, c.name`,
 		session.UserID)
 	if err != nil {
 		slog.Error("listing channels", "err", err)
@@ -610,7 +628,7 @@ func (a *API) listChannels(w http.ResponseWriter, r *http.Request) {
 		var retentionSeconds *float64
 
 		if err := rows.Scan(&c.ID, &c.Name, &c.Kind, &c.Encrypted, &retentionSeconds,
-			&c.ForcePTT, &c.HistorySharing, &c.CanPost, &c.Access, &c.LastMessageAt, &c.LastMentionAt); err != nil {
+			&c.ForcePTT, &c.HistorySharing, &c.CategoryID, &c.Position, &c.CanPost, &c.Access, &c.LastMessageAt, &c.LastMentionAt); err != nil {
 			slog.Error("scanning channel", "err", err)
 			writeError(w, http.StatusInternalServerError, "could not list channels")
 			return

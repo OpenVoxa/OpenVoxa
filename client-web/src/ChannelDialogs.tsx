@@ -16,7 +16,7 @@
 
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import type { ApiCall } from "@core/identity";
-import type { ChannelInfo } from "@core/chat";
+import type { ChannelCategory, ChannelInfo } from "@core/chat";
 
 /** A permission group as GET /api/v1/groups lists it. */
 interface PermGroup {
@@ -161,14 +161,20 @@ export function describeRetention(r: string): string {
 
 // ------------------------------------------------------------- create
 
-export function CreateChannelDialog({ call, kind: initialKind, onClose, onCreated }: {
+export function CreateChannelDialog({ call, kind: initialKind, categories, categoryId, onClose, onCreated }: {
   call: ApiCall;
   kind: "text" | "voice";
+  /** Sidebar categories; the dialog offers those of the chosen type. */
+  categories: readonly ChannelCategory[];
+  /** Opened from a category: start in it. */
+  categoryId?: string;
   onClose: () => void;
   onCreated: (c: ChannelInfo) => void;
 }) {
   const { groups, error: groupsError } = useGroups(call);
   const [kind, setKind] = useState(initialKind);
+  const [category, setCategory] = useState(categoryId ?? "");
+  const kindCategories = categories.filter((c) => c.kind === kind);
   const [name, setName] = useState("");
   const [encrypted, setEncrypted] = useState(true);
   const [rows, setRows] = useState<AccessRow[] | null>(null);
@@ -201,6 +207,7 @@ export function CreateChannelDialog({ call, kind: initialKind, onClose, onCreate
           // Voice is always end-to-end encrypted; the flag is for text.
           encrypted: kind === "text" ? encrypted : false,
           access: accessBody(rows),
+          category_id: kindCategories.some((c) => c.id === category) ? category : null,
         }),
       })) as ChannelInfo;
       onCreated(c);
@@ -216,7 +223,11 @@ export function CreateChannelDialog({ call, kind: initialKind, onClose, onCreate
         <div className="kind-pick" role="radiogroup" aria-label="Channel type">
           {(["text", "voice"] as const).map((k) => (
             <label key={k} className={kind === k ? "on" : undefined}>
-              <input type="radio" name="kind" checked={kind === k} onChange={() => setKind(k)} />
+              <input type="radio" name="kind" checked={kind === k} onChange={() => {
+                setKind(k);
+                // Categories belong to one section.
+                if (k !== kind) setCategory("");
+              }} />
               <strong>{k === "text" ? "Text" : "Voice"}</strong>
               <span className="muted small">{k === "text" ? "Messages and files" : "Talk and share your screen"}</span>
             </label>
@@ -234,6 +245,14 @@ export function CreateChannelDialog({ call, kind: initialKind, onClose, onCreate
             autoFocus
             required
           />
+        </label>
+        <label>
+          Category
+          <select value={category} onChange={(e) => setCategory(e.target.value)} disabled={!kindCategories.length}
+            title={kindCategories.length ? undefined : `No ${kind} categories yet`}>
+            <option value="">None</option>
+            {kindCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
         </label>
         {kind === "text" ? (
           <label className="check">
