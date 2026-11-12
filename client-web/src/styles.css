@@ -1292,3 +1292,18 @@ button.name-btn:hover { text-decoration: underline; }
 /* The picture-in-picture source (pip.ts): invisible but in the viewport,
    so LiveKit keeps the video coming; sized like the PiP window. */
 .pip-source { position: fixed; right: 0; bottom: 0; width: 320px; height: 180px; opacity: 0; pointer-events: none; z-index: -1; }
+
+/* Custom status (statuses.tsx): one grey line under a name. */
+.status-line {
+  display: block; font-size: 12px; color: var(--muted); font-weight: 400;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.roster .who .status-line { margin-top: -1px; }
+.profile-status { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.user-panel .status-button { padding: 0; text-align: left; min-width: 0; text-decoration: none; }
+.user-panel .status-button:hover .status-line { color: var(--text); }
+/* Settings, Profile and Set Status: emoji button, text, Clear after. */
+.status-row { display: flex; gap: 8px; max-width: 480px; }
+.status-row .status-emoji { flex: none; width: 40px; padding: 0; font-size: 18px; display: grid; place-items: center; }
+.status-input { flex: 1; min-width: 0; }
+.status-clear { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

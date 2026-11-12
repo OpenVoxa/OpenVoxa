@@ -6,9 +6,9 @@
  * profiles", stage 2; server profiles.go). Clicking a name (a message
  * author, someone in a voice channel through View Profile) opens it in
  * place of the old name menu: avatar, name in its colour, groups, bio,
- * "Joined <date>", last seen, then the actions that used to be the menu
- * (Message, Block; moderators Remove Avatar and Clear Bio; on your own
- * card, Edit Profile).
+ * custom status (statuses.tsx, live), "Joined <date>", last seen, then the actions that used to be the menu
+ * (Message, Block; moderators Remove Avatar, Clear Bio and Clear Status;
+ * on your own card, Set Status and Edit Profile).
  *
  * Fetched each time it opens, so it is never stale and nothing has to
  * keep it live.
@@ -20,6 +20,7 @@ import { Avatar } from "./avatars";
 import type { MenuItem } from "./ChannelMenu";
 import { URL_RE } from "./markdown";
 import { ColouredName } from "./names";
+import { StatusLine } from "./statuses";
 
 export interface Profile {
   user_id: string;
@@ -141,6 +142,7 @@ export function ProfileCard({ userId, username, at, call, items, onClose }: {
         <Avatar userId={userId} name={name} className="profile-card-avatar" />
         <div className="profile-who">
           <ColouredName userId={userId} className="profile-card-name">{name}</ColouredName>
+          <StatusLine userId={userId} className="profile-status" />
           {profile && profile.groups.length > 0 && (
             <div className="profile-groups">
               {profile.groups.map((g) => <span key={g.id} className="profile-group">{g.name}</span>)}

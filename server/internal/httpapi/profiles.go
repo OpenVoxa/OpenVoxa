@@ -13,7 +13,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
@@ -68,9 +67,7 @@ func normaliseBio(s string) (string, string) {
 			b.WriteRune(r)
 		case r == '\t':
 			b.WriteRune(' ')
-		case unicode.IsControl(r),
-			r >= 0x202a && r <= 0x202e, // embeddings and overrides
-			r >= 0x2066 && r <= 0x2069: // isolates
+		case dropsFromText(r):
 		default:
 			b.WriteRune(r)
 		}
@@ -172,8 +169,9 @@ func (a *API) getProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 type ownProfile struct {
-	Bio          string `json:"bio"`
-	ShowLastSeen bool   `json:"show_last_seen"`
+	Bio          string     `json:"bio"`
+	ShowLastSeen bool       `json:"show_last_seen"`
+	Status       *ownStatus `json:"status"` // null: none (statuses.go)
 }
 
 // getOwnProfile: the caller's own editable profile fields.
@@ -181,10 +179,13 @@ func (a *API) getOwnProfile(w http.ResponseWriter, r *http.Request) {
 	session := sessionFrom(r.Context())
 	const fail = "could not load your profile"
 	p := ownProfile{ShowLastSeen: true}
-	var sealed []byte
+	var (
+		sealed, sealedStatus []byte
+		statusExpires        *time.Time
+	)
 	err := a.pool.QueryRow(r.Context(),
-		`SELECT bio, show_last_seen FROM user_profiles WHERE user_id = $1`, session.UserID,
-	).Scan(&sealed, &p.ShowLastSeen)
+		`SELECT bio, show_last_seen, status, status_expires_at FROM user_profiles WHERE user_id = $1`, session.UserID,
+	).Scan(&sealed, &p.ShowLastSeen, &sealedStatus, &statusExpires)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		slog.Error("loading own profile", "err", err)
 		writeError(w, http.StatusInternalServerError, fail)
@@ -195,6 +196,11 @@ func (a *API) getOwnProfile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, fail)
 		return
 	}
+	if p.Status, err = a.loadOwnStatus(session.UserID, sealedStatus, statusExpires); err != nil {
+		slog.Error("opening sealed status", "err", err, "user_id", session.UserID)
+		writeError(w, http.StatusInternalServerError, fail)
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, p)
 }
@@ -202,6 +208,9 @@ func (a *API) getOwnProfile(w http.ResponseWriter, r *http.Request) {
 type patchProfileRequest struct {
 	Bio          *string `json:"bio"`
 	ShowLastSeen *bool   `json:"show_last_seen"`
+	// Status: {emoji, text, clear_at} to set, null to clear, absent to
+	// leave alone (statuses.go). A RawMessage tells null from absent.
+	Status json.RawMessage `json:"status"`
 }
 
 // patchOwnProfile changes any of the caller's own fields; absent ones are
@@ -237,6 +246,9 @@ func (a *API) patchOwnProfile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if req.Status != nil && !a.setOwnStatus(w, r, session.UserID, req.Status) {
+		return
+	}
 	if req.ShowLastSeen != nil {
 		// Off erases the stored date; on records today (the caller is
 		// online right now).
@@ -255,17 +267,42 @@ func (a *API) patchOwnProfile(w http.ResponseWriter, r *http.Request) {
 	a.getOwnProfile(w, r)
 }
 
-// clearBio: moderators (delete_messages; the route checks) clear someone
-// else's bio, logged. Only over lower ranks, as for avatars and bans.
+// A profile field moderators can clear (delete_messages; the route
+// checks), only over lower ranks as for avatars and bans, logged.
+type clearableField struct {
+	set    string // SQL SET list; fixed strings, never from the request
+	has    string // SQL condition: there is something to clear
+	action string // moderation_log action
+	what   string // for messages: "bio"
+}
+
+var (
+	clearBioField    = clearableField{"bio = NULL", "bio IS NOT NULL", "clear_bio", "bio"}
+	clearStatusField = clearableField{"status = NULL, status_expires_at = NULL",
+		"status IS NOT NULL AND (status_expires_at IS NULL OR status_expires_at > now())", "clear_status", "status"}
+)
+
 func (a *API) clearBio(w http.ResponseWriter, r *http.Request) {
+	a.clearProfileField(w, r, clearBioField)
+}
+
+func (a *API) clearStatus(w http.ResponseWriter, r *http.Request) {
+	if a.clearProfileField(w, r, clearStatusField) {
+		a.emitStatus(r.PathValue("id"), nil)
+	}
+}
+
+// clearProfileField clears f on someone's profile; true when it was
+// cleared just now (a 204 is written either way on success).
+func (a *API) clearProfileField(w http.ResponseWriter, r *http.Request, f clearableField) bool {
 	actor := sessionFrom(r.Context())
 	subjectID := r.PathValue("id")
-	const fail = "could not clear the bio"
+	fail := "could not clear the " + f.what
 	tx, err := a.pool.Begin(r.Context())
 	if err != nil {
-		slog.Error("starting bio clear", "err", err)
+		slog.Error("starting profile clear", "err", err, "field", f.what)
 		writeError(w, http.StatusInternalServerError, fail)
-		return
+		return false
 	}
 	defer tx.Rollback(r.Context())
 
@@ -274,45 +311,47 @@ func (a *API) clearBio(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
 			writeError(w, http.StatusNotFound, "user not found")
-			return
+			return false
 		case err != nil:
-			slog.Error("loading subject for bio clear", "err", err)
+			slog.Error("loading subject for profile clear", "err", err, "field", f.what)
 			writeError(w, http.StatusInternalServerError, fail)
-			return
+			return false
 		}
 		if !perm.Outranks(actor.Rank, rank) {
-			writeError(w, http.StatusForbidden, "you cannot clear the bio of someone at or above your own rank")
-			return
+			writeError(w, http.StatusForbidden,
+				fmt.Sprintf("you cannot clear the %s of someone at or above your own rank", f.what))
+			return false
 		}
 	}
 	tag, err := tx.Exec(r.Context(),
-		`UPDATE user_profiles SET bio = NULL, updated_at = now() WHERE user_id = $1 AND bio IS NOT NULL`, subjectID)
+		`UPDATE user_profiles SET `+f.set+`, updated_at = now() WHERE user_id = $1 AND `+f.has, subjectID)
 	if err != nil {
-		slog.Error("clearing bio", "err", err)
+		slog.Error("clearing profile field", "err", err, "field", f.what)
 		writeError(w, http.StatusInternalServerError, fail)
-		return
+		return false
 	}
 	if tag.RowsAffected() == 0 {
 		// None to clear (or already cleared by its owner or another moderator).
 		w.WriteHeader(http.StatusNoContent)
-		return
+		return false
 	}
 	if subjectID != actor.UserID {
 		if _, err := tx.Exec(r.Context(),
-			`INSERT INTO moderation_log (actor_id, action, subject_id) VALUES ($1, 'clear_bio', $2)`,
-			actor.UserID, subjectID); err != nil {
+			`INSERT INTO moderation_log (actor_id, action, subject_id) VALUES ($1, $2, $3)`,
+			actor.UserID, f.action, subjectID); err != nil {
 			slog.Error("recording moderation action", "err", err)
 			writeError(w, http.StatusInternalServerError, fail)
-			return
+			return false
 		}
 	}
 	if err := tx.Commit(r.Context()); err != nil {
-		slog.Error("committing bio clear", "err", err)
+		slog.Error("committing profile clear", "err", err, "field", f.what)
 		writeError(w, http.StatusInternalServerError, fail)
-		return
+		return false
 	}
-	slog.Info("bio cleared", "user_id", subjectID, "by", actor.UserID)
+	slog.Info("profile field cleared", "field", f.what, "user_id", subjectID, "by", actor.UserID)
 	w.WriteHeader(http.StatusNoContent)
+	return true
 }
 
 // touchLastSeen records today (UTC) as the account's last-seen date,

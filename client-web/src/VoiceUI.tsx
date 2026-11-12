@@ -19,6 +19,7 @@ import { localStore } from "./core";
 import { ColouredName } from "./names";
 import { PRESETS, presetAllowed, type ShareLimit } from "./shareLimit";
 import { Avatar } from "./avatars";
+import { StatusLine } from "./statuses";
 import { pipSupported, togglePip, usePipShare } from "./pip";
 
 export function useVoiceSnapshot(voice: VoiceClient | null): VoiceSnapshot | null {
@@ -286,6 +287,7 @@ export function VoiceRoster({ live, others, onWatch, onPerson, onOther, onDrag }
               title={p.isLocal ? undefined : "Volume and Message (or right-click)"}
               onClick={(e) => !p.isLocal && onPerson(p, { x: e.clientX, y: e.clientY })}>
               <ColouredName userId={p.id}>{p.name}</ColouredName>{p.isLocal ? " (you)" : ""}
+              <StatusLine userId={p.id} />
             </button>
             {!p.encrypted && <span className="warn small" title="Not encrypted yet">!</span>}
             {p.sharing && <button className="live" onClick={() => onWatch(p.id)} title="Watch">LIVE</button>}
@@ -313,8 +315,14 @@ export function VoiceRoster({ live, others, onWatch, onPerson, onOther, onDrag }
             <button className="who" title={onDrag ? "Message, move or disconnect (or right-click)" : "Message (or right-click)"}
               onClick={(e) => onOther(p, { x: e.clientX, y: e.clientY })}>
               <ColouredName userId={p.user_id}>{p.username}</ColouredName>
+              <StatusLine userId={p.user_id} />
             </button>
-          ) : <ColouredName userId={p.user_id} className="who">{p.username}</ColouredName>}
+          ) : (
+            <span className="who">
+              <ColouredName userId={p.user_id}>{p.username}</ColouredName>
+              <StatusLine userId={p.user_id} />
+            </span>
+          )}
         </li>
       ))}
     </ul>

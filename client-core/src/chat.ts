@@ -301,6 +301,9 @@ export type ChatEvent =
   /** Someone's avatar changed: its new version, or null when removed
    * (or the account was deleted). */
   | { type: "avatars_changed"; userId: string; version: number | null }
+  /** Someone's custom status changed: the new one, or null when cleared
+   * (by them, a moderator, its "Clear after" time, or account deletion). */
+  | { type: "status_changed"; userId: string; status: UserStatus | null }
   /** Home (welcome, rules, banner) or rule enforcement changed: fetch /home again. */
   | { type: "home_changed" }
   /** The event socket came back after a drop: server-wide events may
@@ -365,7 +368,7 @@ const GLOBAL_EVENTS = new Set([
   "perms_changed", "channel_activity", "voice_changed", "reports_changed",
   "bug_reports_changed",
   "mention", "stickers_changed", "names_changed", "server_info_changed", "home_changed",
-  "avatars_changed", "archive_message_gone", "archive_channel_expired", "voice_moved", "dms_changed",
+  "avatars_changed", "status_changed", "archive_message_gone", "archive_channel_expired", "voice_moved", "dms_changed",
 ]);
 
 const EVENT_RETRY_MS = 5000;
@@ -1029,6 +1032,7 @@ export class Chat {
         break;
       case "user_purged":
         this.#emit({ type: "avatars_changed", userId: frame.user_id!, version: null });
+        this.#emit({ type: "status_changed", userId: frame.user_id!, status: null });
         this.refreshDMs().catch(() => {});
         this.#view?.userPurged(frame.user_id!);
         this.#reconcileOpen();
@@ -1065,6 +1069,9 @@ export class Chat {
         break;
       case "avatars_changed":
         this.#emit({ type: "avatars_changed", userId: frame.user_id ?? "", version: frame.version ?? null });
+        break;
+      case "status_changed":
+        this.#emit({ type: "status_changed", userId: frame.user_id ?? "", status: frame.status ?? null });
         break;
       case "home_changed":
         this.#emit({ type: "home_changed" });
@@ -1172,6 +1179,14 @@ interface GlobalFrame {
   to_channel_id?: string;
   /** avatars_changed: the new version, or null when removed. */
   version?: number | null;
+  /** status_changed: the new status, or null when cleared. */
+  status?: UserStatus | null;
+}
+
+/** A custom status (server statuses.go): either part may be empty, not both. */
+export interface UserStatus {
+  emoji: string;
+  text: string;
 }
 
 // ---------------------------------------------------------- ChannelView

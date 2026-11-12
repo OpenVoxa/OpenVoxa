@@ -1448,6 +1448,8 @@ function describe(e: LogEntry): { text: string; note?: string } {
       return { text: `removed ${who}'s avatar` };
     case "clear_bio":
       return { text: `cleared ${who}'s bio` };
+    case "clear_status":
+      return { text: `cleared ${who}'s status` };
     case "set_server_banner":
       return { text: "changed the Home banner" };
     case "remove_server_banner":

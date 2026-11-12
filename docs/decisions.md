@@ -1742,6 +1742,29 @@ at the end.
     Sealed like the bio; moderators can clear it (moderation log). No
     automatic "Playing X" game detection (it would mean the desktop app
     watching running programs).
+  - *Stage 2b as built* (2026-11-11, ST1-ST12 pass 2026-11-12). Ryan's
+    calls: Set Status is a small dialog (emoji button, text with a
+    60-character counter, Clear after; Save green bottom left, Clear
+    Status, Cancel); the Profile tab has one Save for status and bio;
+    your own status is a grey line in the user panel (click opens Set
+    Status; nothing shown when none). Server `statuses.go`, migration
+    0039: `user_profiles.status` (JSON `{emoji, text}` sealed under the
+    account key, context `openvoxa/status/v1`) and `status_expires_at`.
+    Text: one line, whitespace squashed, control and bidi-override
+    characters dropped (shared with the bio), at most 60 characters.
+    Emoji: one emoji as the picker gives it (no letters, spaces or
+    plain ASCII except keycaps; 16 code points / 64 bytes). "Clear
+    after" is worked out by the browser (it knows the time zone; Today =
+    next local midnight) and sent as a time, at most 48 hours ahead.
+    Routes: `GET /api/v1/statuses` (everyone's live ones, anyone signed
+    in), status in `GET`/`PATCH /api/v1/me/profile`, `DELETE
+    /api/v1/users/{id}/status` (same rule as Clear Bio, logged
+    `clear_status`; `clearProfileField` serves both). Every change and
+    clear goes to every socket as `status_changed`; `StartStatusSweep`
+    clears expired ones every minute and sends the event. Web client
+    `statuses.tsx` (store, `StatusLine`, `StatusFields`,
+    `SetStatusDialog`): shown on the card, under names in voice
+    channels (in and out of the call) and in the user panel.
   - *Not doing:* display names separate from usernames (usernames stay
     the only name), animated avatars, pronouns.
 - **About tab in Settings** (agreed with Ryan 2026-11-05; built the
@@ -3760,6 +3783,12 @@ verified; the section named holds the design.
   open across channels; Document PiP ruled out by experiment in
   Electron), PP1-PP10 pass; the Firefox greyed-out button untested
   (Feature decisions, "Planned: picture-in-picture for streams").
+- 2026-11-12 Profiles stage 2b, custom status (emoji plus 60 characters,
+  Set Status dialog and Profile tab, Clear after Never / 1 hour / 4
+  hours / Today with a one-minute server sweep, live to everyone, shown
+  on the card, in voice channels and the user panel; moderators' Clear
+  Status, logged; migration 0039), ST1-ST12 pass (Feature decisions,
+  "Planned", "User avatars and profiles", "Stage 2b as built").
 
 ## Open items
 
@@ -3874,11 +3903,11 @@ verified; the section named holds the design.
       `src/main.ts`; ship with `npm run release:win`. Windows may show
       the old shortcut icon until its icon cache refreshes.
 
-- [ ] **User avatars and profiles** (design agreed 2026-11-09): stage 1
+- [x] **User avatars and profiles** (design agreed 2026-11-09): stage 1
       avatars (AV) built 2026-11-09, AV1-AV12 pass; stage 2a profile card,
-      bio, joined, last seen built 2026-11-10, PR1-PR11 pass; next
-      stage 2b custom status (ST). Feature decisions, "Planned", "User avatars and
-      profiles".
+      bio, joined, last seen built 2026-11-10, PR1-PR11 pass; stage 2b
+      custom status built 2026-11-11, ST1-ST12 pass. Feature decisions,
+      "Planned", "User avatars and profiles".
 - [x] **Picture-in-picture for streams** (design agreed 2026-11-11):
       video PiP from a PiP button on share tiles, with Mute and Leave
       (Electron has no working Document PiP); built 2026-11-11, PP1-PP10

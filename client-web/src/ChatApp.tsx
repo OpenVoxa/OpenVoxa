@@ -40,6 +40,7 @@ import type { ServerTab } from "./ServerSettings";
 import { isStaffPerms } from "./perms";
 import { DMList, NewMessageDialog } from "./dms";
 import { ProfileCard } from "./profiles";
+import { configureStatuses, refreshStatuses, SetStatusDialog, statusChanged, StatusLine, useStatus } from "./statuses";
 import { mayDM, NO_DM_REASON } from "./dmText";
 
 const LAST_CHANNEL = (userId: string) => `lastChannel.${userId}`;
@@ -149,6 +150,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
     | { k: "prefs"; tab: SettingsTab }
     | { k: "server"; tab?: ServerTab }
     | { k: "newdm" }
+    | { k: "status" }
     | null
   >(null);
   // The right-click (or long-press) menu on a channel in the sidebar.
@@ -161,6 +163,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   // call through View Profile): profiles.tsx.
   const [nameMenu, setNameMenu] = useState<{ user: NamedUser; at: { x: number; y: number } } | null>(null);
   const nameMenuHasAvatar = useAvatarVersion(nameMenu?.user.id) !== undefined;
+  const nameMenuHasStatus = useStatus(nameMenu?.user.id) !== undefined;
   const closeNameMenu = useCallback(() => setNameMenu(null), []);
   const menuTrigger = useMenuTrigger((id, at) => setChanMenu({ id, at }));
   const [presence, setPresence] = useState<VoicePresence>({});
@@ -199,6 +202,8 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   useEffect(() => configureNames(call), [call]);
   // User avatars (avatars.tsx); the pictures need the token.
   useEffect(() => configureAvatars(call, session.token), [call, session.token]);
+  // Custom statuses (statuses.tsx).
+  useEffect(() => configureStatuses(call), [call]);
   // The Home page (home.tsx).
   useEffect(() => configureHome(call), [call]);
 
@@ -329,6 +334,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           else if (e.type === "stickers_changed") void refreshStickers();
           else if (e.type === "names_changed") refreshNames();
           else if (e.type === "avatars_changed") avatarChanged(e.userId, e.version);
+          else if (e.type === "status_changed") statusChanged(e.userId, e.status);
           else if (e.type === "server_info_changed") serverInfoChanged();
           else if (e.type === "home_changed") void refreshHome();
           else if (e.type === "events_reconnected") {
@@ -338,6 +344,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
             void refreshStickers();
             refreshNames();
             refreshAvatars();
+            refreshStatuses();
             refreshMe();
             // A server restart may have brought a new web client.
             void checkForNewVersion().then((v) => v && setNewVersion(v));
@@ -633,6 +640,10 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
     void call(`/api/v1/users/${u.id}/bio`, { method: "DELETE" }).catch((err) =>
       setDropNote({ title: `Couldn't clear ${u.username}'s bio`, text: err instanceof Error ? err.message : String(err), at }));
   };
+  const clearStatus = (u: NamedUser, at: { x: number; y: number }) => {
+    void call(`/api/v1/users/${u.id}/status`, { method: "DELETE" }).catch((err) =>
+      setDropNote({ title: `Couldn't clear ${u.username}'s status`, text: err instanceof Error ? err.message : String(err), at }));
+  };
   const blockItem = (u: NamedUser, at: { x: number; y: number }): MenuItem => blocked.has(u.id)
     ? { label: "Unblock", onClick: () => toggleBlock(u, at) }
     : { label: "Block", onClick: () => toggleBlock(u, at), danger: true };
@@ -896,6 +907,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
         <UserPanel session={session} backup={backup} notice={notice} busy={busy}
           onLogout={() => onLogout(chat)} onBackUpNow={onBackUpNow}
           onSettings={() => setDialog({ k: "prefs", tab: "account" })}
+          onStatus={() => setDialog({ k: "status" })}
           onSetUpKey={onSetUpKey} onEnterKey={onEnterKey} />
       </nav>
       <main className="pane">
@@ -991,7 +1003,8 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
       {nameMenu && (
         <ProfileCard userId={nameMenu.user.id} username={nameMenu.user.username} at={nameMenu.at} call={call}
           items={(p) => nameMenu.user.id === session.user_id
-            ? ["sep", { label: "Edit Profile", onClick: () => setDialog({ k: "prefs", tab: "profile" }) }]
+            ? ["sep", { label: "Set Status", onClick: () => setDialog({ k: "status" }) },
+              { label: "Edit Profile", onClick: () => setDialog({ k: "prefs", tab: "profile" }) }]
             : ["sep", { label: "Message", disabled: !canDM, reason: NO_DM_REASON,
               onClick: () => messageFrom(nameMenu.user, nameMenu.at) },
               blockItem(nameMenu.user, nameMenu.at),
@@ -999,8 +1012,13 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
                 label: "Remove Avatar", danger: true, disabled: !nameMenuHasAvatar, reason: "No avatar to remove",
                 onClick: () => removeAvatar(nameMenu.user, nameMenu.at) }, {
                 label: "Clear Bio", danger: true, disabled: !p?.bio, reason: "No bio to clear",
-                onClick: () => clearBio(nameMenu.user, nameMenu.at) }] : [])]}
+                onClick: () => clearBio(nameMenu.user, nameMenu.at) }, {
+                label: "Clear Status", danger: true, disabled: !nameMenuHasStatus, reason: "No status to clear",
+                onClick: () => clearStatus(nameMenu.user, nameMenu.at) }] : [])]}
           onClose={closeNameMenu} />
+      )}
+      {dialog?.k === "status" && (
+        <SetStatusDialog call={call} userId={session.user_id} onClose={() => setDialog(null)} />
       )}
       {dialog?.k === "newdm" && (
         <NewMessageDialog call={call} onClose={() => setDialog(null)}
@@ -1057,7 +1075,7 @@ function SpeakerIcon() {
   );
 }
 
-function UserPanel({ session, backup, notice, busy, onLogout, onBackUpNow, onSetUpKey, onEnterKey, onSettings }: {
+function UserPanel({ session, backup, notice, busy, onLogout, onBackUpNow, onSetUpKey, onEnterKey, onSettings, onStatus }: {
   session: Session;
   backup: BackupStatus | null;
   notice: string | null;
@@ -1067,11 +1085,18 @@ function UserPanel({ session, backup, notice, busy, onLogout, onBackUpNow, onSet
   onSetUpKey: () => void;
   onEnterKey: () => void;
   onSettings: () => void;
+  onStatus: () => void;
 }) {
+  const hasStatus = useStatus(session.user_id) !== undefined;
   return (
     <div className="user-panel">
       <div className="who">
         <strong>{session.username}</strong>
+        {hasStatus && (
+          <button className="link status-button" onClick={onStatus} title="Set Status">
+            <StatusLine userId={session.user_id} />
+          </button>
+        )}
         <span className="muted small">
           {!backup && <>No recovery key. <button className="link small" onClick={onSetUpKey}>Set one up</button></>}
           {backup && !backup.unlocked && <>Not backing up. <button className="link small" onClick={onEnterKey}>Enter key</button></>}

@@ -280,6 +280,11 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 	mux.HandleFunc("PATCH /api/v1/me/profile", api.requireAuth(api.patchOwnProfile))
 	mux.HandleFunc("DELETE /api/v1/users/{id}/bio",
 		withUUIDPath(api.requirePerm(perm.DeleteMessages, api.clearBio)))
+	// Custom status (statuses.go, migration 0039): everyone's, live;
+	// your own is set through PATCH /api/v1/me/profile.
+	mux.HandleFunc("GET /api/v1/statuses", api.requireAuth(api.listStatuses))
+	mux.HandleFunc("DELETE /api/v1/users/{id}/status",
+		withUUIDPath(api.requirePerm(perm.DeleteMessages, api.clearStatus)))
 
 	// Username colours by group (namecolours.go, migration 0025).
 	mux.HandleFunc("GET /api/v1/name-colours", api.requireAuth(api.listNameColours))
