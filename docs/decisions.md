@@ -4019,6 +4019,13 @@ verified; the section named holds the design.
         categories) but no media or LiveKit code, and nobody has to
         rejoin. Same routine; only the server restarted; served bundle
         matched DEV.
+      - **v1.0.0-beta.4.6 (2026-11-12, hotfix):** reordering on
+        touchscreens (TR1-TR9, TT1-TT11): taps act at once, long press
+        for the menu, long press then move to drag; Move Up / Move Down /
+        Move to Category… in the menus. Web client only. It changes how
+        voice channel rows take taps but no media or LiveKit code, and
+        nobody has to rejoin. Same routine; only the server restarted;
+        served bundle matched DEV.
       - **Open for later:** an official desktop app on GitHub Releases
         for other people's servers; prebuilt server images.
 - [ ] **Desktop app icon** (Ryan, 2026-11-07): replace the Electron
