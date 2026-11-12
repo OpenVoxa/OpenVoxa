@@ -16,7 +16,7 @@ func TestNormaliseBio(t *testing.T) {
 		{"a\tb", "a b"},
 		{"a\n\n\n\nb", "a\n\nb"},
 		{"a   \nb", "a\nb"},
-		{"x‮y⁦z\x07", "xyz"},
+		{"x\u202ey\u2066z\x07", "xyz"},
 		{"🎮 gamer ✨", "🎮 gamer ✨"},
 		{strings.Repeat("é", bioMaxChars), strings.Repeat("é", bioMaxChars)},
 		{strings.Repeat("l\n", bioMaxLines), strings.TrimSuffix(strings.Repeat("l\n", bioMaxLines), "\n")},

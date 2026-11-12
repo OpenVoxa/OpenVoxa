@@ -13,7 +13,7 @@ func TestNormaliseStatusText(t *testing.T) {
 		"  Playing   ranked ":   "Playing ranked",
 		"two\nlines\r\nhere":    "two lines here",
 		"tab\there":             "tab here",
-		"bidi‮trick":            "biditrick",
+		"bidi\u202etrick":       "biditrick",
 		"":                      "",
 		strings.Repeat("é", 60): strings.Repeat("é", 60),
 	} {
@@ -33,7 +33,7 @@ func TestCheckStatusEmoji(t *testing.T) {
 			t.Errorf("checkStatusEmoji(%q) refused: %s", ok, msg)
 		}
 	}
-	for _, bad := range []string{"a", "🎮 hi", "🎮a", "1", ":)", "🎮‮", strings.Repeat("🎮", 17)} {
+	for _, bad := range []string{"a", "🎮 hi", "🎮a", "1", ":)", "🎮\u202e", strings.Repeat("🎮", 17)} {
 		if _, msg := checkStatusEmoji(bad); msg == "" {
 			t.Errorf("checkStatusEmoji(%q) accepted", bad)
 		}
