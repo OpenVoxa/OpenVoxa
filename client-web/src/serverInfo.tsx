@@ -29,16 +29,13 @@ function apply(next: ServerInfo): void {
   info = next;
   document.title = next.name || "OpenVoxa";
   let link = document.querySelector<HTMLLinkElement>("link[rel='icon']");
-  if (next.icon) {
-    if (!link) {
-      link = document.createElement("link");
-      link.rel = "icon";
-      document.head.append(link);
-    }
-    link.href = next.icon;
-  } else {
-    link?.remove();
+  if (!link) {
+    link = document.createElement("link");
+    link.rel = "icon";
+    document.head.append(link);
   }
+  // Without a server icon, the OpenVoxa icon (also the app's default icon).
+  link.href = next.icon ?? "/icons/icon-192.png";
   for (const l of listeners) l();
 }
 

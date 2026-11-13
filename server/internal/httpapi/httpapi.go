@@ -193,6 +193,10 @@ func New(pool *pgxpool.Pool, cfg *config.Config, blobs *blob.Store, keys *keysto
 	// The server's name and icon (serverinfo.go): public to read.
 	mux.HandleFunc("GET /api/v1/server-info", api.getServerInfo)
 	mux.HandleFunc("GET /api/v1/server-icon", api.getServerIcon)
+	// The installable web app (pwa.go): manifest and PNG icons, public.
+	mux.HandleFunc("GET /manifest.webmanifest", api.getManifest)
+	mux.HandleFunc("GET /api/v1/app-icon", api.getAppIcon)
+	mux.HandleFunc("GET /apple-touch-icon.png", api.getAppleTouchIcon)
 	mux.HandleFunc("PUT /api/v1/server-info/name", api.requirePerm(perm.Administrator, api.putServerName))
 	mux.HandleFunc("PUT /api/v1/server-icon", api.requirePerm(perm.Administrator, api.putServerIcon))
 	mux.HandleFunc("DELETE /api/v1/server-icon", api.requirePerm(perm.Administrator, api.deleteServerIcon))

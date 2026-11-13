@@ -23,6 +23,7 @@ import type { Chat } from "@core/chat";
 import { countDown, countUp, sizeOf, trafficTotals } from "@core/traffic";
 import type { VoiceClient, VoiceSnapshot } from "@core/voice";
 import { isStaffPerms } from "./perms";
+import { InstallButton } from "./install";
 
 const GITHUB = "https://github.com/OpenVoxa/OpenVoxa";
 
@@ -226,6 +227,15 @@ export function AboutSettings({ call, chat, voice, snap }: { call: ApiCall; chat
               </div>
             ))}
           </dl>
+          {r.section === "This App" && !desktop && (
+            <>
+              <p className="muted small">
+                Install this server as an app, with its own window and icon. Updates still come from the
+                server, and nothing you read or write is kept on the device.
+              </p>
+              <InstallButton look="secondary" />
+            </>
+          )}
           {r.section === "Connection" && (
             <p className="muted small">
               Bandwidth is everything this page sends to and receives from this server: the call, chat and

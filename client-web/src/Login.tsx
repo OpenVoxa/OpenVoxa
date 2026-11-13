@@ -11,6 +11,7 @@ import { LinkSignIn, parseLink } from "./SignInLink";
 import type { LinkParts } from "@core/signinlink";
 import { AuthHeading } from "./serverInfo";
 import { AppDownload } from "./appDownload";
+import { InstallButton } from "./install";
 
 /** A note for the first screen after sign-in, when unlocking changed something. */
 function unlockNote(how: PasswordUnlock): string | undefined {
@@ -289,6 +290,9 @@ export function Login({ onSession, notice, link: openedLink = null }: {
         )}
       </form>
       <AppDownload />
+      <div className="app-download">
+        <InstallButton look="link" />
+      </div>
     </div>
   );
 }

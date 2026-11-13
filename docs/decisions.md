@@ -2133,6 +2133,88 @@ one session each, in this order:
    body) and Server settings > Reports shows "Replying to …" above it.
    A sticker reply can't be edited, like any sticker (Ryan: leave it).
 
+### Planned: installable web app (PWA)
+
+Decided with Ryan, 2026-11-12 (all as recommended; Feature roadmap, 1).
+Built 2026-11-13 (server `pwa.go`, `client-web/public/sw.js`,
+`client-web/src/install.tsx`). Headless Chrome on DEV: installable with
+no errors, the shell cached, the page loads offline.
+
+*Tests (PW1-PW10).* Run 2026-11-13 in headless Chrome with DEV test
+accounts: **PW2** installed (standalone) shows Install App greyed,
+"already installed"; **PW3** after the prompt, or where Chrome doesn't
+offer one, greyed with the menu tooltip; **PW4** same path as Firefox
+(no install event); **PW6** a rebuild brings "New features are
+available." within 30 s, the reload runs the new build and the worker
+drops the old build's files; **PW7** offline, and during a server
+restart (Caddy's 502), a reload shows "Can't reach the server" and loads
+by itself once it's back, still signed in. Also passed: the button in
+About and on the sign-in page, the iPhone hint (iPhone user agent), and
+no button or service worker when the desktop app's bridge is present.
+Still for real devices: **PW1** Chrome's install dialog on Windows,
+**PW5** the desktop app itself, **PW8** Android install and icon,
+**PW9** iPhone Add to Home Screen and icon, **PW10** uninstall, then
+Install App enabled again.
+
+*Found while testing, fixed:* a reload with no connection signed the
+user out ("Sign in again to unlock…"): the unlock secret couldn't be
+fetched, and any failure counted as "session ended". Unreachable (no
+network, or 502/503/504 from the proxy) now shows "Can't reach the
+server" (`App.tsx`, phase `offline`) and tries again on a growing delay
+(2 s up to 30 s) and when the browser says it's back online; only a
+real answer from the server signs out. Before the service worker this
+only happened on a reload during a server restart. And the worker now
+serves the cached app instead of the proxy's 502 page while the server
+restarts.
+Lets people install a server's web client as an app on phones and
+desktops (its own window and home-screen icon), without the desktop app.
+
+- **Scope:** installing and caching the app shell (the built JS, CSS,
+  fonts, sounds) only. No API responses, messages or attachments are
+  ever cached, encrypted or not. Offline shows the app's normal
+  "reconnecting" state. Web Push comes later with roadmap item 7.
+- **Name and icon per server:** the server serves the manifest itself
+  (`/manifest.webmanifest`, built per request from the server name and
+  icon in Server settings), so each server installs as its own app.
+  Without a server icon: the OpenVoxa icon (Ryan's PNG, 2026-11-12),
+  shipped as 192 and 512 px PNGs plus a maskable version (padded on the
+  dark hexagon colour, because Android crops icons to its own shape).
+  *Settled while building:* the server converts the stored icon (WebP
+  or PNG) to PNG on request, at 192 and 512 px for the manifest
+  (`/api/v1/app-icon?size=&v=`, cached for good per icon version) and
+  180 px on the app colour for Safari (`/apple-touch-icon.png`, where
+  iOS looks for it anyway; it shows transparency as black). PNG is the
+  one format every launcher takes, and it needs no second upload or
+  migration. Decoding WebP needs `golang.org/x/image` (the Go team's
+  image package: WebP decoder and scaling). Default PNGs live in
+  `client-web/public/icons/` (made from `docs/images/icon.png`, the
+  1024 px source); the tab icon falls back to it too.
+- **Updates never hidden:** the service worker fetches the page
+  network-first and falls back to the cache only when offline; hashed
+  assets (already `immutable`) can be cache-first. The new version
+  notice (`newVersion.ts`, fetches `/` with `no-store`) keeps working.
+- **Install button, no pop-up:** an "Install App" button in Settings
+  (About, This App: a normal button) and on the login page next to the
+  desktop download link (a link-styled button, like the link beside it), using the
+  browser's `beforeinstallprompt`; greyed out with a tooltip where the
+  browser can't install (or it's already installed). No banner.
+  *Changed 2026-11-13 (Ryan, PW9):* inside the installed app the sign-in
+  page leaves it out, as it does in the desktop app (a greyed link still
+  looks like a link, and phones show no tooltip); Settings, About keeps
+  it greyed, "already installed". In Safari itself it keeps showing after
+  Add to Home Screen: iOS never tells a page it was added.
+- **iPhone and iPad:** Safari has no install prompt, so there the button
+  shows a short "Share, then Add to Home Screen" hint instead.
+- **Desktop app:** unaffected: inside it the web client registers no
+  service worker and shows no Install button (it is already an app).
+- *As built, the service worker:* only same-origin GETs for the page,
+  `/assets/`, `/sounds/` and `/icons/`; everything else (API, socket,
+  attachments, avatars, `/desktop-updates/`, the manifest) is left to
+  the browser. Install caches the page and the files it names; a page
+  with a new main script drops the old build's assets. The new version
+  check is a plain fetch, not a navigation, so it always reaches the
+  server.
+
 ## Permission groups
 
 Build-order step 12, decided by Ryan 2026-10-31.
@@ -3935,6 +4017,13 @@ verified; the section named holds the design.
   every move to another place; migration 0042), CP1-CP7 run 2026-11-12,
   MV1-MV7 and CP11-CP14 pass 2026-11-13 (Feature decisions, "Channel
   ordering and categories", "Category permissions").
+- 2026-11-13 Installable web app (manifest and PNG icons built by the
+  server from its name and icon, OpenVoxa icon by default; service
+  worker caching the app shell only, page network-first; Install App on
+  the sign-in page and in Settings, About; iPhone hint; a reload offline
+  or during a server restart now waits instead of signing out),
+  PW2-PW4, PW6, PW7 pass in headless Chrome; PW1, PW5, PW8-PW10 on real
+  devices to test (Feature decisions, "Planned: installable web app (PWA)").
 
 ## Open items
 
@@ -4069,7 +4158,8 @@ verified; the section named holds the design.
         for other people's servers; prebuilt server images.
 - [ ] **Desktop app icon** (Ryan, 2026-11-07): replace the Electron
       logo. PNG received 2026-11-12 (1024 px, transparent: an orange
-      speech bubble with a white V on a dark hexagon); also the default
+      speech bubble with a white V on a dark hexagon; in the repo as
+      `docs/images/icon.png` since 2026-11-13); also the default
       icon of the installable web app (Feature roadmap, 1). The banner
       (1324x233) heads the README (`docs/images/banner.png`). The
       installer stays one-click (Ryan, 2026-11-12): NSIS sidebar and
@@ -4136,7 +4226,8 @@ ship together in one release.
 
 Stage 1, everyday chat (small, hotfix):
 
-1. [ ] **Installable web app (PWA)** (Ryan: high priority; the
+1. [ ] **Installable web app (PWA)** (design agreed 2026-11-12, built
+   2026-11-13, PW1-PW10 to test; Feature decisions, "Planned: installable web app (PWA)"; Ryan: high priority; the
    OpenVoxa icon from Ryan is the default when a server has none): manifest,
    icons, service worker for the app shell, "Install" on phones and
    desktops. Web Push comes with 7.

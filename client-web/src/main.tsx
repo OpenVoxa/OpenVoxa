@@ -7,6 +7,7 @@ import { App } from "./App";
 import { applyAppearance } from "./appearance";
 import { startTrafficMeter } from "./AboutSettings";
 import { refreshServerInfo } from "./serverInfo";
+import { startInstallSupport } from "./install";
 import "./styles.css";
 
 // Before the first paint, so saved colours never flash the defaults.
@@ -15,6 +16,9 @@ applyAppearance();
 startTrafficMeter();
 // The tab title and icon, and the name on the sign-in page.
 void refreshServerInfo();
+// The installable web app: the service worker and the install prompt,
+// which the browser may announce before anything is drawn.
+startInstallSupport();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

@@ -48,6 +48,10 @@ func webAppHandler() http.Handler {
 			if st, err := fs.Stat(sub, name); err == nil && !st.IsDir() {
 				if strings.HasPrefix(name, "assets/") {
 					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				} else if name == "sw.js" {
+					// The service worker (client-web/public/sw.js): the
+					// browser must see a new one as soon as it exists.
+					w.Header().Set("Cache-Control", "no-cache")
 				}
 				files.ServeHTTP(w, r)
 				return
