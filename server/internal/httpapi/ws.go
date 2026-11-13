@@ -255,6 +255,7 @@ func (a *API) websocket(w http.ResponseWriter, r *http.Request) {
 
 	var windowStart time.Time
 	var windowCount int
+	var typing typingGate
 
 	for {
 		_, data, err := conn.Read(ctx)
@@ -266,6 +267,22 @@ func (a *API) websocket(w http.ResponseWriter, r *http.Request) {
 		var frame clientFrame
 		if err := json.Unmarshal(data, &frame); err != nil {
 			sendFrame(ctx, client, errorFrame{Type: "error", Error: "invalid JSON"})
+			continue
+		}
+		if frame.Type == "typing" || frame.Type == "typing_stop" {
+			// Never answered, not even with an error: a typing signal is
+			// best-effort, and the client sends it without waiting.
+			if !typing.allow(frame.Type == "typing_stop", time.Now()) {
+				continue
+			}
+			if canPost && p.Kind == "dm" {
+				now, err := a.channelPermsFor(ctx, session, channelID)
+				canPost = err == nil && now.CanPost
+			}
+			if !canPost {
+				continue
+			}
+			a.broadcastTyping(session, channelID, frame.Type == "typing_stop")
 			continue
 		}
 		if frame.Type != "send" {
@@ -330,6 +347,10 @@ func (a *API) websocket(w http.ResponseWriter, r *http.Request) {
 		}
 
 		err = a.persistAndBroadcast(ctx, session, channelID, frame.Body, frame.Attachments, frame.Mentions, frame.Ref)
+		if err == nil {
+			// The message itself ends the typing line on other screens.
+			typing.sent()
+		}
 		if errors.Is(err, errTooManyMentions) {
 			sendFrame(ctx, client, errorFrame{Type: "error", Error: "too many mentions in one message", Ref: frame.Ref})
 		} else if err != nil {

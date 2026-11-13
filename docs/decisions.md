@@ -2215,6 +2215,51 @@ desktops (its own window and home-screen icon), without the desktop app.
   check is a plain fetch, not a navigation, so it always reaches the
   server.
 
+### Typing indicators
+
+Decided with Ryan, 2026-11-13 (all as recommended; Feature roadmap, 2).
+Built 2026-11-13 (server `typing.go`, `ChannelView.typing` /
+`stopTyping` in client-core, `TypingLine` in `ChannelPane.tsx`).
+
+- **What shows:** a line between the messages and the message box of
+  the open channel or DM: "bot-mod is typing…", "bot-mod and bot-member
+  are typing…", three names, then "Several people are typing…". Its
+  20px are always kept (the message list gave up its 16px bottom padding),
+  so nothing jumps when it comes and goes. *Changed 2026-11-13 (Ryan):*
+  first built under the box, at the very bottom of the window: too easy
+  to miss. Not in the sidebar (Ryan:
+  open channel only, so only people looking at the channel get the
+  signal). Blocked people's typing isn't shown in channels.
+- **How it travels:** on the channel's own socket. While the draft is
+  non-empty the client sends `{"type":"typing"}` at most every 3 s;
+  emptying the box sends `typing_stop`, and so does leaving the channel.
+  The server passes each on as `{"type":"typing", channel_id, user_id,
+  username, stop?}` to everyone watching and stores nothing. Viewers drop
+  a name 8 s after its last signal, at once on `stop`, or when that
+  person's message arrives.
+- **Flood limit:** per connection the server passes on at most one typing
+  signal every 2.5 s and a stop only after a start (`typingGate`);
+  extra frames are dropped silently, never answered. Only someone who may
+  post there is passed on (DMs re-checked, as for messages).
+- **Encrypted channels and DMs:** shown the same way (Ryan). The server
+  learns who is typing where and when, never what: metadata like
+  mentions (see "Mentions are metadata the server sees").
+- **Opt-out:** Settings, Chat, "Show when I'm typing", on by default
+  (least friction), per browser like the other chat switches. Off, the
+  client sends nothing.
+
+*Tests (TY1-TY9).* Run 2026-11-13 in headless Chrome with bot-admin,
+bot-mod and bot-member, in general (plain) and secret (encrypted):
+**TY1** bot-mod types, bot-admin sees "bot-mod is typing…" at once;
+**TY2** bot-mod sends, the name goes within 0.5 s; **TY3** bot-member
+empties the box, the line clears at once; **TY4** bot-mod stops without
+sending, the line clears after 8 s; **TY5** two typers, "bot-mod and
+bot-member are typing…"; **TY6** "Show when I'm typing" off, nothing
+shows; **TY7** a DM (bot-mod to bot-admin), shows and clears on send;
+**TY8** nobody sees their own name; **TY9** the message box doesn't
+move when the line appears. All pass. `TestTypingGate` covers the flood
+limit. Still for Ryan: the look on a phone and in the desktop app.
+
 ## Permission groups
 
 Build-order step 12, decided by Ryan 2026-10-31.
@@ -4024,6 +4069,10 @@ verified; the section named holds the design.
   or during a server restart now waits instead of signing out),
   PW2-PW4, PW6, PW7 pass in headless Chrome; PW1, PW5, PW8-PW10 on real
   devices to test (Feature decisions, "Planned: installable web app (PWA)").
+- 2026-11-13 Typing indicators (open channel and DMs, encrypted ones
+  too; "Show when I'm typing" in Settings, Chat, on by default; nothing
+  stored), TY1-TY9 pass in headless Chrome (Feature decisions, "Typing
+  indicators").
 
 ## Open items
 
@@ -4239,7 +4288,8 @@ Stage 1, everyday chat (small, hotfix):
    OpenVoxa icon from Ryan is the default when a server has none): manifest,
    icons, service worker for the app shell, "Install" on phones and
    desktops. Web Push comes with 7.
-2. [ ] **Typing indicators.** The server sees who types where
+2. [x] **Typing indicators** (built 2026-11-13, TY1-TY9 pass; Feature
+   decisions, "Typing indicators"). The server sees who types where
    (metadata, like mentions).
 3. [ ] **Unread jump and Mark as Read:** "jump to first unread" bar,
    Mark Channel / Server Read.

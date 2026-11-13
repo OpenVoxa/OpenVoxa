@@ -22,7 +22,7 @@ import { call as plainCall, type Session } from "./api";
 import { Modal } from "./ChannelDialogs";
 import { usePasswordCheck } from "./password";
 import { PasswordRules } from "./PasswordRules";
-import { IMAGES_IN_TAB, MENTION_NOTIFY, NAME_COLOURS, PREVIEWS_ENCRYPTED, setToggle, useToggle } from "./settings";
+import { IMAGES_IN_TAB, MENTION_NOTIFY, NAME_COLOURS, PREVIEWS_ENCRYPTED, SHOW_TYPING, setToggle, useToggle } from "./settings";
 import { VoiceSettings } from "./VoiceUI";
 import { SoundSettings } from "./SoundSettings";
 import { AboutSettings } from "./AboutSettings";
@@ -109,6 +109,7 @@ function ChatSettings({ chat }: { chat: Chat }) {
   const previews = useToggle(PREVIEWS_ENCRYPTED);
   const imagesInTab = useToggle(IMAGES_IN_TAB);
   const mentionNotify = useToggle(MENTION_NOTIFY);
+  const showTyping = useToggle(SHOW_TYPING);
   const supported = typeof Notification !== "undefined";
   const [denied, setDenied] = useState(supported && Notification.permission === "denied");
 
@@ -147,6 +148,16 @@ function ChatSettings({ chat }: { chat: Chat }) {
           <span className="muted small block">
             Messages stay encrypted, but to build a preview the server fetches the link, so it learns which
             links you see there. Preview images load from the linked site. Plain channels always show previews.
+          </span>
+        </span>
+      </label>
+      <label className="check">
+        <input type="checkbox" checked={showTyping} onChange={(e) => setToggle(SHOW_TYPING, e.target.checked)} />
+        <span>
+          Show when I'm typing
+          <span className="muted small block">
+            Others in the channel see "{"<"}your name{">"} is typing…" above the message box. The server passes this
+            on, so it learns who is typing where, never what, encrypted channels included.
           </span>
         </span>
       </label>

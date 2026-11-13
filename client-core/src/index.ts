@@ -45,6 +45,7 @@ export type {
   ChannelAccess,
   ChannelInfo,
   ChannelSnapshot,
+  Typer,
   ChatEvent,
   ChatMessage,
   ChatOptions,

@@ -36,6 +36,12 @@ export const IMAGES_IN_TAB: Toggle = { key: "chat.imagesInTab", fallback: false 
  */
 export const NAME_COLOURS: Toggle = { key: "appearance.nameColours", fallback: true };
 
+/**
+ * Others see "<you> is typing…" while you write a message. On by default;
+ * off, this browser sends no typing signal at all.
+ */
+export const SHOW_TYPING: Toggle = { key: "chat.showTyping", fallback: true };
+
 const listeners = new Set<() => void>();
 
 export function getToggle(t: Toggle): boolean {

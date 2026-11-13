@@ -11,7 +11,7 @@ import {
   useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore,
   type CSSProperties, type FormEvent, type KeyboardEvent, type ReactNode,
 } from "react";
-import type { AttachmentInfo, ChannelSnapshot, ChannelView, ChatMessage, CryptoState, Mention, Notice, Reaction, Upload } from "@core/chat";
+import type { AttachmentInfo, ChannelSnapshot, ChannelView, ChatMessage, CryptoState, Mention, Notice, Reaction, Typer, Upload } from "@core/chat";
 import { MAX_REACTION_KINDS } from "@core/chat";
 import type { ApiCall } from "@core/identity";
 import { describeRetention, Modal } from "./ChannelDialogs";
@@ -20,7 +20,7 @@ import { channelLink, useLinks } from "./links";
 import { LinkPreview } from "./previews";
 import { GifPicker, useGifsEnabled } from "./gifs";
 import { EmojiPicker, useEmojiShortcodes } from "./emoji";
-import { PREVIEWS_ENCRYPTED, useToggle } from "./settings";
+import { PREVIEWS_ENCRYPTED, SHOW_TYPING, getToggle, useToggle } from "./settings";
 import { setChannelMuted, useMutedChannels } from "./sounds";
 import { PlainAttachment, SealedAttachment, UploadTray, useUploads } from "./attachments";
 import { StickerMessage } from "./stickers";
@@ -162,6 +162,8 @@ export function ChannelPane({ view, call, userId, username, canDeleteAny, canMan
         </div>
       )}
 
+      <TypingLine typers={blocked ? snap.typing.filter((t) => !blocked.has(t.userId)) : snap.typing} />
+
       {snap.channel.dm?.read_only_reason === "you_blocked" && onUnblock && (
         <div className="unblock-bar">
           <span className="muted small">They can't message you, and you can't message them.</span>
@@ -187,6 +189,10 @@ export function ChannelPane({ view, call, userId, username, canDeleteAny, canMan
           }
         }}
         onEditLast={() => lastOwn && setEditing(lastOwn.id)}
+        onDraft={(draft) => {
+          if (!draft.trim()) view.stopTyping();
+          else if (getToggle(SHOW_TYPING)) view.typing();
+        }}
       />
     </section>
   );
@@ -928,6 +934,25 @@ function EditBox({ initial, members, onSave, onCancel }: {
   );
 }
 
+// ------------------------------------------------------------- typing
+
+/** "bot-mod is typing…" between the messages and the message box. Always
+ * takes its space (most of it from the list's bottom padding), so the box
+ * and the messages never jump when someone starts or stops typing. */
+function TypingLine({ typers }: { typers: readonly Typer[] }) {
+  const names = typers.map((t) => t.username || "Someone");
+  const text = names.length === 0 ? null
+    : names.length === 1 ? <><strong>{names[0]}</strong> is typing…</>
+    : names.length === 2 ? <><strong>{names[0]}</strong> and <strong>{names[1]}</strong> are typing…</>
+    : names.length === 3 ? <><strong>{names[0]}</strong>, <strong>{names[1]}</strong> and <strong>{names[2]}</strong> are typing…</>
+    : <>Several people are typing…</>;
+  return (
+    <div className="typing-line" aria-live="polite">
+      {text && <><span className="typing-dots" aria-hidden="true"><i /><i /><i /></span>{text}</>}
+    </div>
+  );
+}
+
 // ----------------------------------------------------------- composer
 
 /** Why nothing can be sent or attached right now, or null. */
@@ -938,7 +963,7 @@ function composeBlocker(snap: ChannelSnapshot): string | null {
     : null;
 }
 
-function Composer({ snap, call, uploads, canManageStickers, replying, setReplying, onSend, onEditLast }: {
+function Composer({ snap, call, uploads, canManageStickers, replying, setReplying, onSend, onEditLast, onDraft }: {
   snap: ChannelSnapshot;
   call: ApiCall;
   uploads: ReturnType<typeof useUploads>;
@@ -947,6 +972,8 @@ function Composer({ snap, call, uploads, canManageStickers, replying, setReplyin
   setReplying: (r: Replying | null) => void;
   onSend: (text: string, attachments?: (AttachmentInfo | Upload)[]) => Promise<boolean>;
   onEditLast: () => void;
+  /** The user changed the draft by typing (typing indicators). */
+  onDraft: (text: string) => void;
 }) {
   const [text, setText] = useState("");
   const [gifs, setGifs] = useState(false);
@@ -1083,7 +1110,10 @@ function Composer({ snap, call, uploads, canManageStickers, replying, setReplyin
       <AutoTextarea
         ref={ref}
         value={text}
-        onChange={setText}
+        onChange={(v) => {
+          setText(v);
+          onDraft(v);
+        }}
         onKeyDown={onKey}
         onSelect={(e) => {
           mentionPicker.onSelect(e);

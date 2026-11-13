@@ -261,6 +261,14 @@ export interface ChannelSnapshot {
   /** Who may view the channel, for the composer's @ list (not you).
    * Empty until loaded. */
   readonly members: readonly Mention[];
+  /** Who else is typing here now, in the order they started (not you). */
+  readonly typing: readonly Typer[];
+}
+
+/** Someone typing in the open channel. */
+export interface Typer {
+  readonly userId: string;
+  readonly username: string;
 }
 
 /** A line in the message stream that isn't a message. */
@@ -1232,6 +1240,13 @@ export interface UserStatus {
 
 const RECONNECT_MS = [1000, 2000, 5000, 10000, 30000];
 
+/** How often a typing signal goes out while someone types. The server
+ * drops anything faster than 2.5 s (typing.go). */
+const TYPING_SEND_MS = 3000;
+/** How long a name stays on the typing line after its last signal: a bit
+ * more than two signals, so one lost or late signal doesn't flicker it. */
+const TYPING_SHOW_MS = 8000;
+
 /** One open text channel. Get one from Chat.open. */
 export class ChannelView {
   readonly #chat: Chat;
@@ -1260,6 +1275,11 @@ export class ChannelView {
   /** Settles once the first member list has arrived (or failed). */
   #membersLoaded: Promise<void> | null = null;
   #membersTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Who is typing, each with the timer that drops them. */
+  #typers = new Map<string, { typer: Typer; timer: ReturnType<typeof setTimeout> }>();
+  #typingList: readonly Typer[] = [];
+  /** When this device last said it is typing here (0: not typing). */
+  #typingSentAt = 0;
 
   // Every received message, history or live, goes through one queue.
   // Decryption reads and rewrites the stored group state, and own-message
@@ -1313,6 +1333,7 @@ export class ChannelView {
         crypto: this.#crypto,
         notices: this.#notices,
         members: this.#members,
+        typing: this.#typingList,
       };
     }
     return this.#snapshot;
@@ -1403,8 +1424,10 @@ export class ChannelView {
   }
 
   close(): void {
+    this.stopTyping(); // leaving the channel: off the others' typing line now
     this.#closed = true;
     clearTimeout(this.#membersTimer);
+    this.#clearTypers();
     const s = this.#socket;
     this.#socket = null;
     s?.close();
@@ -1418,6 +1441,7 @@ export class ChannelView {
       : "You no longer have access to this channel.");
     this.#canPost = false;
     this.#gone = true;
+    this.#clearTypers();
     const s = this.#socket;
     this.#socket = null;
     this.#connection = "closed";
@@ -1473,6 +1497,9 @@ export class ChannelView {
       if (this.#socket !== ws) return;
       this.#socket = null;
       this.#connection = "closed";
+      // Signals missed while away would leave stale names behind.
+      this.#clearTypers();
+      this.#typingSentAt = 0;
       // Sends in flight will never be echoed on this socket.
       for (const [ref] of this.#pendingSends) this.#failPending(ref, "connection lost");
       this.#changed();
@@ -1516,7 +1543,15 @@ export class ChannelView {
         });
         break;
       }
+      case "typing":
+        if (frame.user_id && frame.user_id !== this.#chat.userId) {
+          if (frame.stop) this.#dropTyper(frame.user_id);
+          else this.#addTyper({ userId: frame.user_id, username: frame.username ?? "" });
+        }
+        break;
       case "message":
+        // Their message is what they were typing.
+        if ((frame as unknown as ServerMessage).author_id) this.#dropTyper((frame as unknown as ServerMessage).author_id);
         void this.#receive([frame as unknown as ServerMessage], true);
         this.#chat.seenInOpen(this.#channel.id, (frame as unknown as ServerMessage).created_at);
         break;
@@ -1546,6 +1581,61 @@ export class ChannelView {
         else this.notice(frame.error ?? "error");
         break;
     }
+  }
+
+  // ------------------------------------------------------------ typing
+
+  /**
+   * Say you are typing here (call on every change to a non-empty draft).
+   * Sends at most every TYPING_SEND_MS; others drop you after
+   * TYPING_SHOW_MS without a signal. Best effort: nothing is sent while
+   * the socket is down or you can't post.
+   */
+  typing(): void {
+    const ws = this.#socket;
+    if (!ws || ws.readyState !== WebSocket.OPEN || !this.#canPost) return;
+    const now = Date.now();
+    if (this.#typingSentAt && now - this.#typingSentAt < TYPING_SEND_MS) return;
+    this.#typingSentAt = now;
+    ws.send(JSON.stringify({ type: "typing" }));
+  }
+
+  /** Say you stopped (the draft was emptied without sending). */
+  stopTyping(): void {
+    if (!this.#typingSentAt) return;
+    const recent = Date.now() - this.#typingSentAt < TYPING_SHOW_MS;
+    this.#typingSentAt = 0;
+    const ws = this.#socket;
+    // Long quiet: everyone has dropped you already.
+    if (recent && ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "typing_stop" }));
+  }
+
+  #addTyper(typer: Typer): void {
+    const had = this.#typers.get(typer.userId);
+    if (had) clearTimeout(had.timer);
+    const timer = setTimeout(() => this.#dropTyper(typer.userId), TYPING_SHOW_MS);
+    this.#typers.set(typer.userId, { typer, timer });
+    if (!had || had.typer.username !== typer.username) this.#typingChanged();
+  }
+
+  #dropTyper(userId: string): void {
+    const had = this.#typers.get(userId);
+    if (!had) return;
+    clearTimeout(had.timer);
+    this.#typers.delete(userId);
+    this.#typingChanged();
+  }
+
+  #clearTypers(): void {
+    if (!this.#typers.size) return;
+    for (const { timer } of this.#typers.values()) clearTimeout(timer);
+    this.#typers.clear();
+    this.#typingChanged();
+  }
+
+  #typingChanged(): void {
+    this.#typingList = [...this.#typers.values()].map((t) => t.typer);
+    this.#changed();
   }
 
   // ---------------------------------------------------- receiving text
@@ -2024,6 +2114,8 @@ export class ChannelView {
       pending: true,
     });
     const ids = infos.map((a) => a.id);
+    // The message ends the typing line; the next keystroke starts afresh.
+    this.#typingSentAt = 0;
     ws.send(JSON.stringify({
       type: "send", body, ref,
       ...(ids.length ? { attachments: ids } : {}),
@@ -2122,6 +2214,7 @@ interface ChannelFrame {
   user_id?: string;
   username?: string;
   added?: boolean;
+  stop?: boolean;
 }
 
 function toServer(m: ChatMessage): ServerMessage {
