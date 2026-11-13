@@ -4154,6 +4154,14 @@ verified; the section named holds the design.
         voice channel rows take taps but no media or LiveKit code, and
         nobody has to rejoin. Same routine; only the server restarted;
         served bundle matched DEV.
+      - **v1.0.0-beta.4.7 (2026-11-13, hotfix):** the installable web app
+        (PW1-PW10), staying signed in when the server can't be reached,
+        and category permissions (CP, MV); migration 0042. Server and web
+        client only. Category permissions can disconnect someone from
+        voice when an administrator takes their access away, as channel
+        permissions already did, but nobody has to rejoin. Fresh database
+        backup first; same routine; only the server restarted; migration
+        applied; served bundle matched DEV.
       - **Open for later:** an official desktop app on GitHub Releases
         for other people's servers; prebuilt server images.
 - [ ] **Desktop app icon** (Ryan, 2026-11-07): replace the Electron
