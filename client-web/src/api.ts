@@ -43,6 +43,17 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * True when the server couldn't be reached at all: no network (fetch
+ * throws a TypeError), or the proxy in front of it answering for a
+ * server that is down or restarting (502, 503, 504). Different from the
+ * server saying no: callers wait and try again instead of signing out.
+ */
+export function isUnreachable(err: unknown): boolean {
+  if (err instanceof TypeError) return true;
+  return err instanceof ApiError && (err.status === 502 || err.status === 503 || err.status === 504);
+}
+
 export async function call<T>(
   path: string,
   opts: { method?: string; body?: unknown; token?: string | null } = {},

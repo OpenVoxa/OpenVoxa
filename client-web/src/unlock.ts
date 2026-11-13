@@ -15,7 +15,7 @@
  */
 
 import { storage, type DeviceSecrets, type LinkUnlockResult, type UnlockResult } from "@core/storage";
-import { ApiError, call, type Session } from "./api";
+import { ApiError, call, isUnreachable, type Session } from "./api";
 import { clearUnlockCopy, loadUnlockCopy, saveUnlockCopy } from "./session";
 
 function fromBase64(text: string): Uint8Array {
@@ -86,7 +86,10 @@ export async function unlockWithPassword(session: Session, password: string): Pr
 /**
  * Unlock after a page refresh from the session copy. False means the
  * user has to sign in again: no copy in this tab, the session has ended,
- * or the copy belongs to a keyring that has since been replaced.
+ * or the copy belongs to a keyring that has since been replaced. Throws
+ * when the server can't be reached (isUnreachable): offline, or opened
+ * during a server restart, the caller waits and tries again rather than
+ * signing anyone out.
  */
 export async function unlockOnRefresh(session: Session): Promise<boolean> {
   await storage.useAccount(session.user_id);
@@ -96,7 +99,8 @@ export async function unlockOnRefresh(session: Session): Promise<boolean> {
   let secret: Uint8Array;
   try {
     secret = await sessionSecret(session.token);
-  } catch {
+  } catch (err) {
+    if (isUnreachable(err)) throw err;
     return false;
   }
   const ok = await storage.unlockFromSession(copy, secret);

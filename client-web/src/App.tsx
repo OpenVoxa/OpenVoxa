@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react";
 import type { BackupStatus } from "@core/recovery";
-import { call, type Session } from "./api";
+import { call, isUnreachable, type Session } from "./api";
 import { loadSession, saveSession } from "./session";
 import { Login } from "./Login";
 import { BackupManager, forgetAskedForKey, markAskedForKey, wasAskedForKey } from "./backup";
@@ -59,6 +59,8 @@ export function App() {
 type Phase =
   | { k: "loading" }
   | { k: "failed"; error: string }
+  /** The server can't be reached; trying again by itself. */
+  | { k: "offline" }
   | { k: "twofactor" }
   | { k: "rules" }
   | { k: "setup"; skippable: boolean; replacing: boolean; rotating?: boolean }
@@ -81,6 +83,23 @@ function Home({ session, justRegistered, initialNotice, onLoggedOut, onLocked }:
   const [busy, setBusy] = useState<string | null>(null);
   // Bumped when two-factor setup or the rules screen finishes, to carry on loading.
   const [gatePassed, setGatePassed] = useState(0);
+  // Bumped to load again after the server couldn't be reached.
+  const [attempt, setAttempt] = useState(0);
+
+  // Offline (or the server restarting): try again on a growing delay, and
+  // at once when the browser says the network is back. The installable
+  // web app opens with no network too, so this is a normal state.
+  useEffect(() => {
+    if (phase.k !== "offline") return;
+    const delay = Math.min(30, 2 ** Math.min(attempt, 5)) * 1000;
+    const retry = () => { setPhase({ k: "loading" }); setAttempt((n) => n + 1); };
+    const timer = setTimeout(retry, delay);
+    window.addEventListener("online", retry);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("online", retry);
+    };
+  }, [phase.k, attempt]);
 
   // Decide which recovery screen, if any, this sign-in needs.
   useEffect(() => {
@@ -153,11 +172,14 @@ function Home({ session, justRegistered, initialNotice, onLoggedOut, onLocked }:
       } else {
         setPhase(s.unlocked ? { k: "ready" } : { k: "restore" });
       }
-    })().catch((err) => live && setPhase({ k: "failed", error: String(err?.message ?? err) }));
+    })().catch((err) => {
+      if (!live) return;
+      setPhase(isUnreachable(err) ? { k: "offline" } : { k: "failed", error: String(err?.message ?? err) });
+    });
     return () => {
       live = false;
     };
-  }, [session.user_id, session.token, justRegistered, gatePassed]);
+  }, [session.user_id, session.token, justRegistered, gatePassed, attempt]);
 
   async function refresh(note?: string) {
     if (note !== undefined) setNotice(note);
@@ -307,6 +329,21 @@ function Home({ session, justRegistered, initialNotice, onLoggedOut, onLocked }:
         void call("/api/v1/auth/logout", { method: "POST", token: session.token }).catch(() => {});
         onLoggedOut();
       }} />;
+  }
+  if (phase.k === "offline") {
+    return (
+      <div className="auth-page">
+        <div className="auth-card">
+          <h1>Can't reach the server</h1>
+          <p className="muted" role="status">
+            You're offline, or the server is restarting. Trying again by itself; you stay signed in.
+          </p>
+          <button className="primary" onClick={() => { setPhase({ k: "loading" }); setAttempt((n) => n + 1); }}>
+            Try Now
+          </button>
+        </div>
+      </div>
+    );
   }
   if (phase.k === "failed") {
     return (
