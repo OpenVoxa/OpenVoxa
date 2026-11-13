@@ -337,9 +337,57 @@ function MessageList({ view, snap, call, previews, userId, username, canDeleteAn
     return () => clearTimeout(t);
   }, [flash]);
 
+  // The jump bar shows while the "New" line is above the view (or not
+  // loaded yet). Jump scrolls to it, loading older pages as needed.
+  const [newAbove, setNewAbove] = useState(false);
+  const seekNew = useRef<number | null>(null); // pages loaded so far, null: not seeking
+  const checkNewAbove = (el: HTMLDivElement) => {
+    const line = el.querySelector<HTMLElement>(".new-line");
+    const above = newCount > 0 && (!line || line.offsetTop + line.offsetHeight < el.scrollTop);
+    if (above !== newAbove) setNewAbove(above);
+  };
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    checkNewAbove(el);
+    const pages = seekNew.current;
+    if (pages === null || !snap.loaded || snap.loadingOlder) return;
+    const line = el.querySelector<HTMLElement>(".new-line");
+    if (line) {
+      seekNew.current = null;
+      stick.current = false;
+      line.scrollIntoView({ block: "start" });
+      remember(el);
+    } else if (snap.hasMore && pages < JUMP_PAGES) {
+      seekNew.current = pages + 1;
+      void view.loadOlder();
+    } else {
+      seekNew.current = null;
+    }
+  });
+  const markNewRead = useCallback(() => {
+    seekNew.current = null;
+    view.clearUnreadSince();
+  }, [view]);
+  // Esc: Mark as Read, unless something else wants it (a dialog, a menu,
+  // a picker, the composer cancelling a reply or an edit, another field).
+  useEffect(() => {
+    if (!snap.unreadSince) return;
+    const esc = (e: globalThis.KeyboardEvent) => {
+      if (e.key !== "Escape" || e.shiftKey || e.defaultPrevented) return;
+      if (document.querySelector("[role=dialog], [role=menu], [role=listbox], .modal-backdrop")) return;
+      const t = e.target as HTMLElement | null;
+      if (t?.closest("input, select, textarea:not(.composer textarea)")) return;
+      markNewRead();
+    };
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [snap.unreadSince, markNewRead]);
+
   const onScroll = () => {
     const el = ref.current;
     if (!el) return;
+    checkNewAbove(el);
     const fromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     stick.current = fromBottom < STICK_PX;
     const isAway = fromBottom > el.clientHeight;
@@ -382,6 +430,15 @@ function MessageList({ view, snap, call, previews, userId, username, canDeleteAn
       ni++;
     }
   };
+  // The "New" line: above the first message from someone else since your
+  // old read mark (Chat.open keeps it). Your own messages don't count.
+  const since = snap.unreadSince ? Date.parse(snap.unreadSince) : null;
+  const isNew = (m: ChatMessage) => since !== null && !m.own && !m.pending && Date.parse(m.createdAt) > since;
+  const firstNew = snap.messages.find(isNew);
+  const newCount = snap.messages.filter(isNew).length;
+  // The oldest loaded message is already new: more may be on the server.
+  const oldestLoaded = snap.messages.find((m) => !m.pending);
+  const newMore = since !== null && snap.hasMore && !!oldestLoaded && Date.parse(oldestLoaded.createdAt) > since;
   let prev: ChatMessage | undefined;
   for (const m of snap.messages) {
     const before = ni;
@@ -389,7 +446,11 @@ function MessageList({ view, snap, call, previews, userId, username, canDeleteAn
     // A notice breaks up a run of messages from one person.
     if (ni !== before) prev = undefined;
     const newDay = dayBreak(m.createdAt, m.id);
-    const compact = !newDay && !m.reply && !!prev && prev.authorId === m.authorId && !prev.deleted &&
+    const newLine = m === firstNew && !newMore;
+    if (newLine) {
+      rows.push(<div key="new-line" className="new-line" role="separator" aria-label="New messages"><span>New</span></div>);
+    }
+    const compact = !newDay && !newLine && !m.reply && !!prev && prev.authorId === m.authorId && !prev.deleted &&
       Date.parse(m.createdAt) - Date.parse(prev.createdAt) < 5 * 60_000;
     rows.push(
       <Message
@@ -468,6 +529,21 @@ function MessageList({ view, snap, call, previews, userId, username, canDeleteAn
 
   return (
     <div className="messages" ref={ref} onScroll={onScroll} onLoadCapture={onLoad} role="log" aria-live="polite">
+      {newAbove && snap.unreadSince && (
+        <div className="new-bar-wrap">
+          <div className="reply-bar new-bar" role="status">
+            <span className="reply-bar-text">
+              {newMore ? `${newCount}+` : newCount} new message{newCount === 1 && !newMore ? "" : "s"} since {formatSince(snap.unreadSince)}
+            </span>
+            <button className="primary" onClick={() => {
+              // The layout effect scrolls to the line, loading pages first if needed.
+              seekNew.current = 0;
+              setNewAbove(false);
+            }}>Jump</button>
+            <button className="outline" onClick={markNewRead}>Mark as Read</button>
+          </div>
+        </div>
+      )}
       <div className="history-top muted small">
         {snap.loadingOlder ? "Loading older messages…"
           : snap.hasMore ? <button className="link small" onClick={() => void view.loadOlder()}>Load older messages</button>
@@ -588,6 +664,13 @@ function formatDay(at: string): string {
   if (d.toDateString() === today.toDateString()) return "Today";
   if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
   return d.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+}
+
+/** "14:32" today, else "Nov 12, 14:32" (the jump bar). */
+function formatSince(at: string): string {
+  const d = new Date(at);
+  if (d.toDateString() === new Date().toDateString()) return formatTime(at);
+  return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}, ${formatTime(at)}`;
 }
 
 function formatTime(at: string): string {

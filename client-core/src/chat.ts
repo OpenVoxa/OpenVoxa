@@ -263,6 +263,11 @@ export interface ChannelSnapshot {
   readonly members: readonly Mention[];
   /** Who else is typing here now, in the order they started (not you). */
   readonly typing: readonly Typer[];
+  /** Your read mark from before this channel was opened (or before you
+   * looked away from it) when there was something newer: messages after
+   * it get the "New" line. null: nothing was unread. Cleared only by
+   * clearUnreadSince or by opening another channel. */
+  readonly unreadSince: string | null;
 }
 
 /** Someone typing in the open channel. */
@@ -859,6 +864,11 @@ export class Chat {
     const view = new ChannelView(this, channel, this.#opts);
     this.#view = view;
     this.#dropBlockedDMs();
+    // Keep the old read mark for the "New" line before opening marks it read.
+    const before = this.#store.get(this.#readKey(channelId));
+    if (before && channel.last_message_at && Date.parse(channel.last_message_at) > Date.parse(before)) {
+      view.setUnreadSince(before);
+    }
     this.markRead(channelId, channel.last_message_at);
     void view.start();
     return view;
@@ -882,9 +892,16 @@ export class Chat {
   /** @internal A message arrived in the open channel. */
   seenInOpen(channelId: string, at: string): void {
     if (channelId !== this.#view?.channel.id) return;
+    const mark = this.#store.get(this.#readKey(channelId));
+    if (mark && Date.parse(at) <= Date.parse(mark)) return;
     if (this.#looking) {
       this.markRead(channelId, at);
       return;
+    }
+    if (!this.#heldRead) {
+      // The first message while away: what came before it was read.
+      const before = this.#store.get(this.#readKey(channelId));
+      if (before) this.#view.setUnreadSince(before);
     }
     if (!this.#heldRead || Date.parse(at) > Date.parse(this.#heldRead.at)) this.#heldRead = { channelId, at };
     if (!this.#unread.has(channelId)) {
@@ -907,12 +924,31 @@ export class Chat {
     const prev = this.#store.get(key);
     const next = at ? normalizeTime(at) : prev ?? new Date().toISOString();
     if (!prev || Date.parse(next) > Date.parse(prev)) this.#store.set(key, next);
-    if (this.#unread.delete(channelId)) this.#emit({ type: "unread", unread: this.#unread });
+    if (this.#unread.has(channelId)) {
+      // A new set, so React sees the change.
+      this.#unread = new Set(this.#unread);
+      this.#unread.delete(channelId);
+      this.#emit({ type: "unread", unread: this.#unread });
+    }
     if (this.#mentioned.has(channelId)) {
       this.#mentioned = new Set(this.#mentioned);
       this.#mentioned.delete(channelId);
       this.#emit({ type: "mentions", mentions: this.#mentioned });
     }
+  }
+
+  /**
+   * Mark Category / All as Read: every listed text channel (or direct
+   * message) read up to its newest message. Unknown ids and voice
+   * channels are skipped.
+   */
+  markAllRead(channelIds: Iterable<string>): void {
+    const ids = new Set(channelIds);
+    for (const c of [...this.#channels, ...this.#dms.map(dmChannel)]) {
+      if (c.kind === "voice" || !ids.has(c.id)) continue;
+      this.markRead(c.id, c.last_message_at ?? undefined);
+    }
+    if (this.#view && ids.has(this.#view.channel.id)) this.#view.clearUnreadSince();
   }
 
   #recomputeUnread(): void {
@@ -972,6 +1008,11 @@ export class Chat {
         .catch(() => {});
       return;
     }
+    // Keep the newest time current: Mark as Read and opening the channel
+    // mark read up to it, and the list fetched at sign-in goes stale.
+    this.#channels = this.#channels.map((c) => c.id === channelId &&
+      (!c.last_message_at || Date.parse(createdAt) > Date.parse(c.last_message_at))
+      ? { ...c, last_message_at: createdAt } : c);
     // Your own messages, and the channel you are looking at, are read.
     if (authorId === this.userId) {
       this.markRead(channelId, createdAt);
@@ -1290,6 +1331,8 @@ export class ChannelView {
   /** Plaintext of edits awaiting the server, by message ID. */
   #pendingEdits = new Map<string, string>();
 
+  #unreadSince: string | null = null;
+
   constructor(chat: Chat, channel: ChannelInfo, opts: ChatOptions) {
     this.#chat = chat;
     this.#opts = opts;
@@ -1300,6 +1343,20 @@ export class ChannelView {
 
   get channel(): ChannelInfo {
     return this.#channel;
+  }
+
+  /** @internal Chat sets where the "New" line starts; the first one stays. */
+  setUnreadSince(at: string): void {
+    if (this.#unreadSince) return;
+    this.#unreadSince = at;
+    this.#changed();
+  }
+
+  /** Esc or the jump bar's Mark as Read: drop the "New" line and the bar. */
+  clearUnreadSince(): void {
+    if (!this.#unreadSince) return;
+    this.#unreadSince = null;
+    this.#changed();
   }
 
   get #groups() {
@@ -1334,6 +1391,7 @@ export class ChannelView {
         notices: this.#notices,
         members: this.#members,
         typing: this.#typingList,
+        unreadSince: this.#unreadSince,
       };
     }
     return this.#snapshot;
@@ -1533,6 +1591,11 @@ export class ChannelView {
         this.#canPost = !!frame.can_post;
         if (first) this.#hasMore = !!frame.has_more;
         void this.#receive(frame.messages ?? [], false);
+        {
+          // Missed while disconnected: read if you're looking, else unread.
+          const newest = frame.messages?.at(-1);
+          if (newest) this.#chat.seenInOpen(this.#channel.id, newest.created_at);
+        }
         this.#enqueue(async () => {
           this.#loaded = true;
           this.#changed();

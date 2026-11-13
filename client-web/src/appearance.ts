@@ -31,7 +31,7 @@ export const COLOURS: readonly ColourSetting[] = [
   {
     cssVar: "--unread-dot",
     label: "Unread dot",
-    help: "Beside a channel with messages you haven't seen.",
+    help: "Beside a channel with messages you haven't seen, and the New line above them.",
     fallback: "#d96932",
   },
   {

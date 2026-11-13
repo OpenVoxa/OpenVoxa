@@ -296,6 +296,14 @@ button.secondary:hover:not(:disabled) { background: var(--sidebar-active); }
   border-radius: 999px; box-shadow: 0 2px 8px rgb(0 0 0 / 0.4);
 }
 .history-top { padding: 16px; text-align: center; }
+/* "N new messages since 14:32" (Jump / Mark as Read): the reply bar's
+   look, held at the top of the list. Zero height, like .jump-latest, so
+   showing it doesn't move the messages. */
+.new-bar-wrap { position: sticky; top: 0; height: 0; z-index: 2; }
+.new-bar { margin: 8px 16px 0; box-shadow: 0 2px 8px rgb(0 0 0 / 0.4); }
+/* Above the first unread message; the unread dot's colour. */
+.new-line { display: flex; align-items: center; gap: 8px; margin: 8px 16px 4px; color: var(--unread-dot); font-size: 12px; font-weight: 700; }
+.new-line::before { content: ""; flex: 1; border-top: 1px solid var(--unread-dot); }
 .center { text-align: center; }
 .day { display: flex; align-items: center; gap: 8px; margin: 12px 16px 4px; color: var(--muted); font-size: 12px; font-weight: 700; }
 .day::before, .day::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
