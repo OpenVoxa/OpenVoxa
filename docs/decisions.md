@@ -2442,6 +2442,34 @@ Profile (own body and footer) sits on the stage at 1280 and 390 px;
 **SL6** Settings at all three widths, nothing cut. All pass. Ryan's look
 on his PC (full and half screen) and phone, SL7-SL9, 2026-11-13: pass.
 
+### Planned: pinned messages
+
+Decided with Ryan, 2026-11-13 (all as recommended; Feature roadmap, 4).
+Not built yet.
+
+- **Who:** a new permission switch **Pin Messages** (`pin_messages`);
+  Moderator gets it by default in a migration (Administrator has
+  everything). Like every switch but direct messages, it makes its
+  holder staff (the Server settings gear). In **direct messages** either
+  person may pin and unpin, no switch needed.
+- **Where:** Pin / Unpin in the message's menu (right-click or
+  long-press); a small pin mark on pinned messages. A pin button with
+  the count in the channel header opens the channel's pins, newest
+  first: the message, who pinned it and when, and Jump (the message
+  link jump). No line in the chat when someone pins.
+- **Deleting** a pinned message unpins it; edits show in the list.
+- **Retention:** a pinned message is kept past the channel's limit until
+  it is unpinned, then expires normally; the "kept N days" label says
+  "(pins kept)".
+- **Encrypted channels:** the server stores only which message id is
+  pinned, never content. Someone who joined after the message was sent
+  can't read it (no earlier history): the pin shows "Sent before you
+  joined", and still counts.
+- To settle while building: a cap per channel (Discord: 50); how the
+  client reads a pinned message that isn't loaded (fetch by id; for
+  encrypted channels check what it can still decrypt); pins_changed on
+  the WebSocket reaching open channels.
+
 ## Permission groups
 
 Build-order step 12, decided by Ryan 2026-10-31.
@@ -4417,6 +4445,13 @@ verified; the section named holds the design.
       - **v1.0.0-beta.4.8 (2026-11-13, hotfix):** typing indicators
         (TY1-TY9). Server and web client only; no migration. Same
         routine; only the server restarted; served bundle matched DEV.
+      - **v1.0.0-beta.4.9 (2026-11-13, hotfix):** the unread jump and
+        Mark as Read (UN0-UN11) and the settings tab column (SL1-SL9).
+        Web client only; no migration. Smart Switch (on main between
+        them) touches share code and needs the desktop app, so the tag
+        sits on a side branch: beta.4.8 plus those two commits
+        cherry-picked. Same routine; only the server restarted; the
+        served bundle has both features and no Smart Switch code.
       - **Open for later:** an official desktop app on GitHub Releases
         for other people's servers; prebuilt server images.
 - [ ] **Desktop app icon** (Ryan, 2026-11-07): replace the Electron
@@ -4498,11 +4533,12 @@ Stage 1, everyday chat (small, hotfix):
    decisions, "Typing indicators"). The server sees who types where
    (metadata, like mentions).
 3. [x] **Unread jump and Mark as Read** (built 2026-11-13, UN0-UN11
-   pass; Feature decisions, "Unread jump and Mark as Read"): "New" line,
+   pass, released in v1.0.0-beta.4.9; Feature decisions, "Unread jump and Mark as Read"): "New" line,
    jump bar, Esc, Mark Category / All as Read, Shift+Esc. Client only.
-4. [ ] **Pinned messages** per channel (`manage_messages` or a new
-   permission). Encrypted channels: the server sees which message id is
-   pinned, not its content.
+4. [ ] **Pinned messages** per channel (design agreed 2026-11-13;
+   Feature decisions, "Planned: pinned messages"): new Pin Messages
+   switch, pins kept past retention, DMs too. Encrypted channels: the
+   server sees which message id is pinned, not its content.
 5. [ ] **Spoiler tags:** `||text||` and blurred spoiler attachments
    (markdown and attachments only).
 
