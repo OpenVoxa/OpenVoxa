@@ -38,6 +38,8 @@ import { MUTE_DURATIONS } from "./VoiceUI";
 import { stickerIdOf } from "@core/stickers";
 import { splitReply } from "@core/replies";
 import { ColouredName, MIN_NAME_CONTRAST, nameContrast, refreshNames, useServerNameColours } from "./names";
+import { NAME_COLOURS, useToggle } from "./settings";
+import { SettingsLayout, type NavItem } from "./SettingsNav";
 
 /** What the dialog needs to know about the signed-in account. */
 export interface Me {
@@ -118,6 +120,32 @@ function useGroupList(call: ApiCall, reload: number) {
   return { groups, error, refresh };
 }
 
+/** The switches that make someone a moderator (any one of them shows the Log tab). */
+const MOD_PERMS = ["ban", "view_reports", "delete_messages", "server_mute", "move_members"];
+
+/**
+ * Colours for the Moderation and Administration headings: each one's
+ * role's name colour, from the lowest-ranked coloured group that holds it
+ * (the entry group for that role: Moderator, Administrator). A group with
+ * administrator doesn't count as a moderator group. Plain when name
+ * colours are off (server switch or the viewer's Appearance setting).
+ */
+function useHeadingColours(call: ApiCall, reload: number): { mod?: string; admin?: string } {
+  const { groups } = useGroupList(call, reload);
+  const serverOn = useServerNameColours();
+  const mineOn = useToggle(NAME_COLOURS);
+  return useMemo(() => {
+    if (!groups || !serverOn || !mineOn) return {};
+    // useGroupList sorts highest first; the entry group is the last match.
+    const entry = (ok: (g: PermGroup) => boolean) =>
+      [...groups].reverse().find((g) => g.colour && ok(g))?.colour ?? undefined;
+    return {
+      admin: entry((g) => g.permissions.includes("administrator")),
+      mod: entry((g) => !g.permissions.includes("administrator") && g.permissions.some((p) => MOD_PERMS.includes(p))),
+    };
+  }, [groups, serverOn, mineOn]);
+}
+
 function useUserList(call: ApiCall, reload: number) {
   const [users, setUsers] = useState<UserSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -161,24 +189,30 @@ export function ServerSettingsDialog({ call, me, reload, openReports, openBugRep
 }) {
   const has = (p: string) => me.permissions.includes(p);
   const [tab, setTab] = useState<ServerTab>(() => initialTab ?? (openReports > 0 && has("view_reports") ? "reports"
-    : openBugReports > 0 && has("view_reports") ? "bugs" : has("administrator") ? "general" : "groups"));
-  const tabs: [ServerTab, string][] = has("administrator") ? [["general", "General"]] : [];
-  tabs.push(["groups", "Groups"], ["members", "Members"]);
-  if (has("view_reports")) tabs.push(["reports", openReports ? `Reports (${openReports})` : "Reports"]);
-  if (has("view_reports")) tabs.push(["bugs", openBugReports ? `Bug Reports (${openBugReports})` : "Bug Reports"]);
-  if (has("ban")) tabs.push(["bans", "Bans"]);
-  if (has("ban") || has("view_reports") || has("delete_messages") || has("server_mute") || has("move_members")) tabs.push(["log", "Log"]);
-  // Every staff member can see the set; managing it needs the switch.
-  tabs.push(["stickers", "Stickers"]);
-  if (has("administrator")) tabs.push(["voice", "Voice and Video"], ["signup", "Sign-Up"], ["security", "Security"]);
+    : openBugReports > 0 && has("view_reports") ? "bugs" : "groups"));
+  const headColours = useHeadingColours(call, reload);
+  // Tabs in blocks by role (Ryan, 2026-11-13): what every staff member
+  // sees first, then moderation, then administration, so the everyday
+  // tabs keep their places whatever the role and the more powerful ones
+  // gather at the bottom.
+  // Every staff member can see the sticker set; managing it needs the switch.
+  const tabs: NavItem<ServerTab>[] = [
+    { id: "groups", label: "Groups" }, { id: "members", label: "Members" }, { id: "stickers", label: "Stickers" },
+  ];
+  const mod: NavItem<ServerTab>[] = [];
+  if (has("view_reports")) mod.push({ id: "reports", label: openReports ? `Reports (${openReports})` : "Reports" });
+  if (has("view_reports")) mod.push({ id: "bugs", label: openBugReports ? `Bug Reports (${openBugReports})` : "Bug Reports" });
+  if (has("ban")) mod.push({ id: "bans", label: "Bans" });
+  if (MOD_PERMS.some(has)) mod.push({ id: "log", label: "Log" });
+  if (mod.length) tabs.push({ heading: "Moderation", colour: headColours.mod }, ...mod);
+  if (has("administrator")) {
+    tabs.push({ heading: "Administration", colour: headColours.admin },
+      { id: "general", label: "General" }, { id: "voice", label: "Voice and Video" },
+      { id: "signup", label: "Sign-Up" }, { id: "security", label: "Security" });
+  }
   return (
     <Modal title="Server settings" onClose={onClose} wide fixed>
-      <div className="settings-tabs" role="tablist">
-        {tabs.map(([id, label]) => (
-          <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? "on" : undefined}
-            onClick={() => setTab(id)}>{label}</button>
-        ))}
-      </div>
+      <SettingsLayout items={tabs} tab={tab} onTab={setTab} label="Server settings">
       {tab === "general" ? <GeneralTab call={call} onClose={onClose} />
         : tab === "voice" ? <VoiceTab call={call} onClose={onClose} />
         : tab === "signup" ? <SignupTab call={call} onClose={onClose} />
@@ -198,6 +232,7 @@ export function ServerSettingsDialog({ call, me, reload, openReports, openBugRep
         <button className="primary" onClick={onClose}>Done</button>
       </div>
       </>)}
+      </SettingsLayout>
     </Modal>
   );
 }
