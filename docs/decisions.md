@@ -4211,6 +4211,9 @@ verified; the section named holds the design.
         permissions already did, but nobody has to rejoin. Fresh database
         backup first; same routine; only the server restarted; migration
         applied; served bundle matched DEV.
+      - **v1.0.0-beta.4.8 (2026-11-13, hotfix):** typing indicators
+        (TY1-TY9). Server and web client only; no migration. Same
+        routine; only the server restarted; served bundle matched DEV.
       - **Open for later:** an official desktop app on GitHub Releases
         for other people's servers; prebuilt server images.
 - [ ] **Desktop app icon** (Ryan, 2026-11-07): replace the Electron
