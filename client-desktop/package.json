@@ -1,7 +1,7 @@
 {
   "name": "@openvoxa/client-desktop",
   "productName": "OpenVoxa",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "private": true,
   "license": "AGPL-3.0-or-later",
   "description": "OpenVoxa desktop app: an Electron shell with a server pane; each server's own web client runs in an isolated view.",

@@ -25,6 +25,7 @@ import {
   Room,
   RoomEvent,
   Track,
+  TrackEvent,
   VideoPreset,
   VideoQuality,
   createLocalAudioTrack,
@@ -142,6 +143,8 @@ export interface VoiceSnapshot {
   /** This device is sending audio right now. */
   readonly micOpen: boolean;
   readonly sharing: boolean;
+  /** The shared window closed and the share waits for the next one (desktop app). */
+  readonly sharePaused: boolean;
   /** The running share's quality (after the server's limit), or null. */
   readonly share: ShareSettings | null;
   /** Media key epoch, once encryption is up. */
@@ -252,10 +255,28 @@ export interface VoiceOptions {
    * sound stopping on its own mid-share.
    */
   windowShareSound?: (onFail: (reason: string) => void) => Promise<ShareSound | null>;
+  /**
+   * The desktop app's Smart Switch (decisions.md, "Smart Switch"). With it,
+   * a shared window that closes pauses the share instead of ending it.
+   * Absent in browsers and older desktop apps.
+   */
+  desktopShare?: DesktopShare;
   /** The mic AudioWorklet (micWorklet.ts), built by the app. Without it the mic is sent as captured. */
   micWorkletUrl?: string;
   /** Strong noise suppression's AudioWorklet (rnnoiseWorklet.ts); downloaded when first used. */
   rnnoiseWorkletUrl?: string;
+}
+
+/** The desktop app's share signals (VoiceOptions.desktopShare). */
+export interface DesktopShare {
+  /** The app asks for a switch: the next getDisplayMedia is answered by the app. */
+  onSwitch(cb: () => void): void;
+  /** The shared window closed: the app answers the next getDisplayMedia (the game's other window, or its picker). */
+  gone(): void;
+  /** The share ended. */
+  stopped(): void;
+  /** A still picture shown to viewers while the share waits for its next window. */
+  pausedTrack(): MediaStreamTrack;
 }
 
 /** A share's sound from outside getDisplayMedia (the desktop app). */
@@ -470,8 +491,18 @@ export class VoiceClient {
   #share: ShareSettings | null = null;
   /** A switch or quality change is under way (one at a time). */
   #shareBusy = false;
-  /** The browser's own "Stop sharing" bar bypasses our button. */
-  #onShareEnded = () => void this.stopShare();
+  /** The shared window closed; viewers see desktopShare.pausedTrack. */
+  #sharePaused = false;
+  /**
+   * The capture ended on its own: the browser's "Stop sharing" bar, or the
+   * shared window closed. In the desktop app (which has no such bar) the
+   * share then waits for the next window instead of ending.
+   */
+  #onShareEnded = (e: Event) => {
+    const video = this.#shareVideo();
+    if (this.#opts.desktopShare && video && e.target === video.mediaStreamTrack) void this.#shareGone();
+    else void this.stopShare();
+  };
   #canPublish = false;
   #muted = false;
   #deafened = false;
@@ -518,6 +549,10 @@ export class VoiceClient {
   constructor(session: Session, opts: VoiceOptions) {
     this.#session = session;
     this.#opts = opts;
+    // Smart Switch: the app saw the game's other window come or go.
+    opts.desktopShare?.onSwitch(() => {
+      if (this.#screenTracks.length) this.switchShare().catch(() => { /* nothing to switch to */ });
+    });
     const saved = opts.store.get("voice.mode");
     this.#mode = saved === "voice" || saved === "ptt" || saved === "tap" || saved === "open" ? saved
       // Before voice activation there were two: push-to-talk or an open mic.
@@ -584,6 +619,7 @@ export class VoiceClient {
         pttHeld: this.#canTalk() && (this.#effectiveMode() === "tap" ? this.#tapOpen : this.#pttHeld),
         micOpen: this.#micOpen(),
         sharing: this.#screenTracks.length > 0,
+        sharePaused: this.#screenTracks.length > 0 && this.#sharePaused,
         share: this.#screenTracks.length ? this.#share : null,
         epoch: this.#epoch,
         audioBlocked: this.#audioBlocked,
@@ -1738,6 +1774,10 @@ export class VoiceClient {
       for (const track of tracks) {
         await room.localParticipant.publishTrack(track, track === cap.video ? shareOptions(s) : undefined);
         track.mediaStreamTrack.addEventListener("ended", this.#onShareEnded);
+        // LiveKit (2.23) unpublishes a share whose capture ends, before
+        // #onShareEnded could pause it: in the desktop app the picture's
+        // end is ours to handle (checked by experiment, 2026-11-13).
+        if (track === cap.video && this.#opts.desktopShare) track.removeAllListeners(TrackEvent.Ended);
       }
     } catch (err) {
       await this.stopShare();
@@ -1775,6 +1815,7 @@ export class VoiceClient {
       video.mediaStreamTrack.removeEventListener("ended", this.#onShareEnded);
       await video.replaceTrack(mst, { userProvidedTrack: false });
       mst.addEventListener("ended", this.#onShareEnded);
+      this.#sharePaused = false;
 
       // Sound: swapped in place, added or taken down, as the new pick has it.
       const oldAudio = this.#screenTracks.find((t) => t.kind === Track.Kind.Audio) ?? null;
@@ -1889,7 +1930,7 @@ export class VoiceClient {
     if (audioWanted && !audio && this.#opts.windowShareSound) {
       try {
         windowSound = await this.#opts.windowShareSound((reason) => {
-          if (this.#stopWindowSound === windowSound?.stop) this.#notice(`Your share's sound stopped: ${reason}`);
+          if (this.#stopWindowSound === windowSound?.stop && !this.#sharePaused) this.#notice(`Your share's sound stopped: ${reason}`);
         });
       } catch (err) {
         this.#notice(`Couldn't share the window's sound: ${errorText(err)}`);
@@ -1942,9 +1983,39 @@ export class VoiceClient {
     this.#changed();
   }
 
+  /**
+   * The shared window closed (desktop app): viewers get a still "paused"
+   * picture, and the app answers the next pick itself, with the game's
+   * other window (Smart Switch) or its picker. Cancelling the picker ends
+   * the share.
+   */
+  async #shareGone(): Promise<void> {
+    const video = this.#shareVideo();
+    const ds = this.#opts.desktopShare;
+    if (!video || !ds || this.#sharePaused) return;
+    this.#sharePaused = true;
+    video.mediaStreamTrack.removeEventListener("ended", this.#onShareEnded);
+    try {
+      await video.replaceTrack(ds.pausedTrack(), { userProvidedTrack: false });
+    } catch (err) {
+      console.warn("couldn't show the paused picture:", err);
+    }
+    this.#changed();
+    if (this.#shareVideo() !== video) return; // stopped meanwhile
+    ds.gone();
+    try {
+      // While another switch runs this returns at once; that one ends the pause.
+      await this.switchShare();
+    } catch {
+      if (this.#sharePaused && this.#shareVideo() === video) await this.stopShare();
+    }
+  }
+
   async stopShare(): Promise<void> {
     const tracks = this.#screenTracks;
     this.#screenTracks = [];
+    if (tracks.length) this.#opts.desktopShare?.stopped();
+    this.#sharePaused = false;
     this.#heldShareAudio?.stop();
     this.#heldShareAudio = null;
     this.#stopWindowSound?.();

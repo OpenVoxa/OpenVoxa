@@ -64,6 +64,7 @@ If this project ever has a monetization strategy, something has gone wrong. Plea
 
 - A pane of server icons down the left, like Discord: each bookmark opens that server's own web client in an isolated view, so accounts and keys never mix between servers
 - Its own screen share picker, and on Windows 10 2004 or later, sharing a window carries that program's sound only
+- **Smart Switch** for games that swap windows (today League of Legends: client and match): the share follows the game by itself, and a shared window that closes pauses the share instead of ending it
 
 **The server**
 

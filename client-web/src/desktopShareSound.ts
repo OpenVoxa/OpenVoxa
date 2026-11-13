@@ -11,7 +11,7 @@
  * In a browser there is no bridge and this does nothing.
  */
 import workletUrl from "./shareSoundWorklet.ts?worker&url";
-import type { ShareSound } from "@core/voice";
+import type { DesktopShare, ShareSound } from "@core/voice";
 
 interface DesktopBridge {
   startShareSound(onData: (pcm: Uint8Array) => void, onEnd: (reason: string) => void): Promise<boolean>;
@@ -82,4 +82,64 @@ export async function desktopShareSound(onFail: (reason: string) => void): Promi
     stop();
     throw err;
   }
+}
+
+interface FollowBridge {
+  onShareSwitch(cb: () => void): Promise<void>;
+  shareGone(): Promise<void>;
+  shareStopped(): Promise<void>;
+}
+
+/**
+ * The desktop app's Smart Switch (decisions.md, "Smart Switch"): the app
+ * follows a game between its client and game windows, and a shared
+ * window that closes pauses the share instead of ending it. Null in a
+ * browser and in desktop apps from before Smart Switch.
+ */
+export function desktopShare(): DesktopShare | null {
+  const bridge = (window as unknown as { openvoxaDesktop?: Partial<FollowBridge> }).openvoxaDesktop;
+  if (!bridge?.onShareSwitch || !bridge.shareGone || !bridge.shareStopped) return null;
+  const b = bridge as FollowBridge;
+  return {
+    onSwitch: (cb) => void b.onShareSwitch(cb),
+    gone: () => void b.shareGone(),
+    stopped: () => void b.shareStopped(),
+    pausedTrack,
+  };
+}
+
+/**
+ * What viewers see while the share waits for its next window: the app's
+ * colours, "Paused", redrawn twice a second so frames keep flowing (a
+ * canvas only sends a frame when it is drawn).
+ */
+function pausedTrack(): MediaStreamTrack {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1280;
+  canvas.height = 720;
+  const g = canvas.getContext("2d")!;
+  const css = getComputedStyle(document.documentElement);
+  const color = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
+  const bg = color("--bg", "#333333");
+  const text = color("--text", "#ffffff");
+  const muted = color("--muted", "#bdbdbd");
+  const font = getComputedStyle(document.body).fontFamily || "sans-serif";
+  const draw = () => {
+    g.fillStyle = bg;
+    g.fillRect(0, 0, canvas.width, canvas.height);
+    g.textAlign = "center";
+    g.fillStyle = text;
+    g.font = `600 64px ${font}`;
+    g.fillText("Paused", 640, 350);
+    g.fillStyle = muted;
+    g.font = `28px ${font}`;
+    g.fillText("Switching windows…", 640, 410);
+  };
+  draw();
+  const [track] = canvas.captureStream(2).getVideoTracks();
+  const timer = setInterval(() => {
+    if (track.readyState === "ended") clearInterval(timer);
+    else draw();
+  }, 500);
+  return track;
 }

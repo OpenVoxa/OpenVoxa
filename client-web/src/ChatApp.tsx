@@ -673,7 +673,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
     if (!chat) return null;
     let v = voiceClient;
     if (!v) {
-      const [{ VoiceClient }, { createE2EEWorker }, { desktopShareSound }, { default: micWorkletUrl },
+      const [{ VoiceClient }, { createE2EEWorker }, { desktopShareSound, desktopShare }, { default: micWorkletUrl },
         { default: rnnoiseWorkletUrl }] = await Promise.all([
         import("@core/voice"),
         import("./voiceWorker"),
@@ -685,6 +685,7 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
       v = new VoiceClient(chat.session, {
         call, userId: session.user_id, createWorker: createE2EEWorker, store: localStore,
         windowShareSound: desktopShareSound, micWorkletUrl, rnnoiseWorkletUrl,
+        desktopShare: desktopShare() ?? undefined,
       });
       setVoiceClient(v);
       // A handle for the browser console, as the debug page has its

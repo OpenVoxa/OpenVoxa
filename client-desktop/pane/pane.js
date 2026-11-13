@@ -205,6 +205,8 @@ const sourcesEmpty = document.getElementById("sources-empty");
 const soundLabel = document.getElementById("sound-label");
 const sound = document.getElementById("sound");
 const soundNote = document.getElementById("sound-note");
+const smartLabel = document.getElementById("smart-label");
+const smart = document.getElementById("smart");
 const shareGo = document.getElementById("share-go");
 
 let shareReq = null; // { host, audio, screenSound, windowSound }
@@ -214,6 +216,7 @@ let chosen = null; // source id
 let listError = null;
 let listed = false; // the first list has arrived
 let soundWanted = true; // the tickbox as the user left it
+let smartWanted = true; // Smart Switch, likewise
 
 function renderShare() {
   tabScreens.classList.toggle("on", tab === "screens");
@@ -259,7 +262,7 @@ function renderShare() {
         chosen = s.id;
         renderShare();
       });
-      b.addEventListener("dblclick", () => window.shell.share(s.id, sound.checked));
+      b.addEventListener("dblclick", () => window.shell.share(s.id, sound.checked, !!s.smart && smartWanted));
       li.append(b);
       return li;
     }),
@@ -282,6 +285,15 @@ function renderShare() {
   sound.disabled = !soundOk;
   sound.checked = soundOk && soundWanted; // greyed out = not shared, so not ticked
   soundLabel.classList.toggle("locked", !soundOk);
+
+  // Smart Switch: only for a window of a game the app knows (main.ts,
+  // PAIRS), where the share then follows the game between its client and
+  // the game window.
+  const game = sources.find((s) => s.id === chosen)?.smart ?? null;
+  smartLabel.hidden = !game;
+  smart.checked = smartWanted;
+  if (game && smartWanted) why = `${why ? why + " " : ""}Smart Switch follows ${game} between its client and the game.`;
+
   soundNote.hidden = !why;
   soundNote.textContent = why ?? "";
   shareGo.disabled = !chosen;
@@ -298,17 +310,21 @@ tabWindows.addEventListener("click", () => {
 sound.addEventListener("change", () => {
   soundWanted = sound.checked;
 });
+smart.addEventListener("change", () => {
+  smartWanted = smart.checked;
+  renderShare();
+});
 // Like the web client's dialogs: Cancel, Escape, a click outside the
 // picker, or any pane button closes it without sharing.
 function cancelPick() {
-  if (picking) window.shell.share(null, false);
+  if (picking) window.shell.share(null, false, false);
 }
 document.getElementById("share-cancel").addEventListener("click", cancelPick);
 content.addEventListener("mousedown", (e) => {
   if (picking && e.target === content) cancelPick();
 });
 shareGo.addEventListener("click", () => {
-  if (chosen) window.shell.share(chosen, sound.checked);
+  if (chosen) window.shell.share(chosen, sound.checked, !!sources.find((s) => s.id === chosen)?.smart && smartWanted);
 });
 
 window.shell.onShareOpen((req) => {
@@ -319,7 +335,12 @@ window.shell.onShareOpen((req) => {
   listError = null;
   listed = false;
   soundWanted = true;
-  shareHost.textContent = `${req.host} wants to see a screen or window.`;
+  smartWanted = true;
+  // gone: the window being shared closed; the share waits for a new pick.
+  shareHost.textContent = req.gone
+    ? "The window you were sharing closed. Pick another to keep sharing, or Cancel to stop."
+    : `${req.host} wants to see a screen or window.`;
+  if (req.gone) tab = "windows";
   picking = true;
   render();
   renderShare();

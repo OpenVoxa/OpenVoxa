@@ -10,9 +10,9 @@ import { contextBridge, ipcRenderer } from "electron";
 
 type ServerList = { servers: { origin: string; name?: string; icon?: string }[]; selected: string | null };
 type ServerError = { origin: string; message: string | null };
-type ShareOpen = { host: string; audio: boolean; screenSound: boolean; windowSound: boolean };
+type ShareOpen = { host: string; audio: boolean; screenSound: boolean; windowSound: boolean; gone: boolean };
 type UpdateState = { current: string; ready: string | null };
-type ShareSource = { id: string; name: string; screen: boolean; thumbnail: string | null; icon: string | null };
+type ShareSource = { id: string; name: string; screen: boolean; thumbnail: string | null; icon: string | null; smart: string | null };
 
 contextBridge.exposeInMainWorld("shell", {
   ready: () => ipcRenderer.invoke("pane:ready"),
@@ -21,7 +21,7 @@ contextBridge.exposeInMainWorld("shell", {
   setOverlay: (on: boolean) => ipcRenderer.invoke("pane:overlay", on),
   menu: (origin: string) => ipcRenderer.invoke("pane:menu", origin),
   reload: (origin: string) => ipcRenderer.invoke("pane:reload", origin),
-  share: (id: string | null, sound: boolean) => ipcRenderer.invoke("pane:share", id, sound),
+  share: (id: string | null, sound: boolean, smart: boolean) => ipcRenderer.invoke("pane:share", id, sound, smart),
   onShareOpen: (cb: (req: ShareOpen) => void) => {
     ipcRenderer.on("share-open", (_e, req: ShareOpen) => cb(req));
   },

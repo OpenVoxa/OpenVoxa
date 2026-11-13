@@ -2319,6 +2319,85 @@ Read (Admin Category, vip-test); **UN11** Messages tab, Mark All as Read
 clears the DM badge. All pass. Ryan checked the look on his PC and
 phone (line, bar, menus, long-press, narrow screen), 2026-11-13: pass.
 
+### Smart Switch
+
+Ryan, 2026-11-13 (Feature roadmap, 23; all as recommended). Built
+2026-11-13 (desktop app `main.ts` "Smart Switch", the picker in `pane/`,
+`openvoxa-audio --exe`; client-core `VoiceClient` `desktopShare` and
+`#shareGone`; client-web `desktopShare()` in `desktopShareSound.ts`).
+Desktop app only: it needs an app update, so it ships with a
+`release:win`.
+
+Some games swap between two windows from two programs. League of
+Legends has its client (`LeagueClientUx.exe`: lobby, champ select) and,
+during a match, the game (`League of Legends.exe`), then back. A window
+share follows one window and ended when it closed, so streaming League
+meant sharing the whole screen or switching by hand every match. The
+Riot Client launcher is not part of this (Ryan).
+
+- **Pairs, built in:** the desktop app keeps a list of program pairs
+  (client exe, game exe, compared without case), today only League.
+  Only pairs someone has tried on a real PC go in. No Settings page for
+  your own pairs (later, if asked); `OPENVOXA_SMART_PAIRS` (JSON) adds
+  pairs for testing. Not game detection: nothing is shown to anyone.
+- **In the picker:** picking a window of a listed game shows a
+  **Smart Switch** box next to Share Sound, ticked (least friction), with
+  the note "Smart Switch follows League of Legends between its client and
+  the game." Unticked, the share follows that one window as before. Any
+  other window or screen: no box.
+- **Following:** every 2 s the app lists the open windows (no thumbnails)
+  and asks `openvoxa-audio --exe` which program owns each (on Linux:
+  `xprop` `_NET_WM_PID` and `/proc`). The share should show the game
+  while it is open, else the client (the window already shared wins
+  among several of one program). When that changes, the app asks the
+  page to switch; the page runs Switch What You Share's path
+  (`switchShare`, `replaceTrack`: viewers keep watching, same Watch), and
+  the app answers its getDisplayMedia with the pair's window itself, no
+  picker. Window sound moves with it.
+- **A shared window that closes no longer ends the share** (desktop app,
+  any window): viewers see a still "Paused / Switching windows…" picture
+  in the sharer's colours, the share button says why. During a follow
+  the app waits up to 10 s for the pair's other window; otherwise (or
+  with no follow) its picker opens without taking the focus (the user
+  is likely in a game; the taskbar button flashes) and says "The window
+  you were sharing closed. Pick another to keep sharing, or Cancel to
+  stop." Cancel ends the share. A server other than the one on screen
+  gets no picker: its share ends as before. Browsers are unchanged
+  (there the end may be the browser's own "Stop sharing" bar).
+- **The page can't steer it:** it can say only "my shared window closed"
+  or "my share ended". The app answers without its picker only for a
+  switch it asked for (within 5 s) or a closed window (within 15 s), and
+  only with the pair from a follow the user started in the picker. Older
+  web clients never register, so they get no Smart Switch box; a newer
+  web client in an older app sees no bridge and behaves as before.
+- **Fullscreen games:** window capture of an exclusive-fullscreen game
+  may be black on Windows; Borderless is the likely answer (LS1).
+
+*Tests (SS1-SS9).* Run 2026-11-13 in the desktop app under Xvfb with
+openbox (bot-member, fake mic), test pair xterm (red, "client") / xclock
+(blue, "game"), bot-admin watching in headless Chrome and reporting the
+picture's colour: **SS1** the box shows for both pair windows, not for
+another window; **SS2** sharing the client, the game opening switches to
+it about a second later, closing it switches back, one video element
+throughout; **SS3** the shared client closing shows Paused within a
+second, a client reopening within 10 s is picked up by itself; **SS4**
+nothing reopening: after 10 s the picker opens unfocused with the closed
+text, Cancel ends the share; **SS5** box unticked: the game opening
+doesn't switch; **SS6** Switch What You Share during a follow opens the
+normal picker, focused; **SS7** sharing the game with the box ticked, it
+closing goes back to the client; **SS8** `openvoxa-audio --exe` under
+Wine: unknown handles give an empty name, bad input an error. All pass.
+On Ryan's Windows PC with real League, 2026-11-13 (desktop app 0.1.10,
+bot-admin and bot-mod watching, muted, with snapshots): **LS1** the game
+window is captured with a real picture in his display mode; **LS2** champ
+select -> match switched by itself, same video for viewers; **LS3**
+leaving the match showed Paused for about two seconds, then the client.
+Pass. **SS9** passes with them (the box showed, so the helper named
+`LeagueClientUx.exe`, and the game was recognised under Vanguard).
+Still open: **LS4** window sound following (shared without sound; needs
+a listener in the call). **LS5** (box unticked) counted as covered by
+SS5.
+
 ## Permission groups
 
 Build-order step 12, decided by Ryan 2026-10-31.
@@ -3279,6 +3358,16 @@ first. A backup restore only takes an edit mark together with its text.
 
 ### LiveKit and media
 
+**A share whose capture ends is unpublished by LiveKit** (2026-11-13,
+livekit-client 2.23.0, found by experiment for Smart Switch).
+`LocalParticipant.handleTrackEnded` unpublishes any ScreenShare or
+ScreenShareAudio track whose MediaStreamTrack ends, whatever the app's
+own "ended" listener does. To keep a share alive (paused) after its
+window closes, the desktop app's share picture drops LiveKit's
+`TrackEvent.Ended` listeners right after publishing
+(`removeAllListeners`); the app's own handler then pauses or stops.
+Browsers keep LiveKit's behaviour.
+
 **Switching a share in place** (2026-11-06, experiment: two rooms in
 headless Chromium against our LiveKit 1.13.11, livekit-client 2.23.0,
 E2EE on, canvas captures). `LocalVideoTrack.replaceTrack(newTrack,
@@ -3487,6 +3576,13 @@ under Xvfb in `node:22-bookworm` with `--network host`, room
 `rt-test-*`.
 
 ### Electron and Windows
+
+**getDisplayMedia needs no click in Electron 45** (2026-11-13,
+experiment under Xvfb): a page's call from a timer reaches
+`setDisplayMediaRequestHandler`, and a second call while the first
+capture runs works too. Smart Switch relies on this to switch without
+the user. Under Xvfb, `desktopCapturer` window ids are `window:<X
+window id, decimal>:0`.
 
 **Electron screen share (desktop step 2, found by experiment).**
 `display-capture` must pass the session's permission handler or the
@@ -4386,6 +4482,23 @@ Stage 3, voice for gaming (one release; desktop app update for 8):
 12. [ ] **Priority speaker and whisper lists** (TeamSpeak/Mumble).
 13. [ ] **Stage / listen-only mode:** join muted, speak by permission
     or hand-raise.
+23. [x] **Smart switch for game window shares** (added 2026-11-13 by
+    Ryan; numbered last so earlier numbers stay valid; desktop app;
+    built 2026-11-13 on DEV, SS1-SS9 and LS1-LS3 pass with real League,
+    LS4 sound to test; Feature decisions, "Smart Switch"). Some games swap between a client
+    window and the game window all the time: League of Legends goes
+    `LeagueClientUx.exe` (lobby, champ select) -> `League of
+    Legends.exe` (the match) -> back. A window share follows one window
+    and ends when it closes. Plan: the desktop app keeps a built-in
+    list of program **pairs** (client exe <-> game exe); sharing either
+    one follows the pair, switching to the game window when it appears
+    and back to the client when it closes, through the existing Switch
+    What You Share path (viewers keep watching, sound switches too). A
+    shared window that closes doesn't end the share: viewers see a
+    paused frame and the sharer gets a quick window picker. Riot Client
+    (the launcher) is not part of the pair (Ryan). Not game detection:
+    nothing is shown to others. To check on Ryan's PC: window capture
+    of the game in Borderless vs Fullscreen, the client while hidden.
 
 Stage 4, community:
 

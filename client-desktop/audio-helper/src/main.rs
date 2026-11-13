@@ -8,6 +8,11 @@
 //! Usage: `openvoxa-audio --window <HWND>` or `--pid <PID>`, optionally
 //! `--exclude` (everything except that program instead).
 //!
+//! `openvoxa-audio --exe <HWND> [<HWND> ...]` records nothing: it prints
+//! one line per window, `<HWND>\t<program file name>` (empty when the
+//! window is gone), and exits. Smart Switch uses it to tell a game's
+//! client window from its game window (decisions.md, "Smart Switch").
+//!
 //! It records the sound of the program that owns the window together
 //! with every program it started (Windows' "process loopback"), and
 //! writes it to stdout as raw PCM: 48 kHz, stereo, 16-bit signed little
@@ -145,6 +150,19 @@ mod win {
         }
     }
 
+    /// `--exe`: the program behind each window handle given.
+    fn list_exes(hwnds: impl Iterator<Item = String>) -> Result<(), String> {
+        let mut out = std::io::stdout().lock();
+        for v in hwnds {
+            let hwnd: isize = v.parse().map_err(|_| format!("bad window handle {v:?}"))?;
+            let mut pid = 0u32;
+            unsafe { GetWindowThreadProcessId(HWND(hwnd as *mut _), Some(&mut pid)) };
+            let exe = if pid == 0 { String::new() } else { exe_name(pid) };
+            writeln!(out, "{hwnd}\t{exe}").map_err(|e| e.to_string())?;
+        }
+        out.flush().map_err(|e| e.to_string())
+    }
+
     fn activate(pid: u32, exclude: bool) -> Result<IAudioClient, String> {
         let params = LoopbackParams { activation_type: 1, target_pid: pid, mode: exclude as u32 };
         let variant = BlobVariant {
@@ -175,6 +193,10 @@ mod win {
     }
 
     pub fn run() -> Result<(), String> {
+        let mut argv = std::env::args().skip(1);
+        if argv.next().as_deref() == Some("--exe") {
+            return list_exes(argv);
+        }
         let args = parse_args()?;
         unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok().map_err(|e| format!("COM: {e}"))?;
 

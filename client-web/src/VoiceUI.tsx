@@ -652,7 +652,7 @@ export function VoiceBar({ voice, snap, channelName, onShare, onSettings }: {
         </button>
         <button className={`vbtn${snap.sharing ? " on" : ""}`} disabled={connecting || !snap.canPublish}
           onClick={onShare}
-          title={!snap.canPublish ? "You can't share here" : snap.sharing ? "Switch, change quality or stop sharing" : "Share your screen"}
+          title={!snap.canPublish ? "You can't share here" : snap.sharePaused ? "Paused: the window you shared closed. Pick another in the picker" : snap.sharing ? "Switch, change quality or stop sharing" : "Share your screen"}
           aria-pressed={snap.sharing}>
           <ScreenIcon />
         </button>
