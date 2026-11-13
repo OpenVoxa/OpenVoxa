@@ -412,7 +412,8 @@ Scope decided with Ryan 2026-11-01 (step 13, M2).
   the connected accounts that may view the channel and to nobody else,
   since a hidden channel being busy is itself a leak. The client keeps
   the last-read time per channel in localStorage; a channel seen for the
-  first time counts as read.
+  first time counts as read. The "New" line, jump bar and Mark Category /
+  All as Read: "Unread jump and Mark as Read" below.
 
 #### Markdown, link previews and GIFs
 
@@ -2260,6 +2261,64 @@ shows; **TY7** a DM (bot-mod to bot-admin), shows and clears on send;
 move when the line appears. All pass. `TestTypingGate` covers the flood
 limit. Still for Ryan: the look on a phone and in the desktop app.
 
+### Unread jump and Mark as Read
+
+Decided with Ryan, 2026-11-13 (all as recommended; Feature roadmap, 3).
+Built 2026-11-13 (client only: `ChannelView.unreadSince` /
+`clearUnreadSince` and `Chat.markAllRead` in client-core, the line and
+bar in `ChannelPane.tsx`, the menus and Shift+Esc in `ChatApp.tsx`).
+
+- **"New" line:** opening a channel with unread messages keeps the old
+  read mark (opening still marks the channel read at once) and draws a
+  line labelled New above the first message from someone else after it.
+  It also appears for messages that arrived in the open channel while
+  you weren't looking (another window, a background tab, or Home, the
+  call or a stream on screen). It stays until you switch channels, press
+  Esc or Mark as Read. Colour: the Unread dot colour
+  (Settings > Appearance), so no new colour setting.
+- **Jump bar:** "12 new messages since 14:32" with Jump and Mark as Read,
+  the reply bar's look, floating at the top of the list. It shows only
+  while the New line is above what's on screen (or not loaded yet: then
+  "50+", since the first history page is 50 messages). Jump scrolls to
+  the line, loading older pages first if needed (up to 20, like jumping
+  to a message link).
+- **Esc** marks the open channel read and drops the line and the bar,
+  unless a dialog, menu or picker is open, the message box is cancelling
+  a reply or an edit, or another field has focus.
+- **Mark All as Read:** right-click (or long-press) the Text channels
+  heading (the menu also has Create Channel / Create Category, greyed
+  without manage_channels), or Shift+Esc as in Discord. Text channels
+  only, not direct messages (they alert like mentions; clearing them by
+  accident is worse). **Mark Category as Read** heads a text category's
+  menu. The Messages tab's right-click menu has its own Mark All as Read
+  for direct messages. Each is greyed when nothing in it is unread.
+- **Fixed on the way:** the read mark only advanced to the newest time in
+  the channel list fetched at sign-in, so a channel read during a
+  session could come back unread after a reload; the list now follows
+  live messages, and catching up after a reconnect counts too. And the
+  open channel counted as "looked at" while Home, the call or a stream
+  covered it, so messages there were marked read unseen.
+- **Not now:** read marks stay per browser (localStorage). Syncing them
+  across devices needs read marks on the server (Open items, Features
+  not built yet).
+
+*Tests (UN0-UN11).* Run 2026-11-13 in headless Chrome, bot-mod posting
+and bot-admin reading (`unread.mjs`, `unread2.mjs`): **UN0** general
+unread while bot-admin is on Home; **UN1** opening it, the New line sits
+above the first new message and no bar shows (all on screen); **UN2** Esc
+removes the line; **UN3** 60 new messages in lfg (encrypted): bar "60 new
+messages since …", Jump puts the line on screen and hides the bar;
+**UN4** back at the bottom the bar returns, Mark as Read clears both;
+**UN5** messages while bot-admin is on Home leave general unread, coming
+back shows the line above them; **UN6** Text channels heading, Mark All as
+Read clears general and lfg, then greys out; **UN7** Shift+Esc clears
+every text channel; **UN8** a channel read live stays read after a
+reload; **UN9** 60 messages while in another channel: "50+ new
+messages", Jump loads older pages to the line; **UN10** Mark Category as
+Read (Admin Category, vip-test); **UN11** Messages tab, Mark All as Read
+clears the DM badge. All pass. Ryan checked the look on his PC and
+phone (line, bar, menus, long-press, narrow screen), 2026-11-13: pass.
+
 ## Permission groups
 
 Build-order step 12, decided by Ryan 2026-10-31.
@@ -4073,6 +4132,10 @@ verified; the section named holds the design.
   too; "Show when I'm typing" in Settings, Chat, on by default; nothing
   stored), TY1-TY9 pass in headless Chrome (Feature decisions, "Typing
   indicators").
+- 2026-11-13 Unread jump and Mark as Read ("New" line, jump bar, Esc,
+  Mark Category / All as Read, Shift+Esc; two read-mark fixes), UN0-UN11
+  pass in headless Chrome (Feature decisions, "Unread jump and Mark as
+  Read").
 
 ## Open items
 
@@ -4294,8 +4357,9 @@ Stage 1, everyday chat (small, hotfix):
 2. [x] **Typing indicators** (built 2026-11-13, TY1-TY9 pass; Feature
    decisions, "Typing indicators"). The server sees who types where
    (metadata, like mentions).
-3. [ ] **Unread jump and Mark as Read:** "jump to first unread" bar,
-   Mark Channel / Server Read.
+3. [x] **Unread jump and Mark as Read** (built 2026-11-13, UN0-UN11
+   pass; Feature decisions, "Unread jump and Mark as Read"): "New" line,
+   jump bar, Esc, Mark Category / All as Read, Shift+Esc. Client only.
 4. [ ] **Pinned messages** per channel (`manage_messages` or a new
    permission). Encrypted channels: the server sees which message id is
    pinned, not its content.
@@ -4374,6 +4438,10 @@ Later:
       data key under the recovery key (so a password changed elsewhere
       doesn't force a restore); Electron `safeStorage` on top.
 - [ ] Reproducible builds.
+- [ ] Read marks synced across devices (and between the web app and the
+      desktop app): today each browser keeps its own in localStorage, so
+      reading on a phone leaves the channel unread on the PC. Needs read
+      marks stored on the server.
 
 ### Untested
 

@@ -166,8 +166,11 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   >(null);
   // The right-click (or long-press) menu on a channel in the sidebar.
   const [chanMenu, setChanMenu] = useState<{ id: string; at: { x: number; y: number } } | null>(null);
-  // The menu on a category header (catId), or the section's + menu.
-  const [layoutMenu, setLayoutMenu] = useState<{ kind: "text" | "voice"; catId?: string; at: { x: number; y: number } } | null>(null);
+  // The menu on a category header (catId), the section's + menu, or a
+  // right-click on the Text channels heading (section).
+  const [layoutMenu, setLayoutMenu] = useState<{ kind: "text" | "voice"; catId?: string; section?: boolean; at: { x: number; y: number } } | null>(null);
+  // Right-click on the Messages tab: Mark All as Read for direct messages.
+  const [dmTabMenu, setDmTabMenu] = useState<{ x: number; y: number } | null>(null);
   // Move to Category from a channel's menu: the categories to pick from.
   const [catPicker, setCatPicker] = useState<{ id: string; at: { x: number; y: number } } | null>(null);
   // A newer web client on the server (newVersion.ts), and the one the
@@ -195,6 +198,8 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
     move: (at) => layoutDrag.touch.move(at),
     end: (at) => layoutDrag.touch.end(at),
   });
+  const sectionMenuTrigger = useMenuTrigger((_id, at) => setLayoutMenu({ kind: "text", section: true, at }));
+  const dmTabMenuTrigger = useMenuTrigger((_id, at) => setDmTabMenu(at));
   const catMenuTrigger = useMenuTrigger((id, at) => {
     const cat = categories.find((c) => c.id === id);
     if (cat) setLayoutMenu({ kind: cat.kind, catId: id, at });
@@ -273,6 +278,18 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
     void p.then((ok) => { if (!ok) setMoving(false); });
   };
 
+  // Shift+Esc: every text channel read (not direct messages), as in
+  // Discord. Not while a dialog or menu is open, or another field has focus.
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || !e.shiftKey || e.defaultPrevented) return;
+      if (document.querySelector("[role=dialog], [role=menu], [role=listbox], .modal-backdrop")) return;
+      if (!chat || (e.target as HTMLElement | null)?.closest("input, select, textarea:not(.composer textarea)")) return;
+      chat.markAllRead(chat.channels.filter((c) => c.kind === "text").map((c) => c.id));
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [chat]);
   // Sticker images need the token (stickers.tsx).
   useEffect(() => configureStickers(call, session.token), [call, session.token]);
   // Username colours by group (names.tsx).
@@ -457,22 +474,6 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.user_id, session.token]);
 
-  // The open channel only counts as read while you can see it: a
-  // background tab or another window in front leaves it unread.
-  useEffect(() => {
-    if (!chat) return;
-    const update = () => chat.setLooking(document.visibilityState === "visible" && document.hasFocus());
-    update();
-    window.addEventListener("focus", update);
-    window.addEventListener("blur", update);
-    document.addEventListener("visibilitychange", update);
-    return () => {
-      window.removeEventListener("focus", update);
-      window.removeEventListener("blur", update);
-      document.removeEventListener("visibilitychange", update);
-    };
-  }, [chat]);
-
   const readsReports = perms.includes("view_reports") || perms.includes("administrator");
   useEffect(() => {
     if (!readsReports) {
@@ -542,6 +543,25 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   // The stage closes itself when the last share ends.
   const screens = vsnap?.screens ?? [];
   const showCall = callView && !!vsnap && vsnap.state !== "idle";
+  // The text channel pane is on screen (not Home, the call or a stream).
+  const paneShown = homeOpen === false && !showCall && !(stage && voiceClient);
+
+  // The open channel only counts as read while you can see it: a
+  // background tab, another window in front, or Home, the call or a
+  // stream in its place leaves it unread.
+  useEffect(() => {
+    if (!chat) return;
+    const update = () => chat.setLooking(paneShown && document.visibilityState === "visible" && document.hasFocus());
+    update();
+    window.addEventListener("focus", update);
+    window.addEventListener("blur", update);
+    document.addEventListener("visibilitychange", update);
+    return () => {
+      window.removeEventListener("focus", update);
+      window.removeEventListener("blur", update);
+      document.removeEventListener("visibilitychange", update);
+    };
+  }, [chat, paneShown]);
   useEffect(() => {
     if (stage && !screens.length) setStage(null);
     else if (stage?.focus && !screens.some((s) => s.id === stage.focus)) setStage({ focus: null });
@@ -812,14 +832,14 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
     if (c.kind === "dm") {
       const other = c.dm && !c.dm.user.deleted ? { id: c.dm.user.id, username: c.dm.user.username } : null;
       return [
-        { label: "Mark as Read", onClick: () => chat.markRead(c.id, c.last_message_at ?? undefined),
+        { label: "Mark as Read", onClick: () => chat.markAllRead([c.id]),
           disabled: !unread.has(c.id) && !mentions.has(c.id), reason: "Nothing unread" },
         { label: isMuted ? "Unmute Sounds" : "Mute Sounds", onClick: () => setChannelMuted(c.id, !isMuted) },
         ...(other && chanMenu ? ["sep" as const, blockItem(other, chanMenu.at)] : []),
       ];
     }
     return [
-      { label: "Mark as Read", onClick: () => chat.markRead(c.id, c.last_message_at ?? undefined),
+      { label: "Mark as Read", onClick: () => chat.markAllRead([c.id]),
         disabled: !unread.has(c.id) && !mentions.has(c.id), reason: "Nothing unread" },
       { label: isMuted ? "Unmute Sounds" : "Mute Sounds", onClick: () => setChannelMuted(c.id, !isMuted) },
       { label: "Copy Channel Link", onClick: () => void navigator.clipboard.writeText(channelLink(c.id)).catch(() => {}) },
@@ -837,7 +857,8 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
   // A section heading ("Text channels"): + opens Create Channel /
   // Create Category; a channel dropped on it goes to the top level.
   const heading = (label: string, kind: "text" | "voice") => (
-    <div className={`list-head${layoutDrag.hintClass(`section-${kind}`)}`} {...layoutDrag.sectionDrop(kind)}>
+    <div className={`list-head${layoutDrag.hintClass(`section-${kind}`)}`} {...layoutDrag.sectionDrop(kind)}
+      {...(kind === "text" ? sectionMenuTrigger.handlers("text") : {})}>
       <h2>{label}</h2>
       {canManage && (
         <button className="icon" title={`Create a ${kind} channel or category`} aria-label={`Create a ${kind} channel or category`}
@@ -1009,11 +1030,26 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
     );
   };
 
+  // Mark Category / All as Read, greyed when none of `ids` is unread.
+  const markReadItem = (label: string, ids: readonly string[]): MenuItem => ({
+    label, onClick: () => chat.markAllRead(ids),
+    disabled: !ids.some((id) => unread.has(id) || mentions.has(id)), reason: "Nothing unread",
+  });
+  const textIds = channels.filter((c) => c.kind === "text").map((c) => c.id);
+
   // The category menu, or the section's + menu.
   const layoutMenuCat = layoutMenu?.catId ? categories.find((c) => c.id === layoutMenu.catId) : undefined;
   const layoutMenuItems = (): (MenuItem | "sep")[] => {
     if (!layoutMenu) return [];
     const kind = layoutMenu.kind;
+    if (!layoutMenuCat && layoutMenu.section) {
+      return [
+        markReadItem("Mark All as Read", textIds),
+        "sep",
+        { label: "Create Channel", onClick: () => setDialog({ k: "create", kind }), disabled: !canManage, reason: NEEDS_MANAGE },
+        { label: "Create Category", onClick: () => setDialog({ k: "category", kind }), disabled: !canManage, reason: NEEDS_MANAGE },
+      ];
+    }
     if (!layoutMenuCat) {
       return [
         { label: "Create Channel", onClick: () => setDialog({ k: "create", kind }) },
@@ -1024,7 +1060,9 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
     const shut = collapsedCats.has(cat.id);
     const at = layoutMenu.at;
     const { up, down } = stepMoves(categories.filter((c) => c.kind === kind), cat.id);
+    const inCat = channels.filter((c) => c.kind === "text" && c.category_id === cat.id).map((c) => c.id);
     return [
+      ...(kind === "text" ? [markReadItem("Mark Category as Read", inCat)] : []),
       { label: shut ? "Expand Category" : "Collapse Category", onClick: () => setCollapsedCat(cat.id, !shut) },
       "sep",
       ...stepItems(up, down, (before) => layoutDrag.moveCategory(cat.id, before, at)),
@@ -1056,7 +1094,11 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
           <button role="tab" aria-selected={sideTab === "channels"} className={sideTab === "channels" ? "on" : undefined}
             onClick={() => setSideTab("channels")}>Channels</button>
           <button role="tab" aria-selected={sideTab === "dms"} className={sideTab === "dms" ? "on" : undefined}
-            onClick={() => setSideTab("dms")}
+            {...dmTabMenuTrigger.handlers("dms", () => setSideTab("dms"))}
+            onClick={() => {
+              if (dmTabMenuTrigger.touchHandled()) return;
+              setSideTab("dms");
+            }}
             title={dmAlerts ? `Direct Messages: ${dmAlerts} with new messages` : "Direct Messages"}>
             Messages
             {dmAlerts > 0 && <span className="mention-badge" aria-label={`${dmAlerts} with new messages`}>{dmAlerts}</span>}
@@ -1236,6 +1278,10 @@ export function ChatApp({ session, manager, backup, notice, busy, onLogout, onBa
             })),
           ]}
           onClose={() => setCatPicker(null)} />
+      )}
+      {dmTabMenu && (
+        <ChannelMenu title="Direct Messages" at={dmTabMenu}
+          items={[markReadItem("Mark All as Read", dms.map((d) => d.channel_id))]} onClose={() => setDmTabMenu(null)} />
       )}
       {chanMenu && menuChannel && (
         <ChannelMenu title={`${menuChannel.kind === "text" ? "#" : menuChannel.kind === "dm" ? "@" : ""}${menuChannel.name}`} at={chanMenu.at}
