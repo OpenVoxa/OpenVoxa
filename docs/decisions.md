@@ -2319,6 +2319,50 @@ Read (Admin Category, vip-test); **UN11** Messages tab, Mark All as Read
 clears the DM badge. All pass. Ryan checked the look on his PC and
 phone (line, bar, menus, long-press, narrow screen), 2026-11-13: pass.
 
+### Settings layout
+
+Ryan, 2026-11-13 (bug: the tab row never wrapped, so in a half-screen
+window the last Server settings tabs, up to Security, were cut off).
+Built 2026-11-13 (client only: `SettingsNav.tsx`, both dialogs,
+`styles.css` "Tabs in a column").
+
+- **Tabs in a column** on the left of Settings and Server settings, as
+  wide as "Voice and Video" (150 px), each scrolling on its own; the
+  open tab sits on a stage to the right whose body scrolls, with its
+  footer (Save bottom left, Done) under the stage. The open tab has the
+  active channel's look.
+- **Server settings runs by role:** first what every staff member sees
+  (Groups, Members, Stickers), then a **Moderation** heading (Reports,
+  Bug Reports, Bans, Log, each as its permission allows), then
+  **Administration** (General, Voice and Video, Sign-Up, Security). The
+  everyday tabs keep their places whatever the role; more powerful
+  ones gather at the bottom. It opens on Groups (General before), or on
+  Reports / Bug Reports when some wait; Home's Edit still opens General.
+- **Heading colours:** each heading takes its role's name colour: the
+  lowest-ranked coloured group holding `administrator` for
+  Administration; for Moderation, the lowest-ranked coloured group with a
+  moderation switch (ban, view reports, delete messages, server mute,
+  move members) but not `administrator`. Plain grey when name colours are
+  off (server switch or Settings > Appearance) or no such group has a
+  colour.
+- **Settings** keeps its tabs and order (no headings: every tab is for
+  everyone). Stays two dialogs (a merged one was considered).
+- **Phones** (window 520 px or less): the tabs go back to the top and
+  wrap onto rows; the headings hide, the order stays. A half-screen
+  window on a 150% display (~570 px) keeps the column.
+
+*Tests (SL1-SL6).* Run 2026-11-13 in headless Chrome (`narrow2.mjs`,
+`navprofile.mjs`): **SL1** 1280 px, bot-admin: column with every tab,
+Moderation in Moderator's magenta, Administration in Administrator's
+orange, footer under the stage; **SL2** 570 px: column kept, nothing cut,
+Security opens with Save and Done in view; **SL3** 390 px: tabs wrap onto
+three rows at the top, headings hidden, nothing cut; **SL4** bot-mod:
+Groups, Members, Stickers, then Moderation with four tabs, no
+Administration; **SL5** bot-member: no Server settings gear, Settings >
+Profile (own body and footer) sits on the stage at 1280 and 390 px;
+**SL6** Settings at all three widths, nothing cut. All pass. Ryan's look
+on his PC (full and half screen) and phone, SL7-SL9, 2026-11-13: pass.
+
 ## Permission groups
 
 Build-order step 12, decided by Ryan 2026-10-31.

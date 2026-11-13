@@ -30,6 +30,7 @@ import { COLOURS, getColour, setColour, useColour, type ColourSetting } from "./
 import { TwoFactorSection } from "./TwoFactor";
 import { SignInOtherDevice } from "./SignInLink";
 import { ProfileSettings } from "./ProfileSettings";
+import { SettingsLayout, type NavItem } from "./SettingsNav";
 
 export type SettingsTab = "account" | "profile" | "voice" | "chat" | "sounds" | "appearance" | "about";
 
@@ -68,15 +69,12 @@ export function SettingsDialog({ tab: initialTab, session, call, chat, deviceId,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, voice]);
 
-  const tabs: [SettingsTab, string][] = [["account", "Account"], ["profile", "Profile"], ["voice", "Voice"], ["chat", "Chat"], ["sounds", "Sounds"], ["appearance", "Appearance"], ["about", "About"]];
+  const tabs: NavItem<SettingsTab>[] = ([["account", "Account"], ["profile", "Profile"], ["voice", "Voice"], ["chat", "Chat"],
+    ["sounds", "Sounds"], ["appearance", "Appearance"], ["about", "About"]] as [SettingsTab, string][])
+    .map(([id, label]) => ({ id, label }));
   return (
     <Modal title="Settings" onClose={onClose} wide fixed>
-      <div className="settings-tabs" role="tablist">
-        {tabs.map(([id, label]) => (
-          <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? "on" : undefined}
-            onClick={() => setTab(id)}>{label}</button>
-        ))}
-      </div>
+      <SettingsLayout items={tabs} tab={tab} onTab={setTab} label="Settings">
       {/* Profile draws its own body and footer, with Save for the bio. */}
       {tab === "profile" && (
         <ProfileSettings call={call} userId={session.user_id} username={session.username} onClose={onClose} />
@@ -99,6 +97,7 @@ export function SettingsDialog({ tab: initialTab, session, call, chat, deviceId,
           <button className="primary" onClick={onClose}>Done</button>
         </div>
       )}
+      </SettingsLayout>
     </Modal>
   );
 }

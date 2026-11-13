@@ -904,6 +904,40 @@ details summary { cursor: pointer; color: var(--muted); }
 .modal.fixed { height: max(80vh, min(680px, calc(100vh - 32px))); max-height: calc(100vh - 32px); display: flex; flex-direction: column; overflow: hidden; }
 .modal.fixed > .modal-body { flex: 1; min-height: 0; overflow-y: auto; }
 .modal-foot { padding: 12px 20px 16px; border-top: 1px solid var(--line); }
+/* Tabs in a column on the left, the open tab on a stage to the right
+   (SettingsNav.tsx, Ryan 2026-11-13). The column is as wide as "Voice and
+   Video"; it and the stage's body scroll on their own; the footer sits
+   under the stage. */
+.settings-layout { flex: 1; min-height: 0; display: flex; margin-top: 12px; border-top: 1px solid var(--line); }
+.settings-nav {
+  flex: none; width: 150px; display: flex; flex-direction: column; gap: 2px;
+  padding: 12px 8px; border-right: 1px solid var(--line); overflow-y: auto;
+}
+.settings-nav button {
+  background: none; color: var(--muted); font-size: 14px; text-align: left;
+  padding: 6px 10px; overflow-wrap: anywhere;
+}
+.settings-nav button:hover { background: var(--sidebar-hover); color: var(--text); }
+.settings-nav button.on { background: var(--sidebar-active); color: var(--text); }
+/* Same look as a channel category heading; inline colour = the role's. */
+.settings-nav-head {
+  margin-top: 12px; padding: 4px 10px 2px; color: var(--muted);
+  font-size: 12px; font-weight: 700; text-transform: uppercase;
+}
+.settings-stage { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.settings-stage > .modal-body { flex: 1; min-height: 0; overflow-y: auto; }
+/* Phones: the tabs go back to the top and wrap onto rows (headings hide;
+   the order still runs by role). */
+@media (max-width: 520px) {
+  .settings-layout { flex-direction: column; }
+  .settings-nav {
+    width: auto; flex-direction: row; flex-wrap: wrap; gap: 4px; overflow: visible;
+    padding: 8px 12px; border-right: none; border-bottom: 1px solid var(--line);
+  }
+  .settings-nav button { padding: 4px 10px; }
+  .settings-nav-head { display: none; }
+  .settings-stage { min-height: 0; flex: 1; }
+}
 .sidebar-head { display: flex; align-items: center; justify-content: space-between; }
 .device-list li.member { flex-direction: column; align-items: stretch; gap: 8px; }
 .member-row { display: flex; align-items: center; gap: 10px; }
