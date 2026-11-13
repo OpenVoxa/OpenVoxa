@@ -1229,7 +1229,9 @@ collapsing is **per person**; a category can have a header colour.
   the end). Category headers open their menu on a long press too (iPhone
   Safari never turned one into a right-click), with Move Up / Move Down.
 - **Category permissions** (Ryan, 2026-11-12; migration 0042,
-  `setCategoryAccess` in `categories.go`; built, **CP/MV tests pending**).
+  `setCategoryAccess` in `categories.go`; CP1-CP7 run 2026-11-12,
+  MV1-MV7 and CP11-CP14 pass 2026-11-13, run in headless Chrome with
+  DEV test accounts as administrator, moderator and member).
   Ryan: a default permission set for channels, made more specific per
   channel when one needs it. Three levels: the server default (what new
   channels start with), the **category's permissions** (same table as a
@@ -3928,6 +3930,11 @@ verified; the section named holds the design.
   to Category… in the menus; long press on category headers), TR1-TR9
   and TT1-TT11 pass (Feature decisions, "Channel ordering and
   categories", "Touchscreens").
+- 2026-11-12 Category permissions (a category's View/Post or Join/Speak
+  table, channels Same as category or Custom, a Move Channel dialog on
+  every move to another place; migration 0042), CP1-CP7 run 2026-11-12,
+  MV1-MV7 and CP11-CP14 pass 2026-11-13 (Feature decisions, "Channel
+  ordering and categories", "Category permissions").
 
 ## Open items
 
@@ -3936,10 +3943,11 @@ verified; the section named holds the design.
 - [x] **Reordering on touchscreens** (Ryan, 2026-11-12): built
       2026-11-12, TR1-TR9 and TT1-TT11 pass (Feature decisions, "Channel
       ordering and categories", "Touchscreens").
-- [ ] **Per-category permissions** (Ryan, 2026-11-12): designed and
+- [x] **Per-category permissions** (Ryan, 2026-11-12): designed and
       built and committed 2026-11-12; CP1-CP7 run (no problems
-      reported), MV1-MV7 and CP11-CP14 to test (Feature decisions,
-      "Channel ordering and categories", "Category permissions").
+      reported), MV1-MV7 and CP11-CP14 pass 2026-11-13 (Feature
+      decisions, "Channel ordering and categories", "Category
+      permissions").
 - [x] **Self-host audit, whole repo** (2026-11-09): checked every
       tracked file so anyone can clone and host their own server. No
       personal network or account details were in the repo. Fixed:
